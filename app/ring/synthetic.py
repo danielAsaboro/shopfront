@@ -66,7 +66,8 @@ class SyntheticRingClient(RingClient):
             h = rng.choice([0, 1, 2, 3, 22, 23])
             raw.append((self._at(day, h, rng.randint(0, 59)), VisitType.AFTER_HOURS, "motion"))
 
-        raw.sort(key=lambda r: r[0])
+        now = datetime.now(self.tz)
+        raw = sorted((r for r in raw if r[0] <= now), key=lambda r: r[0])  # no events from the future
         return [DoorEvent(id=f"syn-{day.isoformat()}-{i:04d}", device_id=self.device_id, timestamp=ts,
                           kind=kind, source="synthetic", truth=truth)
                 for i, (ts, truth, kind) in enumerate(raw)]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -33,8 +33,8 @@ except RingError as exc:  # live mode without credentials: every page shows the 
 
 
 def _parse_day(value: str | None) -> date:
-    if not value:
-        return datetime.now(settings.tz).date()
+    if not value:  # a morning briefing is about yesterday
+        return datetime.now(settings.tz).date() - timedelta(days=1)
     try:
         return date.fromisoformat(value)
     except ValueError:

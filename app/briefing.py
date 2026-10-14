@@ -109,16 +109,20 @@ def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_nam
     return b
 
 
+def _n(count: int, word: str) -> str:
+    return f"{count} {word}" + ("" if count == 1 else "s")
+
+
 def _headline(b: Briefing, hours: tuple[time, time] | None, has_last_week: bool) -> list[str]:
     lines: list[str] = []
     if b.deliveries_while_closed:
         times = ", ".join(m["time"] for m in b.deliveries_while_closed)
-        lines.append(f"{len(b.deliveries_while_closed)} delivery attempt(s) while the shop was closed, at {times}.")
+        lines.append(f"{_n(len(b.deliveries_while_closed), 'delivery attempt')} while the shop was closed, at {times}.")
     if b.first_activity:
         lines.append(f"Staff activity at the door from {b.first_activity}"
                      + (f" until {b.last_activity}." if b.last_activity else "."))
     if hours is None and not b.customers:
-        lines.append("Shop was closed today.")
+        lines.append("The shop was closed.")
     elif not has_last_week:
         lines.append(f"{b.customers} customers came in. No history for the same day last week yet.")
     else:
@@ -133,5 +137,5 @@ def _headline(b: Briefing, hours: tuple[time, time] | None, has_last_week: bool)
                         f"; last week it was {_fmt_hour(b.busiest_hour_last_week)}." if b.busiest_hour_last_week
                         is not None else "."))
     if b.after_hours:
-        lines.append(f"{len(b.after_hours)} after-hours motion event(s) to review.")
+        lines.append(f"{_n(len(b.after_hours), 'after-hours motion event')} to review.")
     return lines
