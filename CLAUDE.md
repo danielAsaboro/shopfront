@@ -18,7 +18,7 @@ Invariants (never):
 - never write device or account IDs to evidence/ unhashed; never commit Ring frames (evidence/raw/ is ignored)
 - never add a Ring endpoint or field that isn't in https://developer.amazon.com/docs/ring/api-documentation.html; cite the section
 
-Design: tokens and layout in app/templates/_style.html. One accent (blue) for today's data, warn orange only for things the owner should act on.
+Design: follow design.md; tokens in app/templates/_style.html. One accent (blue) for today's data, warn orange only for things the owner should act on.
 
 Rules that disqualify (Devpost, Ring track): repo must call Ring at runtime (not just name it) · video < 3 min, public on YouTube/Vimeo, shows Ring working through a simulator or real device · open-source licence visible in the GitHub About box, or private repo shared with the Amazon reviewers · product feedback for every tool used · English.
 
