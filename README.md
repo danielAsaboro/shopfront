@@ -14,7 +14,7 @@ Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AW
 | Requirement | Status |
 |---|---|
 | Repo calls Ring at runtime | ✓ [`app/ring/api.py`](app/ring/api.py): Event History, image download, token refresh |
-| Shown working on a real Ring device | ✗ Not yet. Needs a live capture, see the proof table |
+| Shown working through a Ring simulator or device | ✗ Not yet. The hackathon FAQ accepts the Ring Developer Playground. Needs a live capture, see the proof table |
 | AWS service with documented integration | ✓ [docs/bedrock.md](docs/bedrock.md). ✗ No live Bedrock call captured yet |
 | Setup and run instructions | ✓ Below |
 | Repo access for judges | ✓ [MIT](LICENSE) licence. ✗ Not yet on GitHub (private, shared with the Amazon reviewers at submission) |
@@ -28,7 +28,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Calls the Ring Partner API with a Bearer token and maps a 401 to a named state | live (error path) | `GET /v1/devices` → 401, X-Request-ID `90478809-976d-4bde-9881-5f5611afb2fb`, [evidence/](evidence/) |
 | Reads Event History and frames for a real doorbell | **not yet verified** | — |
 | Labels a real Ring frame with Bedrock | **not yet verified** | — |
-| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (33 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
+| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (35 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
 | Rejects unsigned or replayed Ring webhooks | local test | [tests/test_webhooks.py](tests/test_webhooks.py) |
 | Briefing logic (deliveries while closed, staff arrival, traffic vs last week) | local test on synthetic data | [tests/test_briefing.py](tests/test_briefing.py) |
 
@@ -49,11 +49,11 @@ says so in a banner. Tests: `.venv/bin/python -m pytest -q`.
 
 ### With a real Ring doorbell
 
-1. Sign in to the [Ring Developer Playground](https://developer.amazon.com/ring/console/playground) and generate an access token. It lasts about 30 minutes.
-2. In `.env` set `RING_MODE=live` and `RING_ACCESS_TOKEN=<token>`. Optionally set `RING_DEVICE_ID`; otherwise the first device is used.
+1. Sign in to the [Ring Developer Playground](https://developer.amazon.com/ring/console/playground) (a free Amazon Developer account) and generate an access token. It lasts about 30 minutes.
+2. Open http://127.0.0.1:8000/connect and paste it. Or, in `.env`, set `RING_MODE=live` and `RING_ACCESS_TOKEN=<token>`. Optionally set `RING_DEVICE_ID`; otherwise the first device is used.
 3. For Bedrock labels, sign in to AWS (`aws login`) with Bedrock access to the model in `BEDROCK_MODEL_ID`.
 4. Restart and open the page. The footer shows the Ring X-Request-ID of the last call.
-5. To record proof: `.venv/bin/python -m scripts.ring_proof --bedrock` writes `evidence/ring-proof-*.json`.
+5. To record proof: `.venv/bin/python -m scripts.ring_proof --bedrock` writes `evidence/ring-proof-*.json`. It uses the pasted token when `RING_ACCESS_TOKEN` is empty.
 
 If Ring refuses, the page shows the named reason (`TOKEN_REJECTED`, `FORBIDDEN`, …) instead of a briefing.
 
