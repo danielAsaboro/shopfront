@@ -2,6 +2,8 @@
 
     RING_ACCESS_TOKEN=... .venv/bin/python -m scripts.ring_proof [--date YYYY-MM-DD] [--bedrock]
 
+Without RING_ACCESS_TOKEN it uses the token pasted on /connect (.data/ring-access-token).
+
 Writes evidence/ring-proof-<utc>.json: endpoints called, HTTP status, X-Request-ID, event counts
 and times, and the snapshot's sha256/size/headers. Never writes the token. Device and account IDs
 are stored as short hashes. The frame itself goes to evidence/raw/ (git-ignored) for the demo.
@@ -45,7 +47,9 @@ def main() -> int:
                     "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
 
     http = httpx.Client(timeout=30, follow_redirects=True, event_hooks={"response": [hook]})
-    auth = RingAuth(access_token=settings.ring_access_token, refresh_token=settings.ring_refresh_token,
+    pasted = Path(settings.data_dir) / "ring-access-token"
+    access = settings.ring_access_token or (pasted.read_text().strip() if pasted.exists() else "")
+    auth = RingAuth(access_token=access, refresh_token="" if access else settings.ring_refresh_token,
                     client_id=settings.ring_client_id, client_secret=settings.ring_client_secret, http=http)
     ring = RingApiClient(auth=auth, tz=settings.tz, device_id=settings.ring_device_id,
                          event_types=settings.ring_event_types, http=http)
