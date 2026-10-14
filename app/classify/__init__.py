@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import logging
-
 from app.classify.base import Classifier
-from app.classify.stub import StubClassifier
+from app.classify.rules import RulesClassifier
 from app.config import Settings
-
-log = logging.getLogger(__name__)
 
 
 def _aws_creds_available(region: str) -> bool:
@@ -19,10 +15,10 @@ def _aws_creds_available(region: str) -> bool:
 
 
 def make_classifier(s: Settings) -> Classifier:
-    want_bedrock = s.classifier == "bedrock" or (
-        s.classifier == "auto" and _aws_creds_available(s.aws_region))
-    if want_bedrock:
+    if s.classifier not in ("auto", "rules", "bedrock"):
+        raise ValueError(f"CLASSIFIER must be auto, rules or bedrock, got {s.classifier!r}")
+    if s.classifier == "bedrock" or (s.classifier == "auto" and _aws_creds_available(s.aws_region)):
         from app.classify.bedrock import BedrockClassifier
 
         return BedrockClassifier(region=s.aws_region, model_id=s.bedrock_model_id)
-    return StubClassifier()
+    return RulesClassifier()

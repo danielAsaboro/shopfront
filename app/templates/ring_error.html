@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopfront · Ring unavailable</title>
+{% include "_style.html" %}
+</head>
+<body>
+<main>
+  <div class="eyebrow">Shopfront · {{ shop }}</div>
+  <h1>Can't read Ring right now</h1>
+  <p class="banner warn-bg"><strong>{{ e.status.value }}</strong>{% if e.http_status %} · HTTP {{ e.http_status }}{% endif %}{% if e.request_id %} · X-Request-ID {{ e.request_id }}{% endif %}</p>
+  <p>{% if e.status.value in ('TOKEN_REJECTED', 'NOT_CONFIGURED') %}The Ring token is missing or expired. Generate a fresh one in the Ring Developer Playground and set <code>RING_ACCESS_TOKEN</code>, or set a refresh token with client credentials.
+  {% elif e.status.value == 'REFRESH_FAILED' %}Ring refused the refresh token. Re-link the Ring account to get a new one.
+  {% elif e.status.value in ('FORBIDDEN', 'DEVICE_NOT_FOUND', 'NO_DEVICES') %}This token can't see the doorbell. Check <code>RING_DEVICE_ID</code> and which devices were shared with the app.
+  {% elif e.status.value == 'RATE_LIMITED' %}Ring is rate-limiting requests. Try again in a minute.
+  {% else %}Ring didn't answer cleanly. Nothing below is shown until it does, so the briefing never mixes in made-up data.{% endif %}</p>
+  <p class="proof">{{ e.detail }}</p>
+</main>
+</body>
+</html>

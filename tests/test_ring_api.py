@@ -1,0 +1,136 @@
+"""RingApiClient against an httpx MockTransport shaped like Ring's documented responses.
+
+These are local tests of our request/response handling. They prove nothing about the live API.
+"""
+
+import json
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+import httpx
+import pytest
+
+from app.models import DoorEvent
+from app.ring.api import RingApiClient, RingAuth, RingError, RingStatus
+
+TZ = ZoneInfo("America/Los_Angeles")
+DEV = "ava1.ring.device.TEST"
+DAY = date(2026, 10, 7)
+
+
+def ms(h, m=0, d=DAY):
+    return int(datetime(d.year, d.month, d.day, h, m, tzinfo=TZ).timestamp() * 1000)
+
+
+def hist(event_type, start):
+    return {"type": "history-events", "id": f"evt-{event_type}-{start}",
+            "attributes": {"event_type": event_type, "is_third_party_reviewed": False,
+                           "start": start, "end": start + 20000},
+            "relationships": {"source": {"data": {"type": "devices", "id": DEV}}}}
+
+
+def client(handler, **auth):
+    http = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+    a = RingAuth(**(auth or {"access_token": "playground-token"}), http=http)
+    return RingApiClient(auth=a, tz=TZ, device_id=DEV, http=http), http
+
+
+def test_history_pages_until_older_than_the_day_and_maps_events():
+    calls = []
+    page1 = {"data": [hist("ding", ms(23, 30, date(2026, 10, 8))),  # next day: skipped
+                      hist("motion", ms(17)), hist("on_demand", ms(12)), hist("ding", ms(11))],
+             "links": {"next": f"/v1/history/devices/{DEV}/events?event_types=ding,motion&page[key]=x"}}
+    page2 = {"data": [hist("motion", ms(7, 40)), hist("motion", ms(22, 0, date(2026, 10, 6)))],
+             "links": {"next": f"/v1/history/devices/{DEV}/events?page[key]=y"}}
+
+    def handler(req: httpx.Request):
+        calls.append(req)
+        assert req.headers["Authorization"] == "Bearer playground-token"
+        return httpx.Response(200, json=page2 if "page%5Bkey%5D=x" in str(req.url) or "page[key]=x" in str(req.url) else page1)
+
+    ring, _ = client(handler)
+    events = ring.events_for_day(DAY)
+    assert [(e.kind, e.timestamp.hour) for e in events] == [("motion", 7), ("ding", 11), ("motion", 17)]
+    assert all(e.source == "ring" for e in events)
+    assert len(calls) == 2  # stopped at the first event older than the day
+    assert calls[0].url.params["event_types"] == "ding,motion"
+
+
+def test_snapshot_follows_303_without_leaking_the_bearer_token():
+    seen = {}
+
+    def handler(req: httpx.Request):
+        if req.url.host == "api.amazonvision.com":
+            body = json.loads(req.content)
+            assert body["type"] == "at_timestamp" and body["timestamp"] == ms(9)
+            return httpx.Response(303, headers={"Location": "https://download-us.example.test/v1/download?security_token=s"})
+        seen["auth"] = req.headers.get("Authorization")
+        return httpx.Response(200, content=b"\xff\xd8jpeg", headers={"content-type": "image/jpeg"})
+
+    ring, _ = client(handler)
+    e = DoorEvent(id="e1", device_id=DEV, timestamp=datetime.fromtimestamp(ms(9) / 1000, TZ), kind="ding")
+    assert ring.snapshot(e) == b"\xff\xd8jpeg"
+    assert seen["auth"] is None
+
+
+@pytest.mark.parametrize("code,status", [(401, RingStatus.TOKEN_REJECTED), (403, RingStatus.FORBIDDEN),
+                                          (404, RingStatus.DEVICE_NOT_FOUND), (416, RingStatus.MEDIA_NOT_FOUND),
+                                          (425, RingStatus.RECORDING_NOT_READY), (429, RingStatus.RATE_LIMITED),
+                                          (503, RingStatus.RING_UNAVAILABLE), (418, RingStatus.UNEXPECTED_STATUS)])
+def test_http_errors_fail_closed_to_named_states(code, status):
+    ring, _ = client(lambda req: httpx.Response(code, text="nope", headers={"X-Request-ID": "rid-1"}))
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == status and err.value.request_id == "rid-1"
+
+
+def test_network_failure_is_its_own_state():
+    def handler(req):
+        raise httpx.ConnectError("dns")
+
+    ring, _ = client(handler)
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.NETWORK_ERROR
+
+
+def test_malformed_history_item_is_not_guessed():
+    ring, _ = client(lambda req: httpx.Response(200, json={"data": [{"type": "history-events", "attributes": {}}]}))
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.MALFORMED_RESPONSE
+
+
+def test_refresh_mode_refreshes_on_401_and_persists_the_rotated_token(tmp_path):
+    state = {"api": 0}
+
+    def handler(req: httpx.Request):
+        if req.url.host == "oauth.ring.com":
+            form = dict(x.split("=") for x in req.content.decode().split("&"))
+            assert form["grant_type"] == "refresh_token"
+            return httpx.Response(200, json={"access_token": f"at{state['api']}", "refresh_token": "rt-new",
+                                             "expires_in": 14400, "token_type": "Bearer"})
+        state["api"] += 1
+        if state["api"] == 1:
+            return httpx.Response(401)
+        return httpx.Response(200, json={"data": [], "links": {}})
+
+    token_file = tmp_path / "rt.json"
+    ring, _ = client(handler, refresh_token="rt-old", client_id="c", client_secret="s", token_file=token_file)
+    assert ring.events_for_day(DAY) == []
+    assert json.loads(token_file.read_text()) == {"refresh_token": "rt-new"}
+
+
+def test_refresh_rejected_is_named():
+    ring, _ = client(lambda req: httpx.Response(400, text="invalid_grant"),
+                     refresh_token="rt", client_id="c", client_secret="s")
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.REFRESH_FAILED
+
+
+@pytest.mark.parametrize("kw", [{}, {"access_token": "a", "refresh_token": "r"}, {"refresh_token": "r"}])
+def test_bad_auth_config_is_not_configured(kw):
+    with pytest.raises(RingError) as err:
+        RingAuth(**kw)
+    assert err.value.status == RingStatus.NOT_CONFIGURED

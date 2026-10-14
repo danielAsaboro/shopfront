@@ -8,6 +8,8 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
+from app.hours import DEFAULT as DEFAULT_HOURS
+
 load_dotenv()
 
 
@@ -19,19 +21,25 @@ def _env(name: str, default: str = "") -> str:
 class Settings:
     shop_name: str = _env("SHOP_NAME", "Corner Bakery")
     timezone: str = _env("SHOP_TIMEZONE", "America/Los_Angeles")
+    shop_hours: str = _env("SHOP_HOURS", DEFAULT_HOURS)
 
-    # Ring Partner API. Leave RING_CLIENT_ID empty to use the mock client.
-    ring_mode: str = _env("RING_MODE", "mock")  # mock | partner
-    ring_api_base: str = _env("RING_API_BASE", "")
-    ring_token_url: str = _env("RING_TOKEN_URL", "")
-    ring_client_id: str = _env("RING_CLIENT_ID", "")
-    ring_client_secret: str = _env("RING_CLIENT_SECRET", "")
-    ring_device_id: str = _env("RING_DEVICE_ID", "")
+    # Ring: "synthetic" (default, generated demo data) or "live" (Ring Partner API).
+    ring_mode: str = _env("RING_MODE", "synthetic")
+    # Live auth, one of: a Developer Playground access token, or a refresh token + client credentials.
+    ring_access_token: str = _env("RING_ACCESS_TOKEN")
+    ring_refresh_token: str = _env("RING_REFRESH_TOKEN")
+    ring_client_id: str = _env("RING_CLIENT_ID")
+    ring_client_secret: str = _env("RING_CLIENT_SECRET")
+    ring_device_id: str = _env("RING_DEVICE_ID")  # empty = first device the token can see
+    ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion")
+    ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
 
-    # Classifier: stub (no AWS) or bedrock.
-    classifier: str = _env("CLASSIFIER", "auto")  # auto | stub | bedrock
+    # Classifier: auto (Bedrock if AWS credentials resolve, else rules) | rules | bedrock
+    classifier: str = _env("CLASSIFIER", "auto")
     aws_region: str = _env("AWS_REGION", "us-east-1")
     bedrock_model_id: str = _env("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+    data_dir: str = _env("SHOPFRONT_DATA_DIR", ".data")
 
     @property
     def tz(self) -> ZoneInfo:

@@ -4,67 +4,39 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shopfront · {{ b.shop_name }}</title>
-<style>
-  :root { --bg:#f7f6f3; --card:#fff; --ink:#1d1d1f; --muted:#6b6b70; --line:#e4e2dd;
-          --today:#2f6fdb; --lw:#c9c7c1; --warn:#b4541a; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#151517; --card:#1f1f22; --ink:#ececee; --muted:#9a9aa1; --line:#2e2e33;
-            --today:#6b9cf0; --lw:#4a4a50; --warn:#e48a52; }
-  }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink);
-         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; justify-content:space-between; }
-  h1 { font-size: 22px; margin: 0; }
-  .sub { color: var(--muted); font-size: 13px; }
-  form input { font: inherit; padding: 4px 6px; border:1px solid var(--line); border-radius:6px;
-               background:var(--card); color:var(--ink); }
-  .card { background: var(--card); border:1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-top: 16px; }
-  .headline li { margin: 4px 0; }
-  .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top:16px; }
-  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-  .stat .v { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat .l { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .warn { color: var(--warn); }
-  .chart { display:flex; align-items:flex-end; gap:3px; height:160px; margin-top:8px; }
-  .col { flex:1; display:flex; align-items:flex-end; gap:1px; height:100%; position:relative; }
-  .bar { flex:1; border-radius:2px 2px 0 0; min-height:1px; }
-  .bar.t { background: var(--today); } .bar.w { background: var(--lw); }
-  .axis { display:flex; gap:3px; color:var(--muted); font-size:10px; margin-top:4px; }
-  .axis span { flex:1; text-align:center; }
-  .legend { font-size:12px; color:var(--muted); }
-  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 10px; vertical-align:-1px; }
-  table { width:100%; border-collapse: collapse; font-size: 14px; }
-  td, th { text-align:left; padding: 4px 0; border-bottom: 1px solid var(--line); }
-  @media (max-width: 560px) { .axis span:nth-child(odd) { visibility:hidden; } }
-</style>
+{% include "_style.html" %}
 </head>
 <body>
 <main>
+  {% if b.ring_source == "synthetic" %}
+  <div class="banner warn-bg" role="status">Synthetic demo data. These events were generated locally, not read from a Ring device. Set <code>RING_MODE=live</code> to use Ring.</div>
+  {% endif %}
+
   <header>
     <div>
-      <h1>{{ b.shop_name }} — daily briefing</h1>
-      <div class="sub">{{ b.date }} · Ring source: {{ b.ring_source }} · classifier: {{ b.classifier }}</div>
+      <div class="eyebrow">Shopfront · morning briefing</div>
+      <h1>{{ b.shop_name }}</h1>
     </div>
-    <form method="get"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form>
+    <form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form>
   </header>
 
-  <section class="card headline">
-    <ul>{% for line in b.headline %}<li>{{ line }}</li>{% endfor %}</ul>
+  <section class="lead">
+    {% if b.headline %}
+    <p class="first">{{ b.headline[0] }}</p>
+    {% if b.headline|length > 1 %}<ul>{% for line in b.headline[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    {% else %}
+    <p class="first">No door activity recorded for {{ b.date }}.</p>
+    {% endif %}
   </section>
 
-  <section class="stats">
-    <div class="stat"><div class="v">{{ b.customers }}</div><div class="l">Customers (last wk {{ b.customers_last_week }})</div></div>
-    <div class="stat"><div class="v">{% if b.busiest_hour is not none %}{{ '%02d' % b.busiest_hour }}:00{% else %}—{% endif %}</div><div class="l">Busiest hour</div></div>
-    <div class="stat"><div class="v">{{ b.deliveries }}</div><div class="l">Deliveries</div></div>
-    <div class="stat"><div class="v {% if b.missed_deliveries %}warn{% endif %}">{{ b.missed_deliveries|length }}</div><div class="l">Missed deliveries</div></div>
-    <div class="stat"><div class="v">{{ b.opened_at or '—' }}</div><div class="l">Actual open</div></div>
-    <div class="stat"><div class="v">{{ b.closed_at or '—' }}</div><div class="l">Actual close</div></div>
+  <section class="figures">
+    <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Deliveries while closed</span></div>
+    <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
+    <div><span class="v">{{ b.customers }}</span><span class="l">Customers · last wk {{ b.customers_last_week }}</span></div>
   </section>
 
-  <section class="card">
-    <strong>Foot traffic by hour</strong>
+  <section class="block">
+    <h2>Foot traffic by hour</h2>
     <span class="legend"><i style="background:var(--today)"></i>Today<i style="background:var(--lw)"></i>Same day last week</span>
     <div class="chart" role="img" aria-label="Customers per hour, today vs last week">
       {% for h in range(6, 23) %}
@@ -77,18 +49,31 @@
     <div class="axis">{% for h in range(6, 23) %}<span>{{ h }}</span>{% endfor %}</div>
   </section>
 
-  {% if b.missed_deliveries or b.after_hours %}
-  <section class="card">
-    <strong>Needs a look</strong>
+  {% if b.deliveries_while_closed or b.after_hours %}
+  <section class="block">
+    <h2>Needs a look</h2>
     <table>
-      <tr><th>Time</th><th>What</th></tr>
-      {% for m in b.missed_deliveries %}<tr><td>{{ m.time }}</td><td class="warn">Delivery attempt, nobody answered</td></tr>{% endfor %}
-      {% for a in b.after_hours %}<tr><td>{{ a.time }}</td><td>After-hours motion</td></tr>{% endfor %}
+      {% for m in b.deliveries_while_closed %}<tr><td class="t">{{ m.time }}</td><td class="warn">Doorbell while closed: likely a missed delivery</td><td class="why">{{ m.reason }}</td></tr>{% endfor %}
+      {% for a in b.after_hours %}<tr><td class="t">{{ a.time }}</td><td>After-hours motion</td><td class="why">{{ a.reason }}</td></tr>{% endfor %}
     </table>
   </section>
   {% endif %}
 
-  <p class="sub">JSON: <a href="/api/briefing?date={{ b.date }}">/api/briefing</a> · <a href="/api/events?date={{ b.date }}">/api/events</a></p>
+  <details class="block">
+    <summary><h2>Every door event ({{ b.visits|length }})</h2></summary>
+    <table>
+      <tr><th>Time</th><th>Ring event</th><th>Label</th><th>By</th><th>Why</th></tr>
+      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td>{{ v.type|replace('_', ' ') }}</td><td>{{ v.classifier }}</td><td class="why">{{ v.reason }}</td></tr>{% endfor %}
+    </table>
+  </details>
+
+  <footer class="proof">
+    {% if b.ring_source == "ring" %}
+    Source: Ring Event History API{% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}
+    {% else %}Source: synthetic generator (no Ring calls){% endif %}
+    · Labels: {{ 'Amazon Bedrock vision on Ring frames, rules when no frame' if b.classifier == 'bedrock' else 'time-of-day rules' }}
+    · <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a>
+  </footer>
 </main>
 </body>
 </html>

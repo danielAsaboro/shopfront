@@ -15,17 +15,18 @@ class VisitType(str, Enum):
 
 @dataclass
 class DoorEvent:
-    """One front-door camera event (motion or doorbell press) from Ring."""
+    """One front-door camera event (motion or doorbell press)."""
 
     id: str
     device_id: str
     timestamp: datetime  # timezone-aware, shop local time
     kind: str  # "motion" | "ding"
-    answered: bool = False  # someone opened the door / answered the ding
+    source: str = "synthetic"  # "ring" for Ring Event History, "synthetic" for the demo generator
+    ring_subtype: str | None = None  # e.g. "human" when the history query filtered on motion.human
     snapshot: bytes | None = None  # JPEG bytes when available
-    snapshot_url: str | None = None
-    # Only the mock client sets this: ground truth so the stub classifier is realistic.
-    hint: VisitType | None = None
+    # Synthetic events only: the generator's answer key. Classifiers never read it;
+    # tests use it to measure how well the rules do.
+    truth: VisitType | None = None
 
 
 @dataclass
@@ -34,7 +35,8 @@ class ClassifiedVisit:
     visit_type: VisitType
     confidence: float
     reason: str = ""
-    source: str = "stub"  # stub | bedrock
+    source: str = "rules"  # rules | bedrock
+    request_id: str | None = None  # Bedrock response RequestId, when Bedrock answered
 
 
 @dataclass
@@ -51,10 +53,11 @@ class Briefing:
     busiest_hour_last_week: int | None = None
     busiest_hour_last_week_count: int = 0
     deliveries: int = 0
-    missed_deliveries: list[dict] = field(default_factory=list)
+    deliveries_while_closed: list[dict] = field(default_factory=list)
     after_hours: list[dict] = field(default_factory=list)
-    opened_at: str | None = None
-    closed_at: str | None = None
-    classifier: str = "stub"
-    ring_source: str = "mock"
+    first_activity: str | None = None
+    last_activity: str | None = None
+    classifier: str = "rules"
+    ring_source: str = "synthetic"
     headline: list[str] = field(default_factory=list)
+    visits: list[dict] = field(default_factory=list)
