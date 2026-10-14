@@ -134,3 +134,30 @@ def test_bad_auth_config_is_not_configured(kw):
     with pytest.raises(RingError) as err:
         RingAuth(**kw)
     assert err.value.status == RingStatus.NOT_CONFIGURED
+
+
+def test_no_devices_is_named():
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"data": []})))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.NO_DEVICES
+
+
+def test_missing_frame_labels_that_event_by_rules_and_says_why():
+    from app.briefing import classify_day
+    from app.classify.bedrock import BedrockClassifier
+    from app.hours import parse_hours
+
+    def handler(req: httpx.Request):
+        if req.method == "GET":
+            return httpx.Response(200, json={"data": [hist("ding", ms(9))], "links": {}})
+        return httpx.Response(416, json={"errors": [{"code": "MEDIA_NOT_FOUND"}]})
+
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("no frame, no Bedrock call")
+
+    ring, _ = client(handler)
+    [v] = classify_day(ring, BedrockClassifier("us-east-1", "m", client=NoCall()), DAY, parse_hours(""))
+    assert v.source == "rules" and "no Ring frame: MEDIA_NOT_FOUND" in v.reason
