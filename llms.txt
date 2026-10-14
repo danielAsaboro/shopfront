@@ -1,0 +1,21 @@
+# Shopfront
+
+> A morning briefing for small-shop owners, built from the Ring doorbell they already have. Ring track and AWS Builder entry, Amazon "Build, Ship, Shape" Developer Hackathon 2026.
+
+Shopfront reads a shop's Ring doorbell history (Ring Partner API Event History and image download), labels each visit from the Ring frame with Amazon Bedrock (Converse API, image block), and writes a briefing: deliveries that rang while closed, staff first and last at the door, and hourly foot traffic vs the same weekday last week. Ring failures are shown as named states, never replaced with synthetic data. Synthetic demo mode exists for running without a Ring account and is labelled on every page.
+
+## Docs
+- [README](README.md): run instructions and the labelled proof table
+- [Ring integration](docs/ring.md): endpoints, failure table, docs-vs-live differences, live proof
+- [Bedrock integration](docs/bedrock.md): model, prompt flow, failure handling
+- [Design](design.md)
+
+## Code
+- [Ring client](app/ring/api.py)
+- [Webhook receiver](app/ring/webhooks.py)
+- [Bedrock classifier](app/classify/bedrock.py)
+- [Briefing](app/briefing.py)
+- [Tests](tests/)
+
+## Evidence
+- [evidence/](evidence/): JSON captures of live Ring and Bedrock calls with request IDs
