@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-10-14T17:50:49+00:00",
+  "auth_mode": "playground",
+  "day": "2026-10-14",
+  "calls": [
+    {
+      "method": "GET",
+      "url": "/v1/devices",
+      "status": 401,
+      "x_request_id": "90478809-976d-4bde-9881-5f5611afb2fb",
+      "at": "2026-10-14T17:50:49+00:00"
+    }
+  ],
+  "error": {
+    "status": "TOKEN_REJECTED",
+    "http_status": 401,
+    "request_id": "90478809-976d-4bde-9881-5f5611afb2fb"
+  }
+}
