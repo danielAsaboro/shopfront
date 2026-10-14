@@ -28,7 +28,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Calls the Ring Partner API with a Bearer token and maps a 401 to a named state | live (error path) | `GET /v1/devices` → 401, X-Request-ID `90478809-976d-4bde-9881-5f5611afb2fb`, [evidence/](evidence/) |
 | Reads Event History and frames for a real doorbell | **not yet verified** | — |
 | Labels a real Ring frame with Bedrock | **not yet verified** | — |
-| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (32 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
+| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (33 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
 | Rejects unsigned or replayed Ring webhooks | local test | [tests/test_webhooks.py](tests/test_webhooks.py) |
 | Briefing logic (deliveries while closed, staff arrival, traffic vs last week) | local test on synthetic data | [tests/test_briefing.py](tests/test_briefing.py) |
 

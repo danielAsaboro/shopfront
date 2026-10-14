@@ -75,7 +75,7 @@ def test_snapshot_follows_303_without_leaking_the_bearer_token():
 
 @pytest.mark.parametrize("code,status", [(401, RingStatus.TOKEN_REJECTED), (403, RingStatus.FORBIDDEN),
                                           (404, RingStatus.DEVICE_NOT_FOUND), (416, RingStatus.MEDIA_NOT_FOUND),
-                                          (425, RingStatus.RECORDING_NOT_READY), (429, RingStatus.RATE_LIMITED),
+                                          (425, RingStatus.RECORDING_NOT_READY), (422, RingStatus.CORRUPT_RECORDING), (429, RingStatus.RATE_LIMITED),
                                           (503, RingStatus.RING_UNAVAILABLE), (418, RingStatus.UNEXPECTED_STATUS)])
 def test_http_errors_fail_closed_to_named_states(code, status):
     ring, _ = client(lambda req: httpx.Response(code, text="nope", headers={"X-Request-ID": "rid-1"}))
