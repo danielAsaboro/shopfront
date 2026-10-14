@@ -9,7 +9,7 @@
 <body>
 <main>
   {% if b.ring_source == "synthetic" %}
-  <div class="banner warn-bg" role="status">Synthetic demo data. These events were generated locally, not read from a Ring device. Set <code>RING_MODE=live</code> to use Ring.</div>
+  <div class="banner warn-bg" role="status">Synthetic demo data. These events were generated locally, not read from a Ring device. <a href="/connect">Connect Ring</a> to use your doorbell.</div>
   {% endif %}
 
   <header>
@@ -69,7 +69,7 @@
 
   <footer class="proof">
     {% if b.ring_source == "ring" %}
-    Source: Ring Event History API{% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}
+    Source: Ring Event History API (<a href="/connect">token</a>){% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}
     {% else %}Source: synthetic generator (no Ring calls){% endif %}
     · Labels: {{ 'Amazon Bedrock vision on Ring frames, rules when no frame' if b.classifier == 'bedrock' else 'time-of-day rules' }}
     · <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a>

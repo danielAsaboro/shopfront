@@ -44,6 +44,15 @@
   td.why { color: var(--muted); font-size: 13px; }
   .proof { margin-top: 32px; color: var(--muted); font-size: 12px; }
   .proof a { color: inherit; }
+  .steps { padding-left: 18px; } .steps li { margin: 6px 0; }
+  .connect { display: grid; gap: 8px; margin-top: 16px; max-width: 560px; }
+  .connect label { font-size: 12px; color: var(--muted); }
+  .connect textarea { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 8px; border: 1px solid var(--line);
+                      border-radius: 6px; background: transparent; color: var(--ink); }
+  .connect button { justify-self: start; font: inherit; padding: 8px 14px; border-radius: 6px; border: 0;
+                    background: var(--ink); color: var(--bg); cursor: pointer; }
+  .connect button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .banner a { color: inherit; font-weight: 600; }
   @media (max-width: 560px) {
     .axis span:nth-child(odd) { visibility:hidden; }
     .figures div + div { padding-left: 10px; }

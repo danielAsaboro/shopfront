@@ -4,8 +4,8 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app.briefing import build_briefing, classify_day
@@ -13,7 +13,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.config import settings
 from app.hours import parse_hours
-from app.ring import make_ring_client
+from app.ring import RingSource
 from app.ring.api import RingError, RingStatus
 from app.ring.webhooks import WebhookLog, WebhookStatus
 
@@ -25,11 +25,7 @@ hours = parse_hours(settings.shop_hours)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl")
-try:
-    ring = make_ring_client(settings)
-    ring_config_error: RingError | None = None
-except RingError as exc:  # live mode without credentials: every page shows the named error
-    ring, ring_config_error = None, exc
+source = RingSource(settings, DATA / "ring-access-token")
 
 
 def _parse_day(value: str | None) -> date:
@@ -42,9 +38,13 @@ def _parse_day(value: str | None) -> date:
 
 
 def _briefing(day: date):
-    if ring_config_error:
-        raise ring_config_error
-    return build_briefing(ring, classifier, day, settings.shop_name, hours, cache)
+    return build_briefing(source.get(), classifier, day, settings.shop_name, hours, cache)
+
+
+def _local_only(request: Request) -> None:
+    # The token page writes a credential to disk, so it only answers this machine.
+    if not request.client or request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(403, "/connect is only available from this machine")
 
 
 def _ring_error_body(exc: RingError) -> dict:
@@ -69,9 +69,34 @@ def dashboard(request: Request, date: str | None = Query(None)):
     day = _parse_day(date)
     b = _briefing(day)
     peak = max(b.hourly_customers + b.hourly_customers_last_week) or 1
+    ring = source.get()
     return templates.TemplateResponse(request, "dashboard.html", {
         "b": b, "peak": peak, "device": getattr(ring, "_device_id", "") or "",
         "request_id": getattr(ring, "last_request_id", None)})
+
+
+@app.get("/connect", response_class=HTMLResponse)
+def connect_page(request: Request):
+    _local_only(request)
+    return templates.TemplateResponse(request, "connect.html", {
+        "shop": settings.shop_name, "connected": bool(source.pasted_token()),
+        "env_mode": settings.ring_mode})
+
+
+@app.post("/connect")
+def connect_save(request: Request, token: str = Form(...)):
+    _local_only(request)
+    if not token.strip():
+        raise HTTPException(400, "paste a token")
+    source.save_token(token)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/connect/forget")
+def connect_forget(request: Request):
+    _local_only(request)
+    source.forget_token()
+    return RedirectResponse("/", status_code=303)
 
 
 @app.get("/api/briefing")
@@ -81,9 +106,7 @@ def api_briefing(date: str | None = Query(None)):
 
 @app.get("/api/events")
 def api_events(date: str | None = Query(None)):
-    if ring_config_error:
-        raise ring_config_error
-    visits = classify_day(ring, classifier, _parse_day(date), hours, cache)
+    visits = classify_day(source.get(), classifier, _parse_day(date), hours, cache)
     return [{"id": v.event.id, "time": v.event.timestamp.isoformat(), "kind": v.event.kind,
              "event_source": v.event.source, "type": v.visit_type.value, "confidence": v.confidence,
              "reason": v.reason, "classifier": v.source, "bedrock_request_id": v.request_id}
@@ -106,6 +129,10 @@ def api_webhooks():
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": ring_config_error is None, "ring": ring.name if ring else None,
-            "ring_error": ring_config_error.status.value if ring_config_error else None,
-            "classifier": classifier.name}
+    try:
+        ring, err = source.get(), None
+    except RingError as exc:
+        ring, err = None, exc
+    return {"ok": err is None, "ring": ring.name if ring else None,
+            "ring_error": err.status.value if err else None, "classifier": classifier.name,
+            "token_pasted": bool(source.pasted_token())}

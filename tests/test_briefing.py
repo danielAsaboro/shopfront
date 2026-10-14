@@ -9,7 +9,6 @@ from app.classify.bedrock import BedrockClassifier
 from app.classify.rules import RulesClassifier
 from app.hours import parse_hours
 from app.models import VisitType
-from app.ring.api import RingError, RingStatus
 from app.ring.synthetic import SyntheticRingClient
 
 TZ = ZoneInfo("America/Los_Angeles")
@@ -91,9 +90,39 @@ def test_dashboard_and_api_render():
     assert c.get("/?date=nope").status_code == 400
 
 
-def test_live_mode_without_token_fails_closed(monkeypatch):
-    monkeypatch.setattr(main, "ring_config_error", RingError(RingStatus.NOT_CONFIGURED, "set RING_ACCESS_TOKEN"))
+def test_live_mode_without_token_fails_closed(monkeypatch, tmp_path):
+    from dataclasses import replace
+
+    from app.ring import RingSource
+
+    monkeypatch.setattr(main, "source", RingSource(replace(main.settings, ring_mode="live"), tmp_path / "t"))
     c = TestClient(main.app)
     r = c.get("/")
     assert r.status_code == 503 and "NOT_CONFIGURED" in r.text and "Synthetic" not in r.text
     assert c.get("/api/briefing").json()["error"] == "NOT_CONFIGURED"
+
+
+def test_pasted_token_switches_to_live_and_forget_switches_back(monkeypatch, tmp_path):
+    from app.ring import RingSource
+    from app.ring.api import RingApiClient
+    from app.ring.synthetic import SyntheticRingClient
+
+    src = RingSource(main.settings, tmp_path / "ring-access-token")
+    monkeypatch.setattr(main, "source", src)
+    c = TestClient(main.app)
+    assert "Playground access token" in c.get("/connect").text
+    assert isinstance(src.get(), SyntheticRingClient)
+    r = c.post("/connect", data={"token": "  pasted-token  "}, follow_redirects=False)
+    assert r.status_code == 303 and src.pasted_token() == "pasted-token"
+    assert oct((tmp_path / "ring-access-token").stat().st_mode & 0o777) == "0o600"
+    ring = src.get()
+    assert isinstance(ring, RingApiClient) and ring.auth.token() == "pasted-token"
+    assert "pasted-token" not in c.get("/connect").text
+    c.post("/connect/forget", follow_redirects=False)
+    assert isinstance(src.get(), SyntheticRingClient)
+
+
+def test_connect_refuses_remote_clients():
+    c = TestClient(main.app, client=("203.0.113.9", 5000))
+    assert c.get("/connect").status_code == 403
+    assert c.post("/connect", data={"token": "x"}).status_code == 403
