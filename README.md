@@ -17,7 +17,7 @@ Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AW
 | Shown working on a real Ring device | ✗ Not yet. Needs a live capture, see the proof table |
 | AWS service with documented integration | ✓ [docs/bedrock.md](docs/bedrock.md). ✗ No live Bedrock call captured yet |
 | Setup and run instructions | ✓ Below |
-| Open-source licence | ✓ [MIT](LICENSE) |
+| Repo access for judges | ✓ [MIT](LICENSE) licence. ✗ Not yet on GitHub (private, shared with the Amazon reviewers at submission) |
 
 ## Proof
 
