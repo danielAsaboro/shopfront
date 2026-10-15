@@ -43,7 +43,7 @@
     <table class="receipts">
       {% for x in r.expected %}<tr>
         <td class="t">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
-        <td><strong>{{ x.supplier }}</strong><br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}</td>
+        <td><strong>{{ x.supplier }}</strong><br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}</td>
         <td class="why">{% if x.visit %}by {{ x.visit.labelled_by }}: {{ x.visit.reason }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
       </tr>{% endfor %}

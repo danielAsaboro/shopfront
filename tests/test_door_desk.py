@@ -56,10 +56,20 @@ def test_courier_while_closed_and_missing_supplier_lead_the_headline(tmp_path):
     book.add(DAY, "Coffee beans", "08:00", "09:00")
     r = receipts(book.for_day(DAY), [courier(19, 30)], OPEN, FrameStore(tmp_path))
     by = {x["supplier"]: x for x in r["expected"]}
-    assert by["Coffee beans"]["status"] == "seen_while_closed_outside_window"
-    assert by["Milk"]["status"] == "not_seen"
+    # Milk has no window, so the 19:30 courier fits it; Coffee beans was due 08:00-09:00
+    assert by["Milk"]["status"] == "seen_while_closed" and by["Milk"]["also_fits"] == []
+    assert by["Coffee beans"]["status"] == "not_seen"
     lines = headline(r)
-    assert lines[0] == "No courier seen for Milk." and "19:30, while the shop was closed" in lines[1]
+    assert lines[0] == "No courier seen for Coffee beans." and "Milk's courier rang at 19:30" in lines[1]
+
+
+def test_receipt_names_other_suppliers_the_courier_also_fits(tmp_path):
+    book = DeliveryBook(tmp_path / "e.json")
+    book.add(DAY, "Bread", "09:00", "12:00")
+    book.add(DAY, "Milk")
+    r = receipts(book.for_day(DAY), [courier(10, 0)], OPEN, FrameStore(tmp_path))
+    matched = [x for x in r["expected"] if x["visit"]]
+    assert len(matched) == 1 and matched[0]["also_fits"] == ["Milk" if matched[0]["supplier"] == "Bread" else "Bread"]
 
 
 def test_no_window_without_both_ends(tmp_path):
@@ -148,9 +158,9 @@ def test_ask_names_the_failure_instead_of_answering(isolated, monkeypatch):
     assert TestClient(main.app).post("/api/ask", json={"question": " "}).status_code == 400
 
 
-def test_real_strands_agent_builds_with_three_tools(isolated):
+def test_real_strands_agent_builds_with_its_tools(isolated):
     pytest.importorskip("strands")
     trace = shop_agent.Trace()
     a = shop_agent.build_agent(main._agent_tools(DAY), trace, "Test Shop", "us-east-1",
                                "us.anthropic.claude-haiku-4-5-20251001-v1:0")
-    assert sorted(a.tool_names) == ["deliveries", "door_visits", "week"]
+    assert sorted(a.tool_names) == ["check_attempt", "deliveries", "door_visits", "week"]

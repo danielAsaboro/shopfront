@@ -118,25 +118,76 @@ def _visit_row(v: ClassifiedVisit, frames: FrameStore, open_hours) -> dict:
             "shop_open": _is_open(v.event.timestamp, open_hours)}
 
 
+def _assign(cost: list[list[int]]) -> list[int]:
+    """Minimum-cost assignment (Hungarian method) for n rows into m >= n columns; returns each row's column."""
+    n, m = len(cost), len(cost[0]) if cost else 0
+    INF = float("inf")
+    u, v, p, way = [0] * (n + 1), [0] * (m + 1), [0] * (m + 1), [0] * (m + 1)
+    for i in range(1, n + 1):
+        p[0], j0 = i, 0
+        minv, used = [INF] * (m + 1), [False] * (m + 1)
+        while p[j0]:
+            used[j0], i0, delta, j1 = True, p[j0], INF, 0
+            for j in range(1, m + 1):
+                if not used[j]:
+                    cur = cost[i0 - 1][j - 1] - u[i0] - v[j]
+                    if cur < minv[j]:
+                        minv[j], way[j] = cur, j0
+                    if minv[j] < delta:
+                        delta, j1 = minv[j], j
+            for j in range(m + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+            j0 = j1
+        while j0:
+            j1 = way[j0]
+            p[j0], j0 = p[j1], j1
+    out = [0] * n
+    for j in range(1, m + 1):
+        if p[j]:
+            out[p[j] - 1] = j - 1
+    return out
+
+
+NOT_SEEN = 10**15  # leaving a supplier unmatched costs more than any match
+OUTSIDE = 10**12  # a match outside the window costs more than any in-window match
+
+
+def _cost(v: ClassifiedVisit, e: Expected) -> int:
+    d = int(_distance(v, e).total_seconds())
+    t = v.event.timestamp
+    return (OUTSIDE if d else 0) + d * 10**5 + t.hour * 3600 + t.minute * 60 + t.second  # then earliest
+
+
 def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours,
              frames: FrameStore) -> dict:
-    """Match each expected delivery to one delivery-labelled visit; list the rest as unexpected."""
+    """Match expected deliveries to delivery-labelled visits, one visit per delivery at most.
+
+    The assignment is chosen as a whole, not supplier by supplier: first as many suppliers matched as
+    there are couriers, then as many of those inside their window as possible, then the closest
+    times. List the couriers nobody expected separately."""
     couriers = [v for v in visits if v.visit_type == VisitType.DELIVERY]
+    cost = [[_cost(v, e) for v in couriers] + [NOT_SEEN] * len(expected) for e in expected]
+    pick = _assign(cost) if expected else []
     used: set[str] = set()
     rows = []
-    for e in expected:
-        pool = [v for v in couriers if v.event.id not in used]
-        best = min(pool, key=lambda v: (_distance(v, e), v.event.timestamp), default=None)
-        if best is None:
-            rows.append({**asdict(e), "status": "not_seen", "visit": None})
+    for e, j in zip(expected, pick):
+        if j >= len(couriers):
+            rows.append({**asdict(e), "status": "not_seen", "also_fits": [], "visit": None})
             continue
+        best = couriers[j]
         used.add(best.event.id)
         in_window = _distance(best, e) == timedelta(0)
-        open_ = _is_open(best.event.timestamp, open_hours)
-        status = "seen" if open_ else "seen_while_closed"
+        status = "seen" if _is_open(best.event.timestamp, open_hours) else "seen_while_closed"
         if not in_window:
             status += "_outside_window"
-        rows.append({**asdict(e), "status": status, "visit": _visit_row(best, frames, open_hours)})
+        # Ring frames don't say whose courier it was; name the other suppliers this visit also fits
+        also = [o.supplier for o in expected if o is not e and _distance(best, o) == timedelta(0)]
+        rows.append({**asdict(e), "status": status, "also_fits": also,
+                     "visit": _visit_row(best, frames, open_hours)})
     unexpected = [_visit_row(v, frames, open_hours) for v in couriers if v.event.id not in used]
     return {"expected": rows, "unexpected": unexpected,
             "seen": sum(1 for r in rows if r["status"] != "not_seen"), "total": len(rows)}

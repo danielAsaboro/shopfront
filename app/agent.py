@@ -18,6 +18,8 @@ You answer the owner's questions about what happened at the shop's door, using o
 - Labels "by bedrock" came from Amazon Bedrock looking at the Ring frame. Labels "by rules" are guesses
   from time of day and event kind; say so when an answer depends on one.
 - Ring has no "door answered" signal. Say a courier was at the door, never that a parcel was received.
+- When the owner quotes a carrier's "attempted delivery" time, call check_attempt and give its text; don't
+  soften or strengthen it.
 - When a visit has a frame_url, end your answer with it on its own line as: Frame: <frame_url>
 - If the data doesn't answer the question, say what is missing in one sentence.
 Answer in two or three short sentences, plain English, times as HH:MM."""
@@ -37,8 +39,10 @@ class ShopTools:
     """Plain functions over the app's data; agent tools wrap these and record each call."""
 
     def __init__(self, visits_for_day: Callable[[date], list[dict]], receipts_for_day: Callable[[date], dict],
-                 hours_for_day: Callable[[date], str], today: date):
+                 hours_for_day: Callable[[date], str], today: date,
+                 attempt_checker: Callable[[datetime], dict] | None = None):
         self._visits, self._receipts, self._hours, self.today = visits_for_day, receipts_for_day, hours_for_day, today
+        self._attempt = attempt_checker
 
     def _day(self, value: str) -> date:
         value = (value or "").strip().lower()
@@ -58,6 +62,13 @@ class ShopTools:
     def deliveries(self, day: str) -> dict:
         d = self._day(day)
         return {"date": d.isoformat(), **self._receipts(d)}
+
+    def check_attempt(self, day: str, at: str) -> dict:
+        if not self._attempt:
+            raise ValueError("attempt checks aren't available")
+        d = self._day(day)
+        t = datetime.strptime(at.strip(), "%H:%M").time()
+        return self._attempt(datetime.combine(d, t))
 
     def week(self, end_day: str) -> list[dict]:
         end = self._day(end_day)
@@ -112,6 +123,16 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
         """
         return recorded("week", tools.week, end_day=end_day)
 
+    @tool
+    def check_attempt(day: str, at: str) -> dict:
+        """Check a carrier's "delivery attempted" time against the doorbell: was a courier at the door near then?
+
+        Args:
+            day: YYYY-MM-DD, "today" or "yesterday".
+            at: the carrier's time, HH:MM in shop local time.
+        """
+        return recorded("check_attempt", tools.check_attempt, day=day, at=at)
+
     model = BedrockModel(model_id=model_id, region_name=region, temperature=0, max_tokens=400)
 
     def on_response(parsed=None, **_):
@@ -121,7 +142,7 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
 
     model.client.meta.events.register("after-call.bedrock-runtime.*", on_response)
     today = tools.today
-    return Agent(model=model, tools=[door_visits, deliveries, week], callback_handler=None,
+    return Agent(model=model, tools=[door_visits, deliveries, week, check_attempt], callback_handler=None,
                  system_prompt=SYSTEM.format(shop=shop, today=today.isoformat(), weekday=today.strftime("%A")))
 
 

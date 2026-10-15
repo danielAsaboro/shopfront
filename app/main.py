@@ -15,6 +15,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
+from app.reconcile import TOLERANCE, check_attempt
 from app.deliveries import STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line, receipts
 from app.hours import posted_hours
 from app.live import LiveError, LiveLog
@@ -299,6 +300,23 @@ def api_deliveries(date: str | None = Query(None)):
     return _receipts(_parse_day(date))
 
 
+def _check_attempt(at: datetime) -> dict:
+    at = at.replace(tzinfo=settings.tz) if at.tzinfo is None else at.astimezone(settings.tz)
+    days = sorted({(at - TOLERANCE).date(), at.date(), (at + TOLERANCE).date()})  # attempts near midnight
+    return check_attempt(at, [v for d in days for v in _visits(d)], frames.url)
+
+
+@app.get("/api/attempt")
+def api_attempt(at: str = Query(..., description="carrier's attempted-delivery time, YYYY-MM-DDTHH:MM, shop local")):
+    try:
+        when = datetime.fromisoformat(at)
+    except ValueError:
+        return JSONResponse({"error": "BAD_TIME", "detail": "use YYYY-MM-DDTHH:MM"}, status_code=400)
+    if when.date() > datetime.now(settings.tz).date():
+        return JSONResponse({"error": "BAD_TIME", "detail": "that time is in the future"}, status_code=400)
+    return _check_attempt(when)
+
+
 @app.get("/frames/{name}")
 def frame(request: Request, name: str):
     _local_only(request)  # door frames stay on this machine
@@ -322,7 +340,7 @@ def _agent_tools(today: date) -> shop_agent.ShopTools:
         oh = posted_hours(profile.hours(), d)
         return f"{oh[0]:%H:%M}-{oh[1]:%H:%M}" if oh else "closed"
 
-    return shop_agent.ShopTools(visits, _receipts, hours_text, today)
+    return shop_agent.ShopTools(visits, _receipts, hours_text, today, _check_attempt)
 
 
 @app.post("/api/ask")
