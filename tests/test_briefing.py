@@ -81,7 +81,10 @@ def test_bedrock_reply_is_parsed_with_request_id():
     assert (v.visit_type, v.source, v.request_id) == (VisitType.DELIVERY, "bedrock", "rid")
 
 
-def test_dashboard_and_api_render():
+def test_dashboard_and_api_render(monkeypatch, tmp_path):
+    from app.ring import RingSource
+
+    monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
     c = TestClient(main.app)
     page = c.get("/?date=2026-10-07").text
     assert "Synthetic demo data" in page and "Every door event" in page
