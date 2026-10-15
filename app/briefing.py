@@ -15,9 +15,11 @@ from app.ring.base import RingClient
 
 def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
-                 cache: ClassificationCache | None = None) -> list[ClassifiedVisit]:
+                 cache: ClassificationCache | None = None, live=None) -> list[ClassifiedVisit]:
     open_hours = posted_hours(hours, day)
     visits: list[ClassifiedVisit] = []
+    if live is not None and isinstance(ring, RingApiClient):  # live-view sessions from the same Ring source
+        visits.extend(live.visits_for_day(day))
     for e in ring.events_for_day(day):
         if not isinstance(classifier, BedrockClassifier):
             visits.append(classifier.classify(e, open_hours))
@@ -39,7 +41,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             cache.put(e.id, {"type": v.visit_type.value, "confidence": v.confidence, "reason": v.reason,
                              "model": classifier.model_id, "request_id": v.request_id})
         visits.append(v)
-    return visits
+    return sorted(visits, key=lambda v: v.event.timestamp)
 
 
 def _hourly(visits: list[ClassifiedVisit]) -> list[int]:
@@ -66,9 +68,9 @@ def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
 
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
                    hours: dict[int, tuple[int, int] | None],
-                   cache: ClassificationCache | None = None) -> Briefing:
-    today = classify_day(ring, classifier, day, hours, cache)
-    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache)
+                   cache: ClassificationCache | None = None, live=None) -> Briefing:
+    today = classify_day(ring, classifier, day, hours, cache, live)
+    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live)
     open_hours = posted_hours(hours, day)
 
     hourly, hourly_lw = _hourly(today), _hourly(last_week)

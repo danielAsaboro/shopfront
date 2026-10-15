@@ -12,9 +12,10 @@ from app.briefing import build_briefing, classify_day
 from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.config import settings
-from app.hours import parse_hours
+from app.hours import parse_hours, posted_hours
+from app.live import LiveError, LiveLog
 from app.ring import RingSource
-from app.ring.api import RingError, RingStatus
+from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.webhooks import WebhookLog, WebhookStatus
 
 app = FastAPI(title="Shopfront")
@@ -26,6 +27,7 @@ classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl")
 source = RingSource(settings, DATA / "ring-access-token")
+live = LiveLog(DATA, settings.tz)
 
 
 def _parse_day(value: str | None) -> date:
@@ -38,7 +40,7 @@ def _parse_day(value: str | None) -> date:
 
 
 def _briefing(day: date):
-    return build_briefing(source.get(), classifier, day, settings.shop_name, hours, cache)
+    return build_briefing(source.get(), classifier, day, settings.shop_name, hours, cache, live)
 
 
 def _local_only(request: Request) -> None:
@@ -106,11 +108,64 @@ def api_briefing(date: str | None = Query(None)):
 
 @app.get("/api/events")
 def api_events(date: str | None = Query(None)):
-    visits = classify_day(source.get(), classifier, _parse_day(date), hours, cache)
+    visits = classify_day(source.get(), classifier, _parse_day(date), hours, cache, live)
     return [{"id": v.event.id, "time": v.event.timestamp.isoformat(), "kind": v.event.kind,
              "event_source": v.event.source, "type": v.visit_type.value, "confidence": v.confidence,
              "reason": v.reason, "classifier": v.source, "bedrock_request_id": v.request_id}
             for v in visits]
+
+
+def _live_ring() -> RingApiClient:
+    ring = source.get()
+    if not isinstance(ring, RingApiClient):
+        raise HTTPException(409, "Connect Ring first: live view needs a Ring token (/connect)")
+    return ring
+
+
+@app.exception_handler(LiveError)
+def live_error(request: Request, exc: LiveError):
+    return JSONResponse({"error": exc.code, "detail": str(exc)}, status_code=404 if exc.code == "UNKNOWN_SESSION" else 400)
+
+
+@app.get("/live", response_class=HTMLResponse)
+def live_page(request: Request):
+    ring = source.get()
+    return templates.TemplateResponse(request, "live.html", {
+        "shop": settings.shop_name, "connected": isinstance(ring, RingApiClient),
+        "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
+
+
+@app.post("/api/live/start")
+async def live_start(request: Request):
+    ring = _live_ring()
+    offer = (await request.body()).decode()
+    if "v=0" not in offer:
+        raise HTTPException(400, "body must be an SDP offer")
+    answer, session_url = ring.whep_start(offer)
+    s = live.start(ring.device_id, session_url)
+    return {"session": s.id, "answer": answer, "ring_request_id": ring.last_request_id}
+
+
+@app.post("/api/live/{session_id}/frame")
+async def live_frame(session_id: str, request: Request):
+    day = datetime.now(settings.tz).date()
+    return live.frame(session_id, await request.body(), classifier, posted_hours(hours, day))
+
+
+@app.post("/api/live/{session_id}/stop")
+def live_stop(session_id: str):
+    s = live.get(session_id)
+    ring_error = None
+    try:
+        _live_ring().whep_stop(s.session_url)
+    except (RingError, HTTPException) as exc:  # still record the session; report why the stop failed
+        ring_error = getattr(exc, "status", None) and exc.status.value
+    return {**live.stop(session_id), "ring_stop_error": ring_error}
+
+
+@app.get("/api/live/sessions")
+def live_sessions():
+    return live.rows()
 
 
 @app.post("/webhooks/ring")

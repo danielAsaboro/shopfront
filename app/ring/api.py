@@ -4,6 +4,7 @@ Calls, all against https://api.amazonvision.com:
   GET  /v1/devices                                   find the doorbell when RING_DEVICE_ID is empty
   GET  /v1/history/devices/{id}/events               the day's dings and motion events (paged, newest first)
   POST /v1/devices/{id}/media/image/download         the frame at an event's start time (303 -> pre-signed GET)
+  POST /v1/devices/{id}/media/streaming/whep/sessions live view (the Developer Playground's simulator), + DELETE
 Tokens come from POST https://oauth.ring.com/oauth/token (refresh_token grant), or are a
 Developer Playground access token used as-is.
 
@@ -140,9 +141,9 @@ class RingApiClient(RingClient):
 
     def _request(self, method: str, path: str, **kw) -> httpx.Response:
         url = path if path.startswith("http") else f"{API_BASE}{path}"
+        extra = kw.pop("headers", {})
         for attempt in (0, 1):
-            headers = {"Authorization": f"Bearer {self.auth.token(force_refresh=attempt == 1)}",
-                       **kw.pop("headers", {})}
+            headers = {"Authorization": f"Bearer {self.auth.token(force_refresh=attempt == 1)}", **extra}
             try:
                 resp = self._http.request(method, url, headers=headers, **kw)
             except httpx.HTTPError as exc:
@@ -216,3 +217,23 @@ class RingApiClient(RingClient):
         if not resp.headers.get("content-type", "").startswith("image/"):
             raise RingError(RingStatus.MALFORMED_RESPONSE, f"snapshot content-type {resp.headers.get('content-type')}")
         return resp.content
+
+    # Live view (WHEP). The browser builds the SDP offer; the Bearer token stays on the server.
+    def whep_start(self, sdp_offer: str) -> tuple[str, str]:
+        """POST /v1/devices/{id}/media/streaming/whep/sessions → (SDP answer, session URL)."""
+        resp = self._request("POST", f"/v1/devices/{self.device_id}/media/streaming/whep/sessions",
+                             content=sdp_offer.encode(),
+                             headers={"Content-Type": "application/sdp"})
+        location = resp.headers.get("Location")
+        if resp.status_code != 201 or not location or "v=0" not in resp.text:
+            raise RingError(RingStatus.MALFORMED_RESPONSE,
+                            f"WHEP answer: HTTP {resp.status_code}, Location {'set' if location else 'missing'}")
+        return resp.text, location
+
+    def whep_stop(self, session_url: str) -> None:
+        """DELETE the WHEP session. A 404 means Ring already ended it, which is fine."""
+        try:
+            self._request("DELETE", session_url)
+        except RingError as exc:
+            if exc.status != RingStatus.DEVICE_NOT_FOUND:
+                raise

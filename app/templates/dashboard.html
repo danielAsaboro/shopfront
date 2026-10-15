@@ -17,7 +17,7 @@
       <div class="eyebrow">Shopfront · morning briefing</div>
       <h1>{{ b.shop_name }}</h1>
     </div>
-    <form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form>
+    <nav style="display:flex;gap:12px;align-items:center"><a href="/live">Live door</a><form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form></nav>
   </header>
 
   <section class="lead">
