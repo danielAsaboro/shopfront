@@ -49,7 +49,7 @@
   const v = document.getElementById('v'), idle = document.getElementById('idle');
   const startBtn = document.getElementById('start'), stopBtn = document.getElementById('stop');
   const status = document.getElementById('status'), label = document.getElementById('label');
-  let pc = null, session = null, timer = null, stopping = false;
+  let pc = null, session = null, timer = null, stopping = false, ridShown = '—';
   const say = (t) => { status.textContent = t; };
 
   async function start() {
@@ -57,8 +57,14 @@
     try {
       pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
       pc.addTransceiver('video', { direction: 'recvonly' });  // Ring docs: receive-only, video required
+      pc.addTransceiver('audio', { direction: 'recvonly' });  // optional one-way audio; the video element stays muted
       pc.ontrack = (e) => { v.srcObject = e.streams[0] || new MediaStream([e.track]); idle.hidden = true; };
-      pc.onconnectionstatechange = () => { if (pc && pc.connectionState === 'failed') stop('WebRTC connection failed'); };
+      pc.onconnectionstatechange = () => {
+        if (!pc) return;
+        window.__liveState = { connection: pc.connectionState, ice: pc.iceConnectionState };
+        if (pc.connectionState === 'failed') stop('WebRTC connection failed');
+        else if (session) say(`WebRTC ${pc.connectionState} · Ring X-Request-ID ${ridShown}`);
+      };
       await pc.setLocalDescription(await pc.createOffer());
       await new Promise((ok) => {
         if (pc.iceGatheringState === 'complete') return ok();
@@ -68,7 +74,7 @@
       const r = await fetch('/api/live/start', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error ? `${body.error}${body.request_id ? ' · X-Request-ID ' + body.request_id : ''}` : (body.detail || r.status));
-      session = body.session;
+      session = body.session; ridShown = body.ring_request_id || '—';
       await pc.setRemoteDescription({ type: 'answer', sdp: body.answer });
       say(`Streaming · Ring X-Request-ID ${body.ring_request_id || '—'}`);
       stopBtn.disabled = false;

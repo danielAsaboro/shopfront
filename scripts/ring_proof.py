@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -30,10 +31,18 @@ def h(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()[:12]
 
 
+def redact(url: str) -> str:
+    """Hash Ring device/account IDs and drop pre-signed query strings."""
+    url = re.sub(r"ava1\.ring\.(device|account)\.[A-Z0-9]+", lambda m: f"<{m.group(1)}:{h(m.group(0))}>", url)
+    return url.split("?security_token")[0].split("?location=")[0]
+
+
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--date", default=None, help="shop-local day to read (default: today)")
     p.add_argument("--bedrock", action="store_true", help="also classify the frame with Bedrock (costs a call)")
+    p.add_argument("--latest-frame", action="store_true",
+                   help="also ask for the latest image in the last 24 h, even with no history events")
     args = p.parse_args()
     day = date.fromisoformat(args.date) if args.date else datetime.now(settings.tz).date()
 
@@ -41,8 +50,8 @@ def main() -> int:
 
     def hook(resp: httpx.Response) -> None:
         req = resp.request
-        log.append({"method": req.method, "url": str(req.url).replace(API_BASE, "")
-                    .split("?security_token")[0], "status": resp.status_code,
+        log.append({"method": req.method, "url": redact(str(req.url).replace(API_BASE, "")),
+                    "status": resp.status_code,
                     "x_request_id": resp.headers.get("X-Request-ID"),
                     "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
 
@@ -79,6 +88,23 @@ def main() -> int:
                     e, posted_hours(parse_hours(settings.shop_hours), day))
                 record["bedrock"] = {"model": settings.bedrock_model_id, "label": v.visit_type.value,
                                      "source": v.source, "reason": v.reason, "request_id": v.request_id}
+        if args.latest_frame:
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            try:
+                resp = ring._request("POST", f"/v1/devices/{ring.device_id}/media/image/download",
+                                     json={"type": "latest_in_range", "start_timestamp": now_ms - 86_400_000,
+                                           "end_timestamp": now_ms, "image_options": {"format": "jpeg"}})
+                frame = resp.content
+                record["latest_frame"] = {"bytes": len(frame), "sha256": hashlib.sha256(frame).hexdigest(),
+                                          "content_type": resp.headers.get("content-type"),
+                                          "x_media_timestamp": resp.headers.get("X-Media-Timestamp"),
+                                          "x_media_origin": resp.headers.get("X-Media-Origin")}
+                raw = OUT / "raw"
+                raw.mkdir(parents=True, exist_ok=True)
+                (raw / f"latest-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.jpg").write_bytes(frame)
+            except RingError as exc:
+                record["latest_frame"] = {"error": exc.status.value, "http_status": exc.http_status,
+                                          "request_id": exc.request_id}
     except RingError as exc:
         record["error"] = {"status": exc.status.value, "http_status": exc.http_status,
                            "request_id": exc.request_id}

@@ -112,8 +112,8 @@ class LiveLog:
         out = []
         for r in self.rows():
             started = datetime.fromisoformat(r["started"]).astimezone(self.tz)
-            if started.date() != day:
-                continue
+            if started.date() != day or not r["frames_seen"]:
+                continue  # a session that never delivered video isn't a visit
             lab = r["label"]
             ev = DoorEvent(id=r["id"], device_id=r["device_id"], timestamp=started, kind="live_view",
                            source="ring-live")

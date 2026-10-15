@@ -134,3 +134,10 @@ def test_live_view_needs_ring_connected(monkeypatch, tmp_path):
     c = TestClient(main.app)
     assert c.post("/api/live/start", content="v=0").status_code == 409
     assert "Connect Ring" in c.get("/live").text
+
+
+def test_session_without_video_is_logged_but_not_a_visit(tmp_path):
+    log = LiveLog(tmp_path, TZ)
+    s = log.start(DEV, SESSION_URL)
+    assert log.stop(s.id)["frames_seen"] == 0
+    assert log.visits_for_day(datetime.now(TZ).date()) == []
