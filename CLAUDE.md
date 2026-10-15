@@ -1,14 +1,14 @@
 # Shopfront
 One line: a morning briefing for small-shop owners, built from the Ring doorbell they already have.
 For: owner of a one-door shop (bakery, café, salon) · Job: tell them what happened at the door yesterday: deliveries that rang while closed, when staff actually arrived, and foot traffic vs last week · Done: a briefing for a real day of real Ring events, labelled by Bedrock from Ring frames.
-Sponsor mechanism (critical path): Ring Event History + image download → Bedrock vision label → briefing.
+Sponsor mechanism (critical path): Ring Event History + image download → Bedrock vision label → briefing. Live door: Ring WHEP live view (the Developer Playground simulator plays here) → sampled frames → Bedrock → visit in the briefing.
 Features in scope: briefing headline · deliveries while closed · staff first/last at the door · hourly foot traffic vs same weekday · per-event label with reason.
-Not building: live video, alerts/push, multi-shop, Ring Appstore listing/certification, account-linking UI.
+Not building: alerts/push, multi-shop, Ring Appstore listing/certification, account-linking UI.
 
 Stack: Python 3.11+, FastAPI, Jinja, httpx, boto3. Run: `.venv/bin/uvicorn app.main:app --reload --port 8000` · Test: `.venv/bin/python -m pytest -q` · Proof: `.venv/bin/python -m scripts.ring_proof --bedrock`
 CI does NOT exist. Tests never touch the live Ring or AWS APIs; they use MockTransport and fakes.
 
-Repo map: app/ring/api.py (live Ring client) · app/ring/synthetic.py (demo generator) · app/ring/webhooks.py · app/classify/{rules,bedrock}.py · app/briefing.py · app/main.py · docs/{ring,bedrock}.md · evidence/ (live captures only) · scripts/ring_proof.py
+Repo map: app/ring/api.py (live Ring client) · app/ring/synthetic.py (demo generator) · app/ring/webhooks.py · app/live.py (live-view sessions) · app/classify/{rules,bedrock}.py · app/briefing.py · app/main.py · docs/{ring,bedrock}.md · evidence/ (live captures only) · scripts/ring_proof.py
 
 Invariants (never):
 - never fall back from live Ring to synthetic data; a Ring failure renders its RingStatus

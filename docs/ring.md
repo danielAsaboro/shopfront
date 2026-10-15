@@ -24,6 +24,8 @@ Every number in the briefing comes from Ring events for the shop's doorbell, or 
 6. The frame goes to Bedrock (see [bedrock.md](bedrock.md)), and the label is cached per Ring event ID so a frame is classified once.
 7. The same steps run for the same weekday last week, and the briefing compares the two.
 
+**Live door** (`/live`): the browser builds a WebRTC offer (video, receive-only) and posts it to Shopfront. Shopfront forwards it to `POST /v1/devices/{id}/media/streaming/whep/sessions` with the Bearer token (the token never reaches the browser), returns Ring's SDP answer, and keeps the session URL from `Location`. The page samples a frame every 3 seconds. Up to 6 frames per session go to Bedrock, the session becomes one visit labelled by its most confident frame, and `DELETE <session URL>` ends it. Sessions are logged to `.data/live-sessions.jsonl` and merged into the briefing.
+
 Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /webhooks/ring` and logged. The briefing itself reads Event History, so it still works when no webhook URL is registered.
 
 ## 4. Endpoints used
@@ -34,6 +36,8 @@ Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /
 | `GET /v1/devices` | Find the doorbell | Bearer | `RingApiClient.list_devices` |
 | `GET /v1/history/devices/{id}/events` | The day's dings and motion | Bearer | `RingApiClient.events_for_day` |
 | `POST /v1/devices/{id}/media/image/download` → 303 → GET | Frame at the event time | Bearer, then pre-signed URL | `RingApiClient.snapshot` |
+| `POST /v1/devices/{id}/media/streaming/whep/sessions` (SDP) → 201 + `Location` | Live view | Bearer | `RingApiClient.whep_start` |
+| `DELETE <Location>` | End live view | Bearer | `RingApiClient.whep_stop` |
 | `POST /webhooks/ring` (ours) | Receive Ring notifications | `X-Signature: sha256=<hex>` | `WebhookLog.handle` |
 
 All Ring calls go to the production base URL `https://api.amazonvision.com`. Ring's docs list no separate staging API host.
@@ -73,6 +77,8 @@ Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_ap
 | History is time-gated to events after the user's consent, so "same day last week" is empty for the first week after linking. The briefing says so instead of showing 0 as a real comparison. | API reference, Event History | Docs | Docs only |
 | Whether `event_types=motion.human` returns anything when Smart Alerts is off is not documented. Shopfront defaults to `ding,motion`. | API reference | Docs | Open question |
 | An invalid Bearer token on `GET /v1/devices` returns 401 with an `X-Request-ID` header. | Live call | `scripts/ring_proof.py` with a deliberately invalid token | **Seen live**, see section 8 |
+| The Developer Playground (the hackathon's accepted "simulator") provisions one test doorbell. Its Event History stays empty, even after a simulated event. Its Package / Vehicle / Motion buttons choose a recorded clip (31 s / 21 s / 39 s) that plays over the WHEP live-view endpoint. The clip is chosen through a console-only call, so a partner app can't pick it. That's why Shopfront has a live-view path, not just a history path. | Playground, 2026-10-15 | `GET /v1/devices` returned 1 device. `GET /v1/history/devices/{id}/events` returned `{"data": []}` before and after a simulated Package event. | **Seen live** in the Playground UI |
+| The sample app offers `audio` as `sendrecv`, while the API reference says live streams are receive-only. Shopfront offers video `recvonly` only. | Sample `useWebRTCStream.ts` vs API reference | Comparing the two | Unverified live |
 
 ## 7. Config
 
