@@ -32,6 +32,7 @@ class AgentUnavailable(Exception):
 @dataclass
 class Trace:
     tools: list[dict] = field(default_factory=list)
+    results: list = field(default_factory=list)  # what each tool returned, in call order; kept off the API
     bedrock_request_ids: list[str] = field(default_factory=list)
 
 
@@ -92,9 +93,11 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
     def recorded(name: str, fn, **args):
         trace.tools.append({"tool": name, "args": args})
         try:
-            return fn(**args)
+            out = fn(**args)
         except ValueError as exc:
-            return {"error": str(exc)}
+            out = {"error": str(exc)}
+        trace.results.append(out)
+        return out
 
     @tool
     def door_visits(day: str) -> dict:
@@ -147,7 +150,7 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
 
 
 def ask(question: str, tools: ShopTools, shop: str, region: str, model_id: str,
-        agent_factory=build_agent) -> dict:
+        agent_factory=build_agent, keep_results: bool = False) -> dict:
     question = question.strip()
     if not question:
         raise ValueError("ask a question")
@@ -164,4 +167,5 @@ def ask(question: str, tools: ShopTools, shop: str, region: str, model_id: str,
     text = "\n".join(ln for ln in answer.splitlines() if not ln.startswith("Frame:")).strip()
     return {"question": question, "answer": text, "frame_url": frame if frame and frame.startswith("/frames/") else None,
             "tools": trace.tools, "bedrock_request_ids": trace.bedrock_request_ids, "model": model_id,
-            "seconds": round((datetime.now() - started).total_seconds(), 1)}
+            "seconds": round((datetime.now() - started).total_seconds(), 1),
+            **({"tool_results": trace.results} if keep_results else {})}
