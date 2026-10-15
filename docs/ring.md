@@ -77,6 +77,8 @@ Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_ap
 | History is time-gated to events after the user's consent, so "same day last week" is empty for the first week after linking. The briefing says so instead of showing 0 as a real comparison. | API reference, Event History | Docs | Docs only |
 | Whether `event_types=motion.human` returns anything when Smart Alerts is off is not documented. Shopfront defaults to `ding,motion`. | API reference | Docs | Open question |
 | An invalid Bearer token on `GET /v1/devices` returns 401 with an `X-Request-ID` header. | Live call | `scripts/ring_proof.py` with a deliberately invalid token | **Seen live**, see section 8 |
+| A Playground token gets 403 FORBIDDEN on image download, so frames for Playground devices can only come from live view. | Live call | `scripts/ring_proof.py --latest-frame` | **Seen live**, X-Request-ID 843c63da-… |
+| A WHEP session on the Playground doorbell connects (ICE and DTLS up) but carries no frames unless a Playground clip is playing at that moment. | Live call | `/live` twice, 2026-10-15 08:25 and 08:26 UTC | **Seen live** |
 | The Developer Playground (the hackathon's accepted "simulator") provisions one test doorbell. Its Event History stays empty, even after a simulated event. Its Package / Vehicle / Motion buttons choose a recorded clip (31 s / 21 s / 39 s) that plays over the WHEP live-view endpoint. The clip is chosen through a console-only call, so a partner app can't pick it. That's why Shopfront has a live-view path, not just a history path. | Playground, 2026-10-15 | `GET /v1/devices` returned 1 device. `GET /v1/history/devices/{id}/events` returned `{"data": []}` before and after a simulated Package event. | **Seen live** in the Playground UI |
 | The sample app offers `audio` as `sendrecv`, while the API reference says live streams are receive-only. Shopfront offers video `recvonly` only. | Sample `useWebRTCStream.ts` vs API reference | Comparing the two | Unverified live |
 
@@ -89,7 +91,10 @@ Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_ap
 | Action | Environment | Response id | Date |
 |---|---|---|---|
 | `GET /v1/devices` with a deliberately invalid token → 401, mapped to `TOKEN_REJECTED` | Production API | X-Request-ID `90478809-976d-4bde-9881-5f5611afb2fb` ([file](../evidence/)) | 2026-10-14 |
-| Device list, Event History and a frame for a real doorbell | Production API | **Not captured yet.** Needs a Ring developer account and a Playground token. | — |
+| `GET /v1/devices` → 200, 1 device (Playground test doorbell) | Production API, Playground token | `59df1289-b5c0-4083-9374-9d88c146145e` | 2026-10-15 |
+| `GET /v1/history/devices/{id}/events?event_types=ding,motion` → 200, `data: []` | same | `ba6d001b-5c40-450a-a0de-ade4d8444c07` | 2026-10-15 |
+| `POST /v1/devices/{id}/media/image/download` (`latest_in_range`) → **403 FORBIDDEN** | same | `843c63da-2847-48a0-b7ef-62bb088e82cc` | 2026-10-15 |
+| `POST …/media/streaming/whep/sessions` → 201 + SDP answer + Location; WebRTC connected; no frames (no clip playing) | same | `13622a41-1419-4b03-a905-5a4b976f11cf`, `a0349b9b-31ff-4e1f-96c9-7d8ab407483e` | 2026-10-15 |
 
 To add a row, run `RING_MODE=live RING_ACCESS_TOKEN=… .venv/bin/python -m scripts.ring_proof --bedrock` and commit the JSON it writes to `evidence/`.
 

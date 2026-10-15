@@ -26,9 +26,12 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Claim | Label | Artifact |
 |---|---|---|
 | Calls the Ring Partner API with a Bearer token and maps a 401 to a named state | live (error path) | `GET /v1/devices` → 401, X-Request-ID `90478809-976d-4bde-9881-5f5611afb2fb`, [evidence/](evidence/) |
-| Reads Event History and frames for a real doorbell | **not yet verified** | — |
+| Reads the Ring Developer Playground test doorbell: `GET /v1/devices` 200, Event History 200 (empty) | live (Playground) | X-Request-IDs `59df1289-…`, `ba6d001b-…` in [evidence/ring-proof-20261015T082514Z.json](evidence/ring-proof-20261015T082514Z.json) |
+| Opens a Ring live-view (WHEP) session from `/live`: 201, WebRTC connected | live (Playground) | X-Request-IDs `13622a41-…`, `a0349b9b-…` in [evidence/ring-live-view-20261015T0826Z.json](evidence/ring-live-view-20261015T0826Z.json) |
+| Receives video frames from a live session and labels them | **not yet verified** | No Playground clip was playing during the sessions above |
+| Downloads a Ring image | **blocked for Playground tokens** | `POST …/media/image/download` → 403 FORBIDDEN, X-Request-ID `843c63da-…` |
 | Labels a real Ring frame with Bedrock | **not yet verified** | — |
-| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (35 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
+| Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (44 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
 | Rejects unsigned or replayed Ring webhooks | local test | [tests/test_webhooks.py](tests/test_webhooks.py) |
 | Briefing logic (deliveries while closed, staff arrival, traffic vs last week) | local test on synthetic data | [tests/test_briefing.py](tests/test_briefing.py) |
 
