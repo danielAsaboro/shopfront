@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shopfront · Set up</title>
+{% include "_style.html" %}
+<style>
+  .setup-step { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .setup-step h2 { display: block; }
+  .setup-step .n { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .hours { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .hours label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .hours input, .row input { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line);
+                             border-radius: 6px; background: transparent; color: var(--ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+  .row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  .row .grow { flex: 1 1 180px; } .row .narrow { flex: 0 0 96px; } .row .tiny { flex: 0 0 56px; }
+  .done { color: var(--muted); }
+  .primary { display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 6px; background: var(--ink);
+             color: var(--bg); text-decoration: none; }
+  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">Shopfront · set up</div>
+  <h1>{{ p.name }}</h1>
+  {% if error %}<p class="banner warn-bg" role="alert">{{ error }}</p>{% endif %}
+
+  <section class="setup-step">
+    <h2><span class="n">1</span>Ring doorbell</h2>
+    {% if ring == "ring" %}
+    <p>Connected to Ring. <a href="/connect">Change token</a></p>
+    {% elif ring_error %}
+    <p class="warn">Ring refused the saved token ({{ ring_error }}). <a href="/connect">Paste a fresh one</a></p>
+    {% else %}
+    <p>Not connected, so Shopfront is showing synthetic demo data. <a href="/connect">Connect Ring</a> with a token from the Ring Developer Playground.</p>
+    {% endif %}
+  </section>
+
+  <form method="post" action="/setup">
+    <section class="setup-step">
+      <h2><span class="n">2</span>Your shop</h2>
+      <div class="row" style="margin-top:8px"><label class="grow">Shop name<input name="name" value="{{ p.name }}" maxlength="60" required></label></div>
+      <p class="proof" style="margin:14px 0 6px">Posted hours, 24-hour clock like <code>8-18</code>. Leave a day blank if you're closed.</p>
+      <div class="hours">
+        {% for d, h in days %}<label>{{ d }}<input name="h{{ loop.index0 }}" value="{{ '' if h == 'closed' else h }}" placeholder="closed" inputmode="numeric"></label>{% endfor %}
+      </div>
+      <p class="proof" style="margin:14px 0 6px">What does one missed delivery cost you (a redelivery fee, a lost morning's stock)? Shopfront uses only your number.</p>
+      <div class="row">
+        <label class="tiny">Currency<input name="currency" value="{{ p.currency }}" maxlength="3"></label>
+        <label class="narrow">Per delivery<input name="redelivery_cost" value="{{ '%g'|format(p.redelivery_cost) if p.redelivery_cost is not none else '' }}" inputmode="decimal" placeholder="e.g. 15"></label>
+        <div class="connect" style="margin:0"><button type="submit">Save</button></div>
+      </div>
+    </section>
+  </form>
+
+  <section class="setup-step" id="deliveries">
+    <h2><span class="n">3</span>Deliveries you're expecting</h2>
+    <p class="proof" style="margin:8px 0">Each courier the doorbell sees is matched to one of these and kept with its time and Ring frame, so you have a receipt when a supplier says they came.</p>
+    {% if expected %}
+    <table>
+      <tr><th>Day</th><th>Supplier</th><th>Window</th><th></th></tr>
+      {% for e in expected %}<tr><td class="t">{{ e.day }}</td><td>{{ e.supplier }}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}</td><td class="t">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
+        <td><form method="post" action="/deliveries/{{ e.id }}/remove"><button class="linkish" style="font:inherit;background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline">remove</button></form></td></tr>{% endfor %}
+    </table>
+    {% endif %}
+    <form method="post" action="/deliveries" class="row" style="margin-top:12px">
+      <label class="narrow" style="flex-basis:150px">Day<input type="date" name="day" value="{{ today }}" required></label>
+      <label class="grow">Supplier<input name="supplier" placeholder="e.g. Flour from Bay Mills" maxlength="80" required></label>
+      <label class="narrow">From<input type="time" name="window_start"></label>
+      <label class="narrow">To<input type="time" name="window_end"></label>
+      <div class="connect" style="margin:0"><button type="submit">Add</button></div>
+    </form>
+  </section>
+
+  <section class="setup-step">
+    <h2><span class="n">4</span>Watch the door</h2>
+    <p>Open the live door to see a courier labelled as they arrive, or read today's briefing.</p>
+    <a class="primary" href="/live">Open the live door</a> &nbsp; <a href="/?date={{ today }}">Today's briefing</a>
+  </section>
+</main>
+</body>
+</html>

@@ -14,10 +14,10 @@
 
   <header>
     <div>
-      <div class="eyebrow">Shopfront · morning briefing</div>
+      <div class="eyebrow">Shopfront · the front door, {{ b.date }}</div>
       <h1>{{ b.shop_name }}</h1>
     </div>
-    <nav style="display:flex;gap:12px;align-items:center"><a href="/live">Live door</a><form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form></nav>
+    <nav style="display:flex;gap:12px;align-items:center"><a href="/live">Live door</a><a href="/setup">Set up</a><form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form></nav>
   </header>
 
   <section class="lead">
@@ -27,16 +27,54 @@
     {% else %}
     <p class="first">No door activity recorded for {{ b.date }}.</p>
     {% endif %}
+    {% if money %}<p class="money">{{ money }}</p>{% elif not profile.redelivery_cost %}<p class="proof" style="margin-top:10px"><a href="/setup">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
   </section>
 
   <section class="figures">
-    <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Deliveries while closed</span></div>
+    <div><span class="v {% if r.total and r.seen < r.total %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
+    <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Couriers while closed</span></div>
     <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
-    <div><span class="v">{{ b.customers }}</span><span class="l">Customers · last wk {{ b.customers_last_week }}</span></div>
   </section>
 
+  <section class="block" aria-labelledby="dlv">
+    <h2 id="dlv">Deliveries</h2>
+    {% if r.total %}<span class="legend">{{ r.seen }} of {{ r.total }} expected reached the door</span>{% endif %}
+    {% if r.expected or r.unexpected %}
+    <table class="receipts">
+      {% for x in r.expected %}<tr>
+        <td class="t">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
+        <td><strong>{{ x.supplier }}</strong><br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}</td>
+        <td class="why">{% if x.visit %}by {{ x.visit.labelled_by }}: {{ x.visit.reason }}{% endif %}</td>
+        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
+      </tr>{% endfor %}
+      {% for u in r.unexpected %}<tr>
+        <td class="t">{{ u.time }}</td>
+        <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
+        <td class="why">by {{ u.labelled_by }}: {{ u.reason }}</td>
+        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="Ring frame at {{ u.time }}" loading="lazy"></a>{% endif %}</td>
+      </tr>{% endfor %}
+    </table>
+    {% else %}
+    <p class="proof" style="margin-top:6px">No couriers seen and none expected. <a href="/setup#deliveries">List what you're expecting</a> and Shopfront will check each one off as the doorbell sees it.</p>
+    {% endif %}
+  </section>
+
+  <section class="block ask" aria-labelledby="askh">
+    <h2 id="askh">Ask about the door</h2>
+    {% if can_ask %}
+    <form id="ask" class="row-ask">
+      <input name="q" id="q" placeholder="Did the flour delivery come yesterday?" maxlength="500" autocomplete="off" required>
+      <button type="submit">Ask</button>
+    </form>
+    <div id="answer" aria-live="polite"></div>
+    {% else %}
+    <p class="proof" style="margin-top:6px">Answers come from a Strands agent on Amazon Bedrock. Sign in to AWS (<code>aws login</code>) and restart to turn it on.</p>
+    {% endif %}
+  </section>
+
+
   <section class="block">
-    <h2>Foot traffic by hour</h2>
+    <h2>Foot traffic by hour · {{ b.customers }} customers, last wk {{ b.customers_last_week }}</h2>
     <span class="legend"><i style="background:var(--today)"></i>Today<i style="background:var(--lw)"></i>Same day last week</span>
     <div class="chart" role="img" aria-label="Customers per hour, today vs last week">
       {% for h in range(6, 23) %}
@@ -75,5 +113,27 @@
     · <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a>
   </footer>
 </main>
+{% if can_ask %}
+<script>
+const f = document.getElementById("ask"), out = document.getElementById("answer");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+f.addEventListener("submit", async e => {
+  e.preventDefault();
+  const q = document.getElementById("q").value, btn = f.querySelector("button");
+  btn.disabled = true; out.innerHTML = '<p class="proof">Asking Bedrock…</p>';
+  try {
+    const res = await fetch("/api/ask", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question: q})});
+    const d = await res.json();
+    if (!res.ok) { out.innerHTML = `<p class="warn">Can't answer right now · ${esc(d.error)}</p><p class="proof">${esc(d.detail || "")}</p>`; return; }
+    const tools = d.tools.map(t => `${t.tool}(${Object.values(t.args).join(", ")})`).join(" · ") || "no tools";
+    out.innerHTML = `<p class="said">${esc(d.answer).replace(/\n/g, "<br>")}</p>`
+      + (d.frame_url ? `<a href="${esc(d.frame_url)}"><img class="frame" src="${esc(d.frame_url)}" alt="Ring frame the answer refers to"></a>` : "")
+      + `<p class="proof">Strands agent on Bedrock (${esc(d.model)}) · looked at ${esc(tools)}`
+      + (d.bedrock_request_ids.length ? ` · Bedrock RequestId ${esc(d.bedrock_request_ids.at(-1))}` : "") + ` · ${d.seconds}s</p>`;
+  } catch (err) { out.innerHTML = `<p class="warn">Can't reach Shopfront: ${esc(err)}</p>`; }
+  finally { btn.disabled = false; }
+});
+</script>
+{% endif %}
 </body>
 </html>

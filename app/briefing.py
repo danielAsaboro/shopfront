@@ -15,7 +15,7 @@ from app.ring.base import RingClient
 
 def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
-                 cache: ClassificationCache | None = None, live=None) -> list[ClassifiedVisit]:
+                 cache: ClassificationCache | None = None, live=None, frames=None) -> list[ClassifiedVisit]:
     open_hours = posted_hours(hours, day)
     visits: list[ClassifiedVisit] = []
     if live is not None and isinstance(ring, RingApiClient):  # live-view sessions from the same Ring source
@@ -36,6 +36,8 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             except RingError as exc:
                 no_frame = f"no Ring frame: {exc.status.value}"
         v = classifier.classify(e, open_hours, no_frame_reason=no_frame)
+        if frames is not None and e.snapshot and v.source == "bedrock":
+            frames.save(e.id, e.snapshot)  # keep the frame Bedrock saw, as the visit's receipt
         e.snapshot = None  # don't keep images in memory
         if v.source == "bedrock" and cache:
             cache.put(e.id, {"type": v.visit_type.value, "confidence": v.confidence, "reason": v.reason,
@@ -68,9 +70,9 @@ def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
 
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
                    hours: dict[int, tuple[int, int] | None],
-                   cache: ClassificationCache | None = None, live=None) -> Briefing:
-    today = classify_day(ring, classifier, day, hours, cache, live)
-    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live)
+                   cache: ClassificationCache | None = None, live=None, frames=None) -> Briefing:
+    today = classify_day(ring, classifier, day, hours, cache, live, frames)
+    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames)
     open_hours = posted_hours(hours, day)
 
     hourly, hourly_lw = _hourly(today), _hourly(last_week)

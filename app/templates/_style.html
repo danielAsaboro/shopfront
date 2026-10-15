@@ -54,6 +54,15 @@
                     background: var(--ink); color: var(--bg); cursor: pointer; }
   .connect button.secondary { background: transparent; color: var(--muted); border: 1px solid var(--line); }
   .banner a { color: inherit; font-weight: 600; }
+  .money { margin: 14px 0 0; font-size: 15px; }
+  .receipts td.thumb { width: 72px; padding-right: 0; }
+  .receipts img, .ask img.frame { display:block; width: 72px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
+  .ask img.frame { width: 240px; max-width: 100%; margin: 8px 0; }
+  .row-ask { display:flex; gap:8px; margin-top: 10px; }
+  .row-ask input { flex:1; font: inherit; padding: 8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--ink); }
+  .row-ask button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 0; background: var(--ink); color: var(--bg); cursor: pointer; }
+  .row-ask button:disabled { opacity: .4; }
+  .ask .said { font-size: 17px; margin: 12px 0 4px; }
   @media (max-width: 560px) {
     .axis span:nth-child(odd) { visibility:hidden; }
     .figures div + div { padding-left: 10px; }
