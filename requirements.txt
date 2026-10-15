@@ -8,3 +8,4 @@ boto3>=1.35
 botocore[crt]>=1.35  # needed for credentials from `aws login`
 pytest>=8
 strands-agents>=1.0  # Ask Shopfront: agent with tools over the door data, on Bedrock
+hypothesis>=6.100  # property tests for the delivery matcher and attempt checks

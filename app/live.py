@@ -81,6 +81,8 @@ class LiveLog:
             (self.frames_dir / f"{s.id}.jpg").write_bytes(jpeg)
         if len(s.labels) >= MAX_FRAMES_CLASSIFIED:
             return {"session": s.id, "frames_seen": s.frames_seen, "label": s.best(), "classified": False}
+        # keep every frame Bedrock is asked about, so the labelled evaluation set is the real input
+        (self.frames_dir / f"{s.id}-f{s.frames_seen}.jpg").write_bytes(jpeg)
         ev = DoorEvent(id=f"{s.id}-f{s.frames_seen}", device_id=s.device_id, timestamp=datetime.now(self.tz),
                        kind="live_view", source="ring-live", snapshot=jpeg)
         if isinstance(classifier, BedrockClassifier):

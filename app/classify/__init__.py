@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.classify.base import Classifier
 from app.classify.rules import RulesClassifier
 from app.config import Settings
@@ -20,5 +22,6 @@ def make_classifier(s: Settings) -> Classifier:
     if s.classifier == "bedrock" or (s.classifier == "auto" and _aws_creds_available(s.aws_region)):
         from app.classify.bedrock import BedrockClassifier
 
-        return BedrockClassifier(region=s.aws_region, model_id=s.bedrock_model_id)
+        return BedrockClassifier(region=s.aws_region, model_id=s.bedrock_model_id,
+                                 record_path=Path(s.data_dir) / "bedrock-calls.jsonl")
     return RulesClassifier()
