@@ -107,8 +107,14 @@ def ring_error(request: Request, exc: RingError):
 
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, date: str | None = Query(None)):
+def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None)):
     day = _parse_day(date)
+    checked = None
+    if attempt:
+        try:
+            checked = _check_attempt(datetime.combine(day, datetime.strptime(attempt, "%H:%M").time()))
+        except ValueError:
+            raise HTTPException(400, "attempt must be HH:MM")
     b = _briefing(day)
     peak = max(b.hourly_customers + b.hourly_customers_last_week) or 1
     ring = source.get()
@@ -120,7 +126,7 @@ def dashboard(request: Request, date: str | None = Query(None)):
     return templates.TemplateResponse(request, "dashboard.html", {
         "b": b, "peak": peak, "device": getattr(ring, "_device_id", "") or "",
         "request_id": getattr(ring, "last_request_id", None), "r": r, "status_text": STATUS_TEXT,
-        "money": _week_money(day), "profile": profile.get(), "frames": frames,
+        "money": _week_money(day), "profile": profile.get(), "frames": frames, "attempt": checked,
         "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
 
 

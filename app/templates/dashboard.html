@@ -59,6 +59,19 @@
     {% endif %}
   </section>
 
+  <section class="block" aria-labelledby="atth">
+    <h2 id="atth">A courier says they came</h2>
+    <form method="get" action="/#atth" class="row-ask">
+      <input type="hidden" name="date" value="{{ b.date }}">
+      <label for="attempt" class="why">Carrier's "attempted" time</label>
+      <input type="time" name="attempt" id="attempt" value="{{ attempt.attempt[-5:] if attempt else '' }}" required>
+      <button type="submit">Check</button>
+    </form>
+    {% if attempt %}<p class="{{ 'warn' if attempt.outcome == 'nothing_recorded' else '' }}" role="status" style="margin-top:8px">{{ attempt.text }}</p>
+    {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
+    {% if attempt.visit %}<p class="why">by {{ attempt.visit.labelled_by }}: {{ attempt.visit.reason }}{% if attempt.visit.bedrock_request_id %} · Bedrock RequestId {{ attempt.visit.bedrock_request_id }}{% endif %}</p>{% endif %}{% endif %}
+  </section>
+
   <section class="block ask" aria-labelledby="askh">
     <h2 id="askh">Ask about the door</h2>
     {% if can_ask %}
