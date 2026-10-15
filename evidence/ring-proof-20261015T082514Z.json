@@ -1,0 +1,52 @@
+{
+  "captured_at": "2026-10-15T08:25:12+00:00",
+  "auth_mode": "playground",
+  "day": "2026-10-15",
+  "calls": [
+    {
+      "method": "GET",
+      "url": "/v1/devices",
+      "status": 200,
+      "x_request_id": "59df1289-b5c0-4083-9374-9d88c146145e",
+      "at": "2026-10-15T08:25:13+00:00"
+    },
+    {
+      "method": "GET",
+      "url": "/v1/devices",
+      "status": 200,
+      "x_request_id": "f6ad041d-3309-4141-b4e8-3290f1e9b6f2",
+      "at": "2026-10-15T08:25:13+00:00"
+    },
+    {
+      "method": "GET",
+      "url": "/v1/history/devices/<device:90d683cae6d1>/events?event_types=ding%2Cmotion",
+      "status": 200,
+      "x_request_id": "ba6d001b-5c40-450a-a0de-ade4d8444c07",
+      "at": "2026-10-15T08:25:14+00:00"
+    },
+    {
+      "method": "POST",
+      "url": "/v1/devices/<device:90d683cae6d1>/media/image/download",
+      "status": 403,
+      "x_request_id": "843c63da-2847-48a0-b7ef-62bb088e82cc",
+      "at": "2026-10-15T08:25:14+00:00"
+    }
+  ],
+  "devices": [
+    {
+      "id_hash": "90d683cae6d1",
+      "type": "devices",
+      "attributes_keys": [
+        "image_url",
+        "name"
+      ]
+    }
+  ],
+  "device_id_hash": "90d683cae6d1",
+  "events": [],
+  "latest_frame": {
+    "error": "FORBIDDEN",
+    "http_status": 403,
+    "request_id": "843c63da-2847-48a0-b7ef-62bb088e82cc"
+  }
+}

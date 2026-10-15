@@ -1,0 +1,24 @@
+{
+  "what": "Shopfront /live sessions against the Ring Developer Playground test doorbell, started from Daniel's Chrome",
+  "note": "POST /v1/devices/{id}/media/streaming/whep/sessions returned 201 with an SDP answer and a Location; WebRTC reached 'connected' (session 2). No video frames arrived because no Playground clip was linked at the time.",
+  "whep_x_request_ids": [
+    "13622a41-1419-4b03-a905-5a4b976f11cf",
+    "a0349b9b-31ff-4e1f-96c9-7d8ab407483e"
+  ],
+  "sessions": [
+    {
+      "id": "live-7a13d354698f",
+      "device_id_hash": "90d683cae6d1",
+      "started": "2026-10-15T01:25:29.507166-07:00",
+      "ended": "2026-10-15T01:25:54.649259-07:00",
+      "frames_seen": 0
+    },
+    {
+      "id": "live-fec751a02da2",
+      "device_id_hash": "90d683cae6d1",
+      "started": "2026-10-15T01:26:41.571743-07:00",
+      "ended": "2026-10-15T01:27:16.346991-07:00",
+      "frames_seen": 0
+    }
+  ]
+}
