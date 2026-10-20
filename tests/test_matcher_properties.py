@@ -104,3 +104,16 @@ def test_matcher_ignores_the_order_events_arrive_in(expected, visits, rnd):
     a, b = receipts(expected, visits, OPEN, NO_FRAMES), receipts(expected, shuffled, OPEN, NO_FRAMES)
     key = lambda r: [(x["id"], x["status"], x["visit"] and x["visit"]["time"]) for x in r["expected"]]
     assert key(a) == key(b)
+
+
+def test_identical_windows_tie_break_the_same_way_whatever_the_order():
+    """Found by the property test: three suppliers sharing a window could swap couriers depending on
+    the order events arrived in. Earlier-listed suppliers now take the earlier couriers."""
+    exp = [Expected(f"exp-{i}", DAY.isoformat(), f"S{i}", "09:00", "10:00") for i in range(3)]
+    vs = []
+    for i, m in enumerate([40, 10, 25]):
+        ev = DoorEvent(f"ev-{i}", "d", datetime.combine(DAY, time(9, m), tzinfo=TZ), "ding", "ring")
+        vs.append(ClassifiedVisit(ev, VisitType.DELIVERY, 0.9, "", "bedrock"))
+    for order in (vs, vs[::-1], vs[1:] + vs[:1]):
+        r = receipts(exp, order, OPEN, NO_FRAMES)
+        assert [x["visit"]["time"] for x in r["expected"]] == ["09:10", "09:25", "09:40"]

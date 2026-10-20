@@ -8,7 +8,7 @@ Not building: alerts/push, multi-shop, Ring Appstore listing/certification, acco
 Stack: Python 3.11+, FastAPI, Jinja, httpx, boto3. Run: `.venv/bin/uvicorn app.main:app --reload --port 8000` · Test: `.venv/bin/python -m pytest -q` · Proof: `.venv/bin/python -m scripts.ring_proof --bedrock`
 CI does NOT exist. Tests never touch the live Ring or AWS APIs; they use MockTransport and fakes.
 
-Repo map: app/ring/api.py (live Ring client) · app/ring/synthetic.py (demo generator) · app/ring/webhooks.py · app/live.py (live-view sessions) · app/classify/{rules,bedrock}.py · app/briefing.py · app/main.py · docs/{ring,bedrock}.md · evidence/ (live captures only) · scripts/ring_proof.py
+Repo map: app/ring/api.py (live Ring client) · app/ring/synthetic.py (demo generator) · app/ring/webhooks.py · app/live.py (live-view sessions) · app/classify/{rules,bedrock}.py · app/briefing.py · app/orders.py · app/reconcile.py · app/dispute.py · app/main.py · scripts/feed_webhook.py · docs/{ring,bedrock}.md · evidence/ (live captures only) · scripts/ring_proof.py
 
 Invariants (never):
 - never fall back from live Ring to synthetic data; a Ring failure renders its RingStatus

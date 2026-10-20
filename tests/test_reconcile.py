@@ -59,14 +59,14 @@ minute = st.integers(0, 24 * 60 - 1)
 
 
 @settings(max_examples=300, deadline=None)
-@given(minute, st.lists(st.tuples(minute, st.sampled_from(list(VisitType)), st.sampled_from(["bedrock", "rules"])),
+@given(minute, st.lists(st.tuples(minute, st.sampled_from(list(VisitType)), st.sampled_from(["bedrock", "rules", "ring"])),
                         max_size=6))
 def test_outcome_matches_the_evidence(attempt_min, raw):
     vs = [visit(m // 60, m % 60, k, s, eid=f"ev-{i}") for i, (m, k, s) in enumerate(raw)]
     a = at(attempt_min // 60, attempt_min % 60)
     r = check_attempt(a, vs)
     near = [v for v in vs if abs(v.event.timestamp - a) <= TOLERANCE]
-    seen_courier = [v for v in near if v.visit_type == VisitType.DELIVERY and v.source == "bedrock"]
+    seen_courier = [v for v in near if v.visit_type == VisitType.DELIVERY and v.source in ("bedrock", "ring")]
     if not vs:
         assert r["outcome"] == NO_DOOR_DATA
     elif not near:
@@ -95,5 +95,5 @@ def test_dashboard_checks_an_attempt_time(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
     c = TestClient(main.app)
     page = c.get("/", params={"date": "2026-10-07", "attempt": "03:17"}).text
-    assert "A courier says they came" in page and "recorded nothing within 10 minutes of 03:17" in page
+    assert "The carrier's tracking says" in page and "recorded nothing within 10 minutes of 03:17" in page
     assert c.get("/", params={"date": "2026-10-07", "attempt": "late"}).status_code == 400

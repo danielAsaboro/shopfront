@@ -13,14 +13,41 @@ from app.ring.api import RingApiClient, RingError
 from app.ring.base import RingClient
 
 
+SAME_EVENT = timedelta(seconds=5)  # a webhook and its Event History record name the same press or motion
+
+
+def _door_events(ring: RingClient, day: date, stage0: dict | None) -> list:
+    history = ring.events_for_day(day)
+    if not stage0:
+        return history
+    pushed = stage0["events"] + [v.event for v in stage0["ring_labelled"]] + stage0["skipped"]
+
+    def dup(e):
+        return any(p.kind == e.kind and abs(p.timestamp - e.timestamp) <= SAME_EVENT for p in pushed)
+    return [e for e in history if not dup(e)] + stage0["events"]  # the webhook copy carries the sub_type
+
+
 def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
-                 cache: ClassificationCache | None = None, live=None, frames=None) -> list[ClassifiedVisit]:
+                 cache: ClassificationCache | None = None, live=None, frames=None,
+                 webhooks=None, stats: dict | None = None) -> list[ClassifiedVisit]:
+    """Every door visit that day, labelled. Stages follow Ring's CV guidelines: webhook sub_type first
+    (free), then the rules or Bedrock. Pass `stats` to get the funnel counts back."""
     open_hours = posted_hours(hours, day)
+    tz = getattr(ring, "tz", None)
+    stage0 = webhooks.day(day, tz) if webhooks is not None and tz is not None else None
     visits: list[ClassifiedVisit] = []
     if live is not None and isinstance(ring, RingApiClient):  # live-view sessions from the same Ring source
         visits.extend(live.visits_for_day(day))
-    for e in ring.events_for_day(day):
+    for v in (stage0 or {}).get("ring_labelled", []):
+        if frames is not None and isinstance(ring, RingApiClient) and not frames.path(v.event.id):
+            try:  # keep Ring's frame as the receipt; no Bedrock call, Ring already said what it was
+                frames.save(v.event.id, ring.snapshot(v.event))
+            except RingError as exc:
+                v.reason += f" (no Ring frame: {exc.status.value})"
+        visits.append(v)
+    events = _door_events(ring, day, stage0)
+    for e in events:
         if not isinstance(classifier, BedrockClassifier):
             visits.append(classifier.classify(e, open_hours))
             continue
@@ -43,7 +70,21 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             cache.put(e.id, {"type": v.visit_type.value, "confidence": v.confidence, "reason": v.reason,
                              "model": classifier.model_id, "request_id": v.request_id})
         visits.append(v)
+    if stats is not None:
+        stats.update(funnel(visits, stage0))
     return sorted(visits, key=lambda v: v.event.timestamp)
+
+
+def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
+    """How far each door event got: the instrumentation Ring's CV guidelines ask for."""
+    skipped = len((stage0 or {}).get("skipped", []))
+    return {"events": len(visits) + skipped, "skipped_stage0": skipped,
+            "labelled_by_ring": sum(1 for v in visits if v.source == "ring"),
+            "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
+            "labelled_by_rules": sum(1 for v in visits if v.source == "rules"),
+            "webhook_events": sum(1 for v in visits if v.event.source.startswith("ring-webhook")) + skipped,
+            "replayed": any(v.event.source == "ring-webhook-replay" for v in visits)
+            or any(e.source == "ring-webhook-replay" for e in (stage0 or {}).get("skipped", []))}
 
 
 def _hourly(visits: list[ClassifiedVisit]) -> list[int]:
@@ -70,9 +111,10 @@ def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
 
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
                    hours: dict[int, tuple[int, int] | None],
-                   cache: ClassificationCache | None = None, live=None, frames=None) -> Briefing:
-    today = classify_day(ring, classifier, day, hours, cache, live, frames)
-    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames)
+                   cache: ClassificationCache | None = None, live=None, frames=None, webhooks=None,
+                   stats: dict | None = None) -> Briefing:
+    today = classify_day(ring, classifier, day, hours, cache, live, frames, webhooks, stats)
+    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames, webhooks)
     open_hours = posted_hours(hours, day)
 
     hourly, hourly_lw = _hourly(today), _hourly(last_week)

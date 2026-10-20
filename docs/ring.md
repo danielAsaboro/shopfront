@@ -26,7 +26,7 @@ Every number in the briefing comes from Ring events for the shop's doorbell, or 
 
 **Live door** (`/live`): the browser builds a WebRTC offer (video, receive-only) and posts it to Shopfront. Shopfront forwards it to `POST /v1/devices/{id}/media/streaming/whep/sessions` with the Bearer token (the token never reaches the browser), returns Ring's SDP answer, and keeps the session URL from `Location`. The page samples a frame every 3 seconds. Up to 6 frames per session go to Bedrock, the session becomes one visit labelled by its most confident frame, and `DELETE <session URL>` ends it. Sessions are logged to `.data/live-sessions.jsonl` and merged into the briefing.
 
-Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /webhooks/ring` and logged. The briefing itself reads Event History, so it still works when no webhook URL is registered.
+Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /webhooks/ring`, logged, and fed into the door timeline as stage 0 of the funnel: the motion `sub_type` routes `package_delivery` straight to a courier label and skips `vehicle` and `other_motion` ([receiving-desk.md](receiving-desk.md), section 2). The briefing still reads Event History, so it works when no webhook URL is registered.
 
 ## 4. Endpoints used
 
@@ -103,5 +103,5 @@ To add a row, run `RING_MODE=live RING_ACCESS_TOKEN=… .venv/bin/python -m scri
 - So far, only the error path has been seen live. The success path (devices, events, frames) is tested only against documented response shapes.
 - One shop, one doorbell, the first device the token sees. Multi-camera devices (Ring Elite) would need a `components` entry on frame downloads, which Shopfront doesn't send yet.
 - Shopfront hasn't been through Ring account linking or certification. Live mode runs on a Playground token or a refresh token pasted into `.env`, which is fine for a demo but not for real customers.
-- The webhook receiver verifies and logs. The briefing doesn't consume webhook events yet.
+- Webhook events feed the briefing, but none has arrived from Ring itself: the Playground sends none, so the demo uses signed replays marked `ring-webhook-replay`. Whether `sub_type` arrives on a real account is unverified.
 - Synthetic mode exists so the app runs without a Ring account. Its events are generated, and the UI labels them that way on every page.

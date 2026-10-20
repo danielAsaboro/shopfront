@@ -63,7 +63,19 @@
   .row-ask button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 0; background: var(--ink); color: var(--bg); cursor: pointer; }
   .row-ask button:disabled { opacity: .4; }
   .ask .said { font-size: 17px; margin: 12px 0 4px; }
+  .tap { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; margin-top:6px; font-size:13px; }
+  .tapform { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0; }
+  .tapform button { font: inherit; font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line);
+                    background: transparent; color: var(--ink); cursor: pointer; }
+  .tapform button.quiet { border: 0; padding: 0; color: var(--muted); text-decoration: underline; }
+  .tapform input { font-size: 13px; padding: 3px 8px; width: 150px; }
+  .claim select { font: inherit; padding: 8px 10px; border:1px solid var(--line); border-radius:6px; background:transparent; color:var(--ink); }
+  .claim input[type=time] { flex: 0 0 auto; }
+  .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+  .primary { display: inline-block; margin-top: 8px; padding: 8px 14px; border-radius: 6px; background: var(--ink);
+             color: var(--bg); text-decoration: none; }
   @media (max-width: 560px) {
+    .claim { flex-wrap: wrap; }
     .axis span:nth-child(odd) { visibility:hidden; }
     .figures div + div { padding-left: 10px; }
     .figures .v { font-size: 22px; }

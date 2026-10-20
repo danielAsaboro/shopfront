@@ -18,8 +18,10 @@ You answer the owner's questions about what happened at the shop's door, using o
 - Labels "by bedrock" came from Amazon Bedrock looking at the Ring frame. Labels "by rules" are guesses
   from time of day and event kind; say so when an answer depends on one.
 - Ring has no "door answered" signal. Say a courier was at the door, never that a parcel was received.
-- When the owner quotes a carrier's "attempted delivery" time, call check_attempt and give its text; don't
-  soften or strengthen it.
+- When the owner quotes a carrier's scan ("attempted delivery" or "business closed"), call check_attempt with
+  that claim and give its text; don't soften or strengthen it.
+- When the owner wants to dispute or complain, call dispute_pack. Give its finding, say a draft is ready to
+  review at pack_url (or give no_draft_reason), and never say anything was sent: Shopfront never sends it.
 - When a visit has a frame_url, end your answer with it on its own line as: Frame: <frame_url>
 - If the data doesn't answer the question, say what is missing in one sentence.
 Answer in two or three short sentences, plain English, times as HH:MM."""
@@ -41,9 +43,10 @@ class ShopTools:
 
     def __init__(self, visits_for_day: Callable[[date], list[dict]], receipts_for_day: Callable[[date], dict],
                  hours_for_day: Callable[[date], str], today: date,
-                 attempt_checker: Callable[[datetime], dict] | None = None):
+                 attempt_checker: Callable[..., dict] | None = None,
+                 pack_builder: Callable[[date, str, str, str], dict] | None = None):
         self._visits, self._receipts, self._hours, self.today = visits_for_day, receipts_for_day, hours_for_day, today
-        self._attempt = attempt_checker
+        self._attempt, self._pack = attempt_checker, pack_builder
 
     def _day(self, value: str) -> date:
         value = (value or "").strip().lower()
@@ -64,12 +67,27 @@ class ShopTools:
         d = self._day(day)
         return {"date": d.isoformat(), **self._receipts(d)}
 
-    def check_attempt(self, day: str, at: str) -> dict:
+    def check_attempt(self, day: str, at: str, claim: str = "attempted") -> dict:
         if not self._attempt:
             raise ValueError("attempt checks aren't available")
         d = self._day(day)
         t = datetime.strptime(at.strip(), "%H:%M").time()
-        return self._attempt(datetime.combine(d, t))
+        claim = (claim or "attempted").strip().lower().replace(" ", "_")
+        if claim not in ("attempted", "business_closed"):
+            raise ValueError("claim must be attempted or business_closed")
+        if claim == "attempted":
+            return self._attempt(datetime.combine(d, t))
+        return self._attempt(datetime.combine(d, t), claim)
+
+    def dispute_pack(self, day: str, at: str = "", claim: str = "", order_ref: str = "") -> dict:
+        if not self._pack:
+            raise ValueError("dispute packs aren't available")
+        d = self._day(day)
+        if at:
+            datetime.strptime(at.strip(), "%H:%M")
+        if not at and not order_ref:
+            raise ValueError("give the carrier's scan time or an order reference")
+        return self._pack(d, at.strip(), (claim or "").strip().lower().replace(" ", "_"), order_ref.strip())
 
     def week(self, end_day: str) -> list[dict]:
         end = self._day(end_day)
@@ -127,14 +145,27 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
         return recorded("week", tools.week, end_day=end_day)
 
     @tool
-    def check_attempt(day: str, at: str) -> dict:
-        """Check a carrier's "delivery attempted" time against the doorbell: was a courier at the door near then?
+    def check_attempt(day: str, at: str, claim: str = "attempted") -> dict:
+        """Check a carrier's tracking scan against the doorbell. "attempted": was a courier at the door near then? "business_closed": was the shop open by its posted hours, was the door active around the scan, and did a courier come?
 
         Args:
             day: YYYY-MM-DD, "today" or "yesterday".
             at: the carrier's time, HH:MM in shop local time.
+            claim: "attempted" or "business_closed".
         """
-        return recorded("check_attempt", tools.check_attempt, day=day, at=at)
+        return recorded("check_attempt", tools.check_attempt, day=day, at=at, claim=claim)
+
+    @tool
+    def dispute_pack(day: str, at: str = "", claim: str = "", order_ref: str = "") -> dict:
+        """Put together the evidence for a dispute: the finding, the order, the Ring frame with its hash, what the evidence doesn't show, and a drafted message for the owner to review. It never sends anything.
+
+        Args:
+            day: YYYY-MM-DD, "today" or "yesterday".
+            at: the carrier's scan time, HH:MM, if disputing a scan.
+            claim: "attempted" or "business_closed", if disputing a scan.
+            order_ref: the order or PO number, if the dispute is about an order.
+        """
+        return recorded("dispute_pack", tools.dispute_pack, day=day, at=at, claim=claim, order_ref=order_ref)
 
     model = BedrockModel(model_id=model_id, region_name=region, temperature=0, max_tokens=400)
 
@@ -145,7 +176,7 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
 
     model.client.meta.events.register("after-call.bedrock-runtime.*", on_response)
     today = tools.today
-    return Agent(model=model, tools=[door_visits, deliveries, week, check_attempt], callback_handler=None,
+    return Agent(model=model, tools=[door_visits, deliveries, week, check_attempt, dispute_pack], callback_handler=None,
                  system_prompt=SYSTEM.format(shop=shop, today=today.isoformat(), weekday=today.strftime("%A")))
 
 

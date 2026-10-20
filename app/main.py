@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from app import agent as shop_agent
@@ -15,8 +15,11 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
-from app.reconcile import TOLERANCE, check_attempt
-from app.deliveries import STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line, receipts
+from app import dispute
+from app.orders import parse_orders
+from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
+from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
+                            receipts)
 from app.hours import posted_hours
 from app.live import LiveError, LiveLog
 from app.ring import RingSource
@@ -55,12 +58,13 @@ def _ring():
     return ring
 
 
-def _briefing(day: date):
-    return build_briefing(_ring(), classifier, day, profile.get().name, profile.hours(), cache, live, frames)
+def _briefing(day: date, stats: dict | None = None):
+    return build_briefing(_ring(), classifier, day, profile.get().name, profile.hours(), cache, live, frames,
+                          webhook_log, stats)
 
 
 def _visits(day: date):
-    return classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames)
+    return classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
 
 
 def _receipts(day: date, visits=None) -> dict:
@@ -106,16 +110,27 @@ def ring_error(request: Request, exc: RingError):
                                       status_code=code)
 
 
+def _claim(value: str | None) -> str:
+    value = (value or ATTEMPTED).strip().lower().replace(" ", "_")
+    if value not in CLAIMS:
+        raise HTTPException(400, f"claim must be one of {', '.join(CLAIMS)}")
+    return value
+
+
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None)):
+def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None),
+              claim: str | None = Query(None)):
     day = _parse_day(date)
+    claim = _claim(claim)
     checked = None
     if attempt:
         try:
-            checked = _check_attempt(datetime.combine(day, datetime.strptime(attempt, "%H:%M").time()))
+            when = datetime.combine(day, datetime.strptime(attempt, "%H:%M").time())
         except ValueError:
             raise HTTPException(400, "attempt must be HH:MM")
-    b = _briefing(day)
+        checked = _check_attempt(when, claim)
+    stats: dict = {}
+    b = _briefing(day, stats)
     peak = max(b.hourly_customers + b.hourly_customers_last_week) or 1
     ring = source.get()
     r = _receipts(day)
@@ -127,6 +142,8 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "b": b, "peak": peak, "device": getattr(ring, "_device_id", "") or "",
         "request_id": getattr(ring, "last_request_id", None), "r": r, "status_text": STATUS_TEXT,
         "money": _week_money(day), "profile": profile.get(), "frames": frames, "attempt": checked,
+        "claims": CLAIMS, "claim": claim, "received": RECEIVED, "funnel": stats,
+        "disputable": dispute.DISPUTE,
         "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
 
 
@@ -224,7 +241,7 @@ def live_sessions():
 @app.post("/webhooks/ring")
 async def ring_webhook(request: Request):
     status = webhook_log.handle(await request.body(), request.headers.get("X-Signature"),
-                                settings.ring_hmac_key)
+                                settings.ring_hmac_key, replayed=request.headers.get("X-Shopfront-Replay") == "1")
     code = {WebhookStatus.ACCEPTED: 200, WebhookStatus.DUPLICATE: 200, WebhookStatus.MALFORMED: 400,
             WebhookStatus.BAD_SIGNATURE: 401, WebhookStatus.NOT_CONFIGURED: 503}[status]
     return JSONResponse({"status": status.value}, status_code=code)
@@ -247,7 +264,7 @@ def healthz():
 
 
 @app.get("/setup", response_class=HTMLResponse)
-def setup_page(request: Request, error: str | None = None):
+def setup_page(request: Request, error: str | None = None, imported: str | None = None):
     _local_only(request)
     p = profile.get()
     try:
@@ -256,7 +273,7 @@ def setup_page(request: Request, error: str | None = None):
         ring, ring_error = None, exc.status.value
     today = datetime.now(settings.tz).date()
     return templates.TemplateResponse(request, "setup.html", {
-        "p": p, "days": list(zip(DAYS, hours_for_form(p.hours))), "error": error,
+        "p": p, "days": list(zip(DAYS, hours_for_form(p.hours))), "error": error, "imported": imported,
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
         "expected": [e for i in (-1, 0, 1) for e in book.for_day(today + timedelta(days=i))],
         "shop": p.name})
@@ -288,7 +305,8 @@ async def delivery_add(request: Request):
     back = back if back.startswith("/") and not back.startswith("//") else "/"
     try:
         book.add(date.fromisoformat(str(form.get("day", ""))), str(form.get("supplier", "")),
-                 str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")))
+                 str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")),
+                 order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
     except ValueError as exc:
         return RedirectResponse(f"/setup?error={quote(str(exc))}#deliveries", status_code=303)
     return RedirectResponse(back, status_code=303)
@@ -306,21 +324,130 @@ def api_deliveries(date: str | None = Query(None)):
     return _receipts(_parse_day(date))
 
 
-def _check_attempt(at: datetime) -> dict:
-    at = at.replace(tzinfo=settings.tz) if at.tzinfo is None else at.astimezone(settings.tz)
-    days = sorted({(at - TOLERANCE).date(), at.date(), (at + TOLERANCE).date()})  # attempts near midnight
-    return check_attempt(at, [v for d in days for v in _visits(d)], frames.url)
+def _around(at: datetime, reach: timedelta) -> list:
+    days = sorted({(at - reach).date(), at.date(), (at + reach).date()})  # scans near midnight
+    return [v for d in days for v in _visits(d)]
 
 
-@app.get("/api/attempt")
-def api_attempt(at: str = Query(..., description="carrier's attempted-delivery time, YYYY-MM-DDTHH:MM, shop local")):
+def _local(at: datetime) -> datetime:
+    return at.replace(tzinfo=settings.tz) if at.tzinfo is None else at.astimezone(settings.tz)
+
+
+def _check_attempt(at: datetime, claim: str = ATTEMPTED) -> dict:
+    at = _local(at)
+    if claim == BUSINESS_CLOSED:
+        return check_closed_scan(at, _around(at, dispute.WINDOW), posted_hours(profile.hours(), at.date()),
+                                 frames.url)
+    return check_attempt(at, _around(at, TOLERANCE), frames.url)
+
+
+def _when(at: str) -> datetime:
     try:
         when = datetime.fromisoformat(at)
     except ValueError:
-        return JSONResponse({"error": "BAD_TIME", "detail": "use YYYY-MM-DDTHH:MM"}, status_code=400)
+        raise ValueError("use YYYY-MM-DDTHH:MM")
     if when.date() > datetime.now(settings.tz).date():
-        return JSONResponse({"error": "BAD_TIME", "detail": "that time is in the future"}, status_code=400)
-    return _check_attempt(when)
+        raise ValueError("that time is in the future")
+    return when
+
+
+@app.get("/api/attempt")
+def api_attempt(at: str = Query(..., description="carrier's scan time, YYYY-MM-DDTHH:MM, shop local"),
+                claim: str = Query(ATTEMPTED, description="attempted | business_closed")):
+    try:
+        when = _when(at)
+    except ValueError as exc:
+        return JSONResponse({"error": "BAD_TIME", "detail": str(exc)}, status_code=400)
+    return _check_attempt(when, _claim(claim))
+
+
+def _pack(day: date, at: str | None, claim: str | None, order: str | None, carrier: str, tracking: str) -> dict:
+    visits = _visits(day)
+    e = book.get(order) if order else None
+    if order and not e:
+        raise HTTPException(404, "no such order")
+    if not e and tracking.strip():  # the carrier's tracking number names the order it was for
+        e = next((x for x in book.for_day(day) if x.tracking and x.tracking == tracking.strip()), None)
+    check = None
+    if at:
+        try:
+            when = datetime.combine(day, datetime.strptime(at, "%H:%M").time())
+        except ValueError:
+            raise HTTPException(400, "at must be HH:MM")
+        check = _check_attempt(when, _claim(claim))
+    receipt = None
+    if e:
+        r = _receipts(date.fromisoformat(e.day))
+        receipt = next((x for x in r["expected"] if x["id"] == e.id), None)
+    oh = posted_hours(profile.hours(), day)
+    try:
+        return dispute.build_pack(profile.get().name, day, visits, frames,
+                                  f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if oh else "closed", check, e, receipt,
+                                  carrier.strip()[:40], tracking.strip()[:60])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/dispute", response_class=HTMLResponse)
+def dispute_page(request: Request, date: str | None = Query(None), at: str | None = Query(None),
+                 claim: str | None = Query(None), order: str | None = Query(None),
+                 carrier: str = Query(""), tracking: str = Query("")):
+    day = _parse_day(date)
+    p = _pack(day, at, claim, order, carrier, tracking)
+    query = request.url.query
+    return templates.TemplateResponse(request, "dispute.html", {"p": p, "query": query, "status_text": STATUS_TEXT})
+
+
+@app.get("/api/dispute")
+def api_dispute(date: str | None = Query(None), at: str | None = Query(None), claim: str | None = Query(None),
+                order: str | None = Query(None), carrier: str = Query(""), tracking: str = Query("")):
+    return _pack(_parse_day(date), at, claim, order, carrier, tracking)
+
+
+@app.get("/dispute.zip")
+def dispute_zip(request: Request, date: str | None = Query(None), at: str | None = Query(None),
+                claim: str | None = Query(None), order: str | None = Query(None),
+                carrier: str = Query(""), tracking: str = Query("")):
+    _local_only(request)  # the zip carries the Ring frame, which stays on this machine
+    p = _pack(_parse_day(date), at, claim, order, carrier, tracking)
+    name = f"shopfront-dispute-{p['day']}" + (f"-{p['claim']['time'][-5:].replace(':', '')}" if p["claim"] else "")
+    return Response(dispute.as_zip(p, frames), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+
+
+@app.post("/orders/import")
+async def orders_import(request: Request):
+    _local_only(request)
+    form = await request.form()
+    upload = form.get("file")
+    text = ""
+    if upload is not None and hasattr(upload, "read"):
+        text = (await upload.read()).decode("utf-8-sig", errors="replace")
+    text = text or str(form.get("csv", ""))
+    try:
+        if len(text) > 2_000_000:
+            raise ValueError("that file is too big for one import")
+        parsed = parse_orders(text, day_first=form.get("day_first") == "1")
+    except ValueError as exc:
+        return RedirectResponse(f"/setup?error={quote(str(exc))}#orders", status_code=303)
+    counts = book.import_rows(parsed["rows"])
+    msg = (f"Imported {counts['added']} new and updated {counts['updated']} orders ({parsed['format']} format)"
+           + (f". Skipped {len(parsed['errors'])}: " + "; ".join(parsed["errors"][:5]) if parsed["errors"] else "."))
+    return RedirectResponse(f"/setup?imported={quote(msg)}#orders", status_code=303)
+
+
+@app.post("/deliveries/{expected_id}/received")
+async def delivery_received(request: Request, expected_id: str):
+    _local_only(request)
+    form = await request.form()
+    try:
+        e = book.mark_received(expected_id, str(form.get("status", "")), str(form.get("note", "")),
+                               datetime.now(settings.tz))
+    except KeyError:
+        raise HTTPException(404, "no such delivery")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return RedirectResponse(f"/?date={e.day}#dlv", status_code=303)
 
 
 @app.get("/frames/{name}")
@@ -346,7 +473,21 @@ def _agent_tools(today: date) -> shop_agent.ShopTools:
         oh = posted_hours(profile.hours(), d)
         return f"{oh[0]:%H:%M}-{oh[1]:%H:%M}" if oh else "closed"
 
-    return shop_agent.ShopTools(visits, _receipts, hours_text, today, _check_attempt)
+    def pack(d: date, at: str, claim: str, order_ref: str) -> dict:
+        e = next((x for x in book.for_day(d) if order_ref and order_ref.lower() in (x.order_ref.lower(), x.id)), None)
+        if order_ref and not e:
+            raise ValueError(f"no order {order_ref!r} on {d.isoformat()}")
+        try:
+            p = _pack(d, at or None, claim or None, e.id if e else None, "", "")
+        except HTTPException as exc:
+            raise ValueError(exc.detail)
+        link = "/dispute?" + "&".join(f"{k}={quote(v)}" for k, v in
+                                      (("date", d.isoformat()), ("at", at), ("claim", claim), ("order", e.id if e else ""))
+                                      if v)
+        return {"finding": p["finding"], "order": p["order"], "frame": p["frame"], "draft": p["draft"],
+                "no_draft_reason": p["no_draft_reason"], "limits": p["limits"], "pack_url": link}
+
+    return shop_agent.ShopTools(visits, _receipts, hours_text, today, _check_attempt, pack)
 
 
 @app.post("/api/ask")

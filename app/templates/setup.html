@@ -17,8 +17,8 @@
   .row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
   .row .grow { flex: 1 1 180px; } .row .narrow { flex: 0 0 96px; } .row .tiny { flex: 0 0 56px; }
   .done { color: var(--muted); }
-  .primary { display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 6px; background: var(--ink);
-             color: var(--bg); text-decoration: none; }
+  .fmt { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: pre-wrap;
+         border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; }
   @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } }
 </style>
 </head>
@@ -27,6 +27,7 @@
   <div class="eyebrow">Shopfront · set up</div>
   <h1>{{ p.name }}</h1>
   {% if error %}<p class="banner warn-bg" role="alert">{{ error }}</p>{% endif %}
+  {% if imported %}<p class="banner" style="border:1px solid var(--line)" role="status">{{ imported }}</p>{% endif %}
 
   <section class="setup-step">
     <h2><span class="n">1</span>Ring doorbell</h2>
@@ -56,19 +57,36 @@
     </section>
   </form>
 
+  <section class="setup-step" id="orders">
+    <h2><span class="n">3</span>Your orders and invoices</h2>
+    <p class="proof" style="margin:8px 0">Export open purchase orders or supplier invoices as a CSV from your POS, inventory system or accountant, or the order-history report from Amazon Business. Each becomes a delivery the door checks off, so a receipt or a dispute names the order it was for. Re-importing the same file updates it.</p>
+    <form method="post" action="/orders/import" enctype="multipart/form-data" class="row">
+      <label class="grow">CSV file<input type="file" name="file" accept=".csv,text/csv" required></label>
+      <label class="narrow" style="flex-basis:170px;display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" name="day_first" value="1" style="width:auto"> Dates are day/month</label>
+      <div class="connect" style="margin:0"><button type="submit">Import</button></div>
+    </form>
+    <details style="margin-top:8px"><summary class="proof" style="margin:0">CSV format</summary>
+      <p class="fmt">day,supplier,window_start,window_end,order_ref,carrier,tracking,items,amount
+2026-10-21,Bay Mills,09:00,11:00,PO-1042,UPS,1Z999AA10123456784,"Flour 25kg x4",$212.40</p>
+      <p class="proof" style="margin:4px 0">Only <code>day</code> and <code>supplier</code> are needed. Other names work too: Order ID, PO number, Vendor, Seller Name, Expected delivery, Tracking number, Carrier Name &amp; Tracking Number.</p>
+    </details>
+  </section>
+
   <section class="setup-step" id="deliveries">
-    <h2><span class="n">3</span>Deliveries you're expecting</h2>
+    <h2><span class="n">4</span>Deliveries you're expecting</h2>
     <p class="proof" style="margin:8px 0">Each courier the doorbell sees is matched to one of these and kept with its time and Ring frame, so you have a receipt when a supplier says they came.</p>
     {% if expected %}
     <table>
       <tr><th>Day</th><th>Supplier</th><th>Window</th><th></th></tr>
-      {% for e in expected %}<tr><td class="t">{{ e.day }}</td><td>{{ e.supplier }}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}</td><td class="t">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
+      {% for e in expected %}<tr><td class="t">{{ e.day }}</td><td>{{ e.supplier }}{% if e.order_ref %} <span class="why">· {{ e.order_ref }}</span>{% endif %}{% if e.carrier %} <span class="why">· {{ e.carrier }}</span>{% endif %}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}</td><td class="t">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
         <td><form method="post" action="/deliveries/{{ e.id }}/remove"><button class="linkish" style="font:inherit;background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline">remove</button></form></td></tr>{% endfor %}
     </table>
     {% endif %}
     <form method="post" action="/deliveries" class="row" style="margin-top:12px">
       <label class="narrow" style="flex-basis:150px">Day<input type="date" name="day" value="{{ today }}" required></label>
       <label class="grow">Supplier<input name="supplier" placeholder="e.g. Flour from Bay Mills" maxlength="80" required></label>
+      <label class="narrow">Order ref<input name="order_ref" maxlength="60" placeholder="optional"></label>
+      <label class="narrow">Carrier<input name="carrier" maxlength="40" placeholder="optional"></label>
       <label class="narrow">From<input type="time" name="window_start"></label>
       <label class="narrow">To<input type="time" name="window_end"></label>
       <div class="connect" style="margin:0"><button type="submit">Add</button></div>
@@ -76,7 +94,7 @@
   </section>
 
   <section class="setup-step">
-    <h2><span class="n">4</span>Watch the door</h2>
+    <h2><span class="n">5</span>Watch the door</h2>
     <p>Open the live door to see a courier labelled as they arrive, or read today's briefing.</p>
     <a class="primary" href="/live">Open the live door</a> &nbsp; <a href="/?date={{ today }}">Today's briefing</a>
   </section>

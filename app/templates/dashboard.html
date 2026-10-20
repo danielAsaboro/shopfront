@@ -43,7 +43,16 @@
     <table class="receipts">
       {% for x in r.expected %}<tr>
         <td class="t">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
-        <td><strong>{{ x.supplier }}</strong><br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}</td>
+        <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}</span>{% endif %}
+          <br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
+          {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' else '' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at[-5:] }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
+          <div class="tap">
+            {% if x.visit and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
+              {% for k in ['ok', 'short', 'damaged'] %}<button name="status" value="{{ k }}">{{ received[k] }}</button>{% endfor %}
+              <input name="note" placeholder="note (optional)" maxlength="200">
+            </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received.clear }}</button></form>{% endif %}
+            {% if x.status == 'not_seen' or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
+          </div></td>
         <td class="why">{% if x.visit %}by {{ x.visit.labelled_by }}: {{ x.visit.reason }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
       </tr>{% endfor %}
@@ -55,21 +64,24 @@
       </tr>{% endfor %}
     </table>
     {% else %}
-    <p class="proof" style="margin-top:6px">No couriers seen and none expected. <a href="/setup#deliveries">List what you're expecting</a> and Shopfront will check each one off as the doorbell sees it.</p>
+    <p class="proof" style="margin-top:6px">No couriers seen and none expected. <a href="/setup#orders">Import your orders</a> or <a href="/setup#deliveries">list what you're expecting</a>, and Shopfront will check each one off as the doorbell sees it.</p>
     {% endif %}
   </section>
 
   <section class="block" aria-labelledby="atth">
-    <h2 id="atth">A courier says they came</h2>
-    <form method="get" action="/#atth" class="row-ask">
+    <h2 id="atth">The carrier's tracking says</h2>
+    <form method="get" action="/#atth" class="row-ask claim">
       <input type="hidden" name="date" value="{{ b.date }}">
-      <label for="attempt" class="why">Carrier's "attempted" time</label>
+      <label class="sr" for="claim">Carrier's scan</label>
+      <select name="claim" id="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == claim }}>{{ label }}</option>{% endfor %}</select>
+      <label class="sr" for="attempt">at</label>
       <input type="time" name="attempt" id="attempt" value="{{ attempt.attempt[-5:] if attempt else '' }}" required>
-      <button type="submit">Check</button>
+      <button type="submit">Check the door</button>
     </form>
-    {% if attempt %}<p class="{{ 'warn' if attempt.outcome == 'nothing_recorded' else '' }}" role="status" style="margin-top:8px">{{ attempt.text }}</p>
+    {% if attempt %}<p class="{{ 'warn' if attempt.outcome in disputable else '' }}" role="status" style="margin-top:8px">{{ attempt.text }}</p>
     {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
-    {% if attempt.visit %}<p class="why">by {{ attempt.visit.labelled_by }}: {{ attempt.visit.reason }}{% if attempt.visit.bedrock_request_id %} · Bedrock RequestId {{ attempt.visit.bedrock_request_id }}{% endif %}</p>{% endif %}{% endif %}
+    {% if attempt.visit %}<p class="why">by {{ attempt.visit.labelled_by }}: {{ attempt.visit.reason }}{% if attempt.visit.bedrock_request_id %} · Bedrock RequestId {{ attempt.visit.bedrock_request_id }}{% endif %}</p>{% endif %}
+    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ attempt.attempt[-5:] }}&amp;claim={{ attempt.claim }}">Build the dispute pack</a></p>{% endif %}{% endif %}
   </section>
 
   <section class="block ask" aria-labelledby="askh">
@@ -123,6 +135,7 @@
     Source: Ring Event History API (<a href="/connect">token</a>){% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}
     {% else %}Source: synthetic generator (no Ring calls){% endif %}
     · Labels: {{ 'Amazon Bedrock vision on Ring frames, rules when no frame' if b.classifier == 'bedrock' else 'time-of-day rules' }}
+    {% if funnel and funnel.events %}· Funnel: {{ funnel.events }} door events{% if funnel.webhook_events %}, {{ funnel.webhook_events }} from Ring webhooks{% if funnel.replayed %} (some replayed by Shopfront's feeder){% endif %}{% endif %} · {{ funnel.skipped_stage0 }} skipped by Ring's sub_type · {{ funnel.labelled_by_ring }} labelled by Ring · {{ funnel.reached_bedrock }} reached Bedrock · {{ funnel.labelled_by_rules }} by rules{% endif %}
     · <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a>
   </footer>
 </main>

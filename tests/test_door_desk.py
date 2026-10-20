@@ -163,4 +163,4 @@ def test_real_strands_agent_builds_with_its_tools(isolated):
     trace = shop_agent.Trace()
     a = shop_agent.build_agent(main._agent_tools(DAY), trace, "Test Shop", "us-east-1",
                                "us.anthropic.claude-haiku-4-5-20251001-v1:0")
-    assert sorted(a.tool_names) == ["check_attempt", "deliveries", "door_visits", "week"]
+    assert sorted(a.tool_names) == ["check_attempt", "deliveries", "dispute_pack", "door_visits", "week"]

@@ -35,7 +35,7 @@ class ClassifiedVisit:
     visit_type: VisitType
     confidence: float
     reason: str = ""
-    source: str = "rules"  # rules | bedrock
+    source: str = "rules"  # rules | bedrock | ring (Ring's own package_delivery Smart Alert)
     request_id: str | None = None  # Bedrock response RequestId, when Bedrock answered
 
 
@@ -61,3 +61,8 @@ class Briefing:
     ring_source: str = "synthetic"
     headline: list[str] = field(default_factory=list)
     visits: list[dict] = field(default_factory=list)
+
+
+# Labels that come from something that looked at the door (Bedrock on a Ring frame, or Ring's own
+# computer vision behind a package_delivery alert), as opposed to a time-of-day guess.
+SEEN_SOURCES = ("bedrock", "ring")

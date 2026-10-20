@@ -33,6 +33,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Labels a real Ring frame with Bedrock | **not yet verified** | — |
 | Pages Event History, follows the 303 frame download without leaking the token, refreshes and rotates tokens, fails closed to 14 named states | local test | `pytest -q` (44 pass), [tests/test_ring_api.py](tests/test_ring_api.py) |
 | Rejects unsigned or replayed Ring webhooks | local test | [tests/test_webhooks.py](tests/test_webhooks.py) |
+| Imports orders/invoices from CSV, routes Ring `package_delivery` webhooks at stage 0, checks "business closed" scans against posted hours and door activity, builds dispute packs with a draft it never sends | local test on synthetic data and signed replays | [tests/test_receiving_desk.py](tests/test_receiving_desk.py), [docs/receiving-desk.md](docs/receiving-desk.md) |
 | Briefing logic (deliveries while closed, staff arrival, traffic vs last week) | local test on synthetic data | [tests/test_briefing.py](tests/test_briefing.py) |
 
 ## Run it
@@ -68,8 +69,9 @@ If Ring refuses, the page shows the named reason (`TOKEN_REJECTED`, `FORBIDDEN`,
 | Ring webhooks | [`app/ring/webhooks.py`](app/ring/webhooks.py) | `POST /webhooks/ring`, HMAC-SHA256 over the raw body, idempotent on `meta.request_id` |
 | Synthetic source | [`app/ring/synthetic.py`](app/ring/synthetic.py) | Deterministic demo days for running without a Ring account. Not Ring data. |
 | Classifier | [`app/classify/`](app/classify/) | Bedrock Converse with the Ring frame ([docs/bedrock.md](docs/bedrock.md)). Time-of-day rules otherwise. |
-| Briefing | [`app/briefing.py`](app/briefing.py) | Today vs the same weekday last week |
-| Web | [`app/main.py`](app/main.py), [`app/templates/`](app/templates/) | `/`, `/api/briefing`, `/api/events`, `/api/webhooks`, `/healthz` |
+| Briefing | [`app/briefing.py`](app/briefing.py) | Today vs the same weekday last week; webhook sub_type funnel first |
+| Receiving desk | [`app/orders.py`](app/orders.py), [`app/reconcile.py`](app/reconcile.py), [`app/dispute.py`](app/dispute.py) | Orders in, carrier scans checked, dispute packs out. [docs/receiving-desk.md](docs/receiving-desk.md) |
+| Web | [`app/main.py`](app/main.py), [`app/templates/`](app/templates/) | `/`, `/setup`, `/dispute`, `/api/briefing`, `/api/events`, `/api/attempt`, `/api/dispute`, `/api/webhooks`, `/healthz` |
 
 ## Limits
 
