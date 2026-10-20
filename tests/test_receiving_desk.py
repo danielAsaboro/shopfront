@@ -364,6 +364,9 @@ def test_business_closed_check_on_the_dashboard_and_api(isolated):
     assert j["activity"]["events"] > 0  # lunchtime on a synthetic Wednesday is busy
     if j["outcome"] == OPEN_NO_COURIER:
         assert "Build the dispute pack" in page
+        page = c.get("/", params={"date": "2026-10-07", "claim": "business_closed", "attempt": "12:30",
+                                  "carrier": "UPS", "tracking": "1Z 9"}).text
+        assert "claim=business_closed&amp;carrier=UPS&amp;tracking=1Z%209" in page
         pack = c.get("/api/dispute", params={"date": "2026-10-07", "at": "12:30", "claim": "business_closed"}).json()
         assert pack["draft"]["subject"].startswith("Business closed scan, 2026-10-07 12:30")
         main.book.add(DAY, "Bay Mills", order_ref="PO-5", tracking="1Z5")

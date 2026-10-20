@@ -119,7 +119,7 @@ def _claim(value: str | None) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None),
-              claim: str | None = Query(None)):
+              claim: str | None = Query(None), carrier: str = Query(""), tracking: str = Query("")):
     day = _parse_day(date)
     claim = _claim(claim)
     checked = None
@@ -142,7 +142,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "b": b, "peak": peak, "device": getattr(ring, "_device_id", "") or "",
         "request_id": getattr(ring, "last_request_id", None), "r": r, "status_text": STATUS_TEXT,
         "money": _week_money(day), "profile": profile.get(), "frames": frames, "attempt": checked,
-        "claims": CLAIMS, "claim": claim, "received": RECEIVED, "funnel": stats,
+        "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40], "tracking": tracking.strip()[:60], "received": RECEIVED, "funnel": stats,
         "disputable": dispute.DISPUTE,
         "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
 

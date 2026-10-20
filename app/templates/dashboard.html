@@ -76,12 +76,14 @@
       <select name="claim" id="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == claim }}>{{ label }}</option>{% endfor %}</select>
       <label class="sr" for="attempt">at</label>
       <input type="time" name="attempt" id="attempt" value="{{ attempt.attempt[-5:] if attempt else '' }}" required>
+      <input name="carrier" placeholder="Carrier (optional)" value="{{ carrier }}" maxlength="40" aria-label="Carrier">
+      <input name="tracking" placeholder="Tracking no. (optional)" value="{{ tracking }}" maxlength="60" aria-label="Tracking number">
       <button type="submit">Check the door</button>
     </form>
     {% if attempt %}<p class="{{ 'warn' if attempt.outcome in disputable else '' }}" role="status" style="margin-top:8px">{{ attempt.text }}</p>
     {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
     {% if attempt.visit %}<p class="why">by {{ attempt.visit.labelled_by }}: {{ attempt.visit.reason }}{% if attempt.visit.bedrock_request_id %} · Bedrock RequestId {{ attempt.visit.bedrock_request_id }}{% endif %}</p>{% endif %}
-    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ attempt.attempt[-5:] }}&amp;claim={{ attempt.claim }}">Build the dispute pack</a></p>{% endif %}{% endif %}
+    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ attempt.attempt[-5:] }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}{% endif %}
   </section>
 
   <section class="block ask" aria-labelledby="askh">
