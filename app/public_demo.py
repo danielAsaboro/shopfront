@@ -53,7 +53,7 @@ ENV_FLAG = "SHOPFRONT_PUBLIC_DEMO"
 # GET/HEAD reads a visitor may make. Everything else is refused before it reaches the app.
 READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/healthz", "/favicon.ico",
                         "/api/deliveries", "/api/events", "/api/briefing", "/api/attempt", "/api/dispute",
-                        "/api/webhooks", "/.well-known/shopfront-pack-key"})
+                        "/api/webhooks", "/.well-known/shopfront-pack-key", "/report"})
 READ_PREFIXES = ("/frames/",)
 READ_METHODS = frozenset({"GET", "HEAD"})
 

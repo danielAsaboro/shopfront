@@ -123,7 +123,7 @@ def test_desk_shows_the_carrier_record_and_offers_the_demo_scan(client, demo):
     n = len(main.checks.all())  # earlier open days in the demo day's month: two, unless it is the month's start
     assert n == 2 or demo.day.day <= 7
     if n:
-        assert "Northline Parcel scanned you closed" in desk and "during posted hours" in desk
+        assert "Northline Parcel: 2 &#34;business closed&#34; scans in October" in desk and "during posted hours" in desk
     button = desk.split('class="try-demo', 1)[1].split("</form>", 1)[0]
     assert "Try the business-closed check" in button and f'name="attempt" value="{demo.scan}"' in button
 

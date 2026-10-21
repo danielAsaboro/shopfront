@@ -94,8 +94,10 @@ def _times(n: int) -> str:
     return "once" if n == 1 else "twice" if n == 2 else f"{n} times"
 
 
-def carrier_record(checks: list[dict], month: date) -> list[dict]:
-    """One line per carrier and claim for `month`, most checks first."""
+def carrier_record(checks: list[dict], month: date, cost: float | None = None, currency: str = "$",
+                   disputable: set[str] | frozenset[str] = frozenset()) -> list[dict]:
+    """One line per carrier and claim for `month`, most checks first. With a missed delivery's `cost`, each
+    line also says what the scans the door disputes (`disputable` outcomes) put at stake."""
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for c in in_month(checks, month):
         groups[(c["carrier"].strip().lower(), c["claim"])].append(c)
@@ -114,9 +116,62 @@ def carrier_record(checks: list[dict], month: date) -> list[dict]:
             text = (f"{name} scanned a delivery attempt {_times(n)} in {m}; Ring or Bedrock saw a courier at the "
                     f"door near {'none' if not seen else 'all' if seen == n else seen} of them.")
         demo = sum(1 for c in cs if c["demo"])
+        disputed = sum(1 for c in cs if c["outcome"] in disputable)
+        stake = f"{currency}{cost * disputed:,.2f}" if cost is not None and disputed else None
         out.append({"carrier": name, "claim": claim, "n": n, "text": text,
+                    "headline": _headline(name, claim, n, m, cs, stake), "disputed": disputed, "at_stake": stake,
                     "demo": demo, "all_demo": demo == n, "checks": sorted(cs, key=lambda c: (c["day"], c["at"]))})
     return sorted(out, key=lambda r: (-r["n"], r["carrier"].lower()))
+
+
+def _headline(name: str, claim: str, n: int, month: str, cs: list[dict], stake: str | None) -> str:
+    """'Northline Parcel: 3 "business closed" scans in October, all during posted hours, about $51.60 at stake':
+    the pattern a carrier's account manager or a supplier can act on, in the shop's plain words."""
+    what = '"business closed" scan' if claim == rc.BUSINESS_CLOSED else "delivery-attempt scan"
+    line = f"{name}: {n} {what}{'' if n == 1 else 's'} in {month}"
+    if claim == rc.BUSINESS_CLOSED:
+        open_n = sum(1 for c in cs if c["posted_open"])
+        line += (", all during posted hours" if open_n == n and n > 1 else ", during posted hours" if open_n == n
+                 else ", none during posted hours" if not open_n else f", {open_n} during posted hours")
+    else:
+        seen = sum(1 for c in cs if c["outcome"] == rc.COURIER_AT_DOOR)
+        line += f", a courier seen near {'none' if not seen else 'all' if seen == n else seen} of them"
+    return line + (f", about {stake} at stake" if stake else "")
+
+
+# What the door showed, for a reader outside the shop (a carrier's account manager, a supplier): third person,
+# no guess stated as a fact, nothing that accuses anyone (app/wording.py)
+REPORT_LINE = {
+    rc.OPEN_DOOR_BUSY: "Open by posted hours; the door was in use around the scan",
+    rc.OPEN_NO_COURIER: "Open by posted hours; the door was in use, and no courier was recorded near the scan",
+    rc.OPEN_COURIER_CAME: "Open by posted hours; a courier was at the door near the scan",
+    rc.OPEN_BY_HOURS_ONLY: "Open by posted hours; the door recorded nothing around the scan",
+    rc.POSTED_CLOSED: "Closed by posted hours, as the scan says",
+    rc.COURIER_LATER: "No courier near the scan; one came to the door later that day",
+    rc.UNVERIFIED: "Door activity near the scan that nothing identified",
+    rc.CAMERA_OFFLINE: "The doorbell was reported offline around the scan",
+    rc.NO_COVERAGE: "Nothing recorded around the scan, and no sign the camera was watching",
+    rc.COURIER_AT_DOOR: "A courier was at the door near the scan",
+    rc.SOMEONE_NOT_COURIER: "A visitor near the scan, not a courier",
+    rc.NOTHING_RECORDED: "Nothing recorded near the scan",
+    rc.NO_DOOR_DATA: "No door data that day",
+}
+
+
+def month_report(checks: list[dict], month: date, cost: float | None, currency: str, default: bool,
+                 disputable: set[str]) -> dict:
+    """The month's carrier record as one printable page (/report?month=YYYY-MM): per carrier, the pattern line
+    and every kept check with what the door showed. Order amounts are listed as written, never added up."""
+    carriers = carrier_record(checks, month, cost, currency, disputable)
+    for c in carriers:
+        c["rows"] = [{**k, "line": REPORT_LINE.get(k["outcome"], k["outcome"].replace("_", " ")),
+                      "disputed": k["outcome"] in disputable} for k in c["checks"]]
+    rows = in_month(checks, month)
+    return {"month": f"{month:%B %Y}", "month_key": f"{month:%Y-%m}", "carriers": carriers,
+            "money": month_money(checks, month, None, cost, currency, default, disputable),
+            "checks": len(rows), "demo": sum(1 for c in rows if c["demo"]),
+            "orders": sorted({f"{c['order_ref']} ({c['amount']})" if c["amount"] else c["order_ref"]
+                              for c in rows if c["order_ref"]})}
 
 
 def month_money(checks: list[dict], month: date, confirmed_orders: int | None, cost: float | None,

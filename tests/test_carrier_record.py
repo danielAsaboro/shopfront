@@ -106,7 +106,9 @@ def test_keep_recomputes_the_check_and_the_desk_shows_the_record(monkeypatch):
     assert k["demo"]  # the synthetic source: demo data, and the record says so
     desk = c.get("/", params={"date": "2026-10-14"}).text
     assert "Carrier record, October 2026" in desk
-    assert "Northline Parcel scanned you closed once in October, during posted hours." in desk
+    # round 4: the desk shows each carrier's pattern line, with what is at stake (the survey default here)
+    assert "Northline Parcel: 1 &#34;business closed&#34; scan in October, during posted hours, about $17.20 at stake." \
+        in desk
     assert "1 disputed scan, about $17.20 of redeliveries at stake" in desk and "(all demo)" not in desk
     assert '<span class="badge b-demo">demo</span>' in desk.split("Carrier record")[1]  # one chip for the section
     assert "the survey average" in desk  # the sourced default, said as such

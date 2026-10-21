@@ -77,6 +77,21 @@
   <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif st == "RATE_LIMITED" %}Ring asked Shopfront to slow down{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until {% if st == "RATE_LIMITED" %}you reload in {{ ring_down.retry_after ~ ' seconds' if ring_down.retry_after else 'a minute' }}{% else %}you <a href="/connect">reconnect Ring</a>{% endif %}. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
+  {% if record or month_money %}
+  {# The B2B edge, near the top: each carrier's pattern this month, linking to every kept check, and the month as
+     one printable page for the carrier's account manager or a supplier #}
+  <section class="block record" id="record" aria-labelledby="recordh">
+    <h2 id="recordh">Carrier record, {{ b.date|month_name }}</h2>
+    <a class="report-link" href="/report?month={{ (b.date|string)[:7] }}">Monthly report to print</a>
+    {% if record %}{% for c in record %}<div class="carrier-line">
+      <p class="pattern">{{ c.headline }}.{% if c.demo %} <span class="badge b-demo">{{ 'demo' if c.all_demo else c.demo ~ ' demo' }}</span>{% endif %}</p>
+      <ul class="kept why">{% for k in c.checks %}<li><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}, {{ k.at }}</a>{% if k.tracking %} · {{ k.tracking }}{% endif %}{% if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }} <form method="post" action="/checks/{{ k.id }}/delete" class="keep"><input type="hidden" name="back" value="/?date={{ b.date }}"><button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>{% endfor %}</ul>
+    </div>{% endfor %}{% endif %}
+    {% set mm = month_money %}
+    {% if mm %}<p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}{% if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}{% if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}{% if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door{% if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}{% endif %}.{% if mm.each %} <span class="why">At {{ mm.each }} each{% if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>{% else %}, your number{% endif %}.</span>{% endif %}</p>{% endif %}
+  </section>
+  {% endif %}
+
   {% if first_run and not attempt %}
   <section class="first-run" aria-label="What Shopfront does">
     <p class="first">Check every delivery against your Ring doorbell.</p>
@@ -109,16 +124,7 @@
   </section>
   {% endif %}
 
-  {% if record or month_money %}
-  <section class="block record" id="record" aria-labelledby="recordh">
-    <h2 id="recordh">Carrier record, {{ b.date|month_name }}</h2>
-    {% if record %}<ul>{% for c in record %}<li>{{ c.text }}{% if c.demo %} <span class="badge b-demo">{{ 'demo' if c.all_demo else c.demo ~ ' demo' }}</span>{% endif %}
-      <details class="kept"><summary class="why">{{ c.n }} kept check{{ 's' if c.n != 1 }}</summary><ul class="why">{% for k in c.checks %}<li>{{ k.day }} {{ k.at }}{% if k.tracking %} · {{ k.tracking }}{% endif %}{% if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }}{% if k.demo %} · demo{% endif %} <form method="post" action="/checks/{{ k.id }}/delete" class="keep"><input type="hidden" name="back" value="/?date={{ b.date }}"><button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>{% endfor %}</ul></details>
-    </li>{% endfor %}</ul>{% endif %}
-    {% set mm = month_money %}
-    {% if mm %}<p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}{% if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}{% if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}{% if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door{% if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}{% endif %}.{% if mm.each %} <span class="why">At {{ mm.each }} each{% if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>{% else %}, your number{% endif %}.</span>{% endif %}</p>{% endif %}
-  </section>
-  {% endif %}
+
 
   <details class="block scan-check" id="check"{{ ' open' if not attempt }}>
     <summary><h2 id="atth">{{ "Check another scan" if attempt else "The carrier's tracking says" }}</h2></summary>

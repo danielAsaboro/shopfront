@@ -387,9 +387,23 @@ def _record(day: date) -> dict:
     """The kept checks' carrier record and the month's money, for the desk."""
     kept = checks.all()
     cost, default = _cost()
-    return {"record": kept_checks.carrier_record(kept, day),
+    return {"record": kept_checks.carrier_record(kept, day, cost, profile.get().currency, dispute.DISPUTE),
             "month_money": kept_checks.month_money(kept, day, _month_confirmed(day), cost, profile.get().currency,
                                                    default, dispute.DISPUTE)}
+
+
+@app.get("/report", response_class=HTMLResponse)
+def month_report(request: Request, month: str | None = Query(None)):
+    """The month's carrier record as one printable page for a carrier's account manager or a supplier. Owner-only,
+    like every page (the owner gate); it reads the kept checks and changes nothing."""
+    today = datetime.now(settings.tz).date()
+    try:
+        first = date.fromisoformat(f"{month}-01") if month else today.replace(day=1)
+    except ValueError:
+        raise HTTPException(400, "month must be YYYY-MM")
+    cost, default = _cost()
+    rep = kept_checks.month_report(checks.all(), first, cost, profile.get().currency, default, dispute.DISPUTE)
+    return _page(request, "report.html", {"rep": rep, "made": datetime.now(settings.tz), "limit": dispute.LIMITS[0]})
 
 
 def _demo_scan() -> dict | None:

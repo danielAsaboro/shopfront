@@ -1,0 +1,73 @@
+{% extends "_base.html" %}
+{% block title %}Carrier scans, {{ rep.month }}{% endblock %}
+{% block head %}
+<style>
+  .report h1 { margin-bottom: 4px; }
+  .report .intro { margin: 10px 0 0; max-width: 680px; }
+  .report .carrier { margin-top: 26px; }
+  .report .carrier .pattern { display: block; font-size: 18px; line-height: 1.35; font-weight: 600; margin: 0 0 4px;
+                              color: var(--ink); text-transform: none; letter-spacing: 0; }
+  .report table { font-size: 13px; }
+  .report td.v { min-width: 220px; }
+  .report .tot { margin: 22px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
+  .report .watermark { border: 2px solid var(--warn); color: var(--warn); background: var(--warn-bg); border-radius: 8px;
+                       padding: 8px 12px; margin: 14px 0 0; font-weight: 600; }
+  .report .actions { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .report .actions .primary { margin: 0; }
+  @media (max-width: 560px) {
+    .report table, .report tbody, .report tr, .report td { display: block; }
+    .report tr { border-bottom: 1px solid var(--line); padding: 8px 0; }
+    .report td { border: 0; padding: 0; }
+    .report tr:first-child { display: none; }
+  }
+  @media print {
+    @page { size: A4; margin: 14mm; }
+    .report .actions { display: none; }
+    .report .watermark { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .report { font-size: 12px; }
+    .report table { font-size: 11px; }
+  }
+</style>
+{% endblock %}
+{% block main %}
+<article class="report">
+  <div class="eyebrow">Monthly carrier report · {{ shop }}</div>
+  <h1>Carrier scans, {{ rep.month }}</h1>
+  <p class="why" style="margin:0">Made {{ made|local_stamp }} (shop time) by Shopfront from {{ shop }}'s own kept checks.</p>
+  {% if rep.demo %}<p class="watermark" role="alert">Demo data: {{ 'every check here was' if rep.demo == rep.checks else rep.demo ~ ' of these checks were' }} made on Shopfront's demo door. Don't send this report.</p>{% endif %}
+  <div class="actions">
+    <button type="button" class="primary" onclick="window.print()">Print or save as PDF</button>
+    <a href="/#record">Back to the receiving desk</a>
+  </div>
+  {% if not rep.carriers %}
+  <p class="intro">No carrier scans were checked and kept in {{ rep.month }}. On the receiving desk, check a scan and press "Keep in the carrier's record" to add it here.</p>
+  {% else %}
+  <p class="intro">For a carrier's account manager or a supplier: each carrier scan {{ shop }} checked this month against its posted hours and its Ring doorbell, and what the door showed. For any line, {{ shop }} can send the dispute pack: the door log, the posted hours and what they don't show.</p>
+  {% for c in rep.carriers %}
+  <section class="carrier" aria-labelledby="c{{ loop.index }}">
+    <h2 id="c{{ loop.index }}" class="pattern">{{ c.headline }}.</h2>
+    <table>
+      <tr><th scope="col">Day</th><th scope="col">Scan</th><th scope="col">Tracking</th><th scope="col">Order</th><th scope="col">Posted hours</th><th scope="col">What the door showed</th></tr>
+      {% for k in c.rows %}<tr>
+        <td class="t"><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}</a></td>
+        <td class="t">{{ k.at }}</td>
+        <td>{{ k.tracking or '—' }}</td>
+        <td>{% if k.order_ref %}{{ k.order_ref }}{% if k.supplier %} · {{ k.supplier }}{% endif %}{% if k.amount %} · {{ k.amount }}{% endif %}{% else %}—{% endif %}</td>
+        <td>{{ k.posted_hours or '—' }}</td>
+        <td class="v">{{ k.line }}{% if k.demo and rep.demo != rep.checks %} <span class="badge b-demo">demo</span>{% endif %}</td>
+      </tr>{% endfor %}
+    </table>
+  </section>
+  {% endfor %}
+  {% set mm = rep.money %}
+  {% if mm and mm.disputed %}<p class="tot">{{ mm.disputed }} scan{{ 's' if mm.disputed != 1 }} the door disputes{% if mm.at_stake %}, about {{ mm.at_stake }} of redeliveries at stake, at {{ mm.each }} each{% if mm.default %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% else %} ({{ shop }}'s own figure){% endif %}{% endif %}.{% if rep.orders %} Orders named: {{ rep.orders|join(', ') }}.{% endif %}</p>{% endif %}
+  {% endif %}
+  <section class="block" aria-labelledby="lim">
+    <h2 id="lim">What this does not show</h2>
+    <ul class="limits" style="margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13px">
+      <li>{{ limit }}</li>
+      <li>Each line is the check as it stood when it was kept. Posted hours are the shop's own; a scan outside them isn't disputed.</li>
+    </ul>
+  </section>
+</article>
+{% endblock %}
