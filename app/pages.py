@@ -118,6 +118,19 @@ def verdict(finding: dict | None) -> str:
     return text.split(". ")[0].rstrip(".") + "." if text else ""
 
 
+CLAIM_LABEL = {"attempted": "Delivery attempted", "business_closed": "Business closed"}
+
+
+def scan_lead(finding: dict | None, carrier: str = "") -> str | None:
+    """'Business closed scan at 15:42 (Northline Parcel). You were open, and the doorbell saw no courier near
+    the scan.': a checked scan and its answer, as one line for the top of the receiving desk."""
+    if not finding or not finding.get("outcome"):
+        return None
+    label = CLAIM_LABEL.get(finding.get("claim", ""), "Carrier")
+    when = str(finding.get("attempt", ""))[-5:]
+    return f"{label} scan at {when}" + (f" ({carrier})" if carrier else "") + f". {verdict(finding)}"
+
+
 def labelled_by_text(funnel: dict, classifier: str) -> str:
     """What actually labelled the day's door events, from the funnel counts (never from the
     classifier's name alone: 'bedrock' mode with no frames means Bedrock labelled nothing)."""

@@ -301,7 +301,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
             raise HTTPException(400, "attempt must be HH:MM")
     ring_down = None
     try:
-        desk = _desk(day, when, claim)
+        desk = _desk(day, when, claim, carrier.strip()[:40])
         _ring_seen(None)
     except RingError as exc:
         if exc.status == RingStatus.NOT_CONFIGURED:
@@ -327,8 +327,9 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "can_read_scan": scan_reader.available()})
 
 
-def _desk(day: date, when: datetime | None, claim: str) -> dict:
-    """The dashboard's data. Receiving lines lead; the rest of the briefing goes below them."""
+def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> dict:
+    """The dashboard's data. Receiving lines lead (what Ring or Bedrock confirmed, then a checked scan, then
+    the guesses; a scan the door disputes leads them all); the rest of the briefing goes below them."""
     checked = _check_attempt(when, claim) if when else None
     stats: dict = {}
     b = _briefing(day, stats)
@@ -342,7 +343,10 @@ def _desk(day: date, when: datetime | None, claim: str) -> dict:
     if {m["time"] for m in b.deliveries_while_closed} <= matched:
         courier = []  # the receipts already say it
     closed = courier + presses
-    return {"b": b, "lead": headline(r) + closed, "rest": rest, "r": r, "rows": pages.desk_rows(r),
+    scan = pages.scan_lead(checked, carrier)
+    scan_first = bool(checked and checked["outcome"] in dispute.DISPUTE)
+    lead = headline(r, scan, scan_first=scan_first) + closed
+    return {"b": b, "lead": lead, "lead_is_scan": scan_first, "rest": rest, "r": r, "rows": pages.desk_rows(r),
             "peak": max(b.hourly_customers + b.hourly_customers_last_week) or 1,
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
             "money": _week_money(day), "attempt": checked, "funnel": stats,

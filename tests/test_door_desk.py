@@ -50,7 +50,7 @@ def test_expected_delivery_matched_inside_its_window(tmp_path):
     assert [u["time"] for u in r["unexpected"]] == ["07:05"] and r["seen"] == r["total"] == 1
 
 
-def test_courier_while_closed_and_missing_supplier_lead_the_headline(tmp_path):
+def test_confirmed_courier_while_closed_leads_then_missing_supplier(tmp_path):
     book = DeliveryBook(tmp_path / "e.json")
     book.add(DAY, "Milk")
     book.add(DAY, "Coffee beans", "08:00", "09:00")
@@ -60,7 +60,8 @@ def test_courier_while_closed_and_missing_supplier_lead_the_headline(tmp_path):
     assert by["Milk"]["status"] == "seen_while_closed" and by["Milk"]["also_fits"] == []
     assert by["Coffee beans"]["status"] == "not_seen"
     lines = headline(r)
-    assert lines[0] == "No courier seen for Coffee beans." and "Milk's courier was at the door at 19:30" in lines[1]
+    assert lines == ["Milk: Bedrock saw the courier in the Ring frame at 19:30, while the shop was closed.",
+                     "No courier seen for Coffee beans."]
 
 
 def test_receipt_names_other_suppliers_the_courier_also_fits(tmp_path):

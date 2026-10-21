@@ -423,9 +423,14 @@ def test_business_closed_check_on_the_dashboard_and_api(isolated, monkeypatch):
     assert j["activity"]["events"] == 5 and j["activity"]["customers"] == 5
     if j["outcome"] == OPEN_NO_COURIER:
         assert "Build the dispute pack" in page
+        # the disputed scan is the page's headline, above the orders
+        first = page.split('<p class="first')[1].split("</p>")[0]
+        assert "Business closed scan at 12:30. You were open, and the doorbell saw no courier near the scan." in first
+        assert ' warn">' in first
         page = c.get("/", params={"date": "2026-10-07", "claim": "business_closed", "attempt": "12:30",
                                   "carrier": "UPS", "tracking": "1Z 9"}).text
         assert "claim=business_closed&amp;carrier=UPS&amp;tracking=1Z%209" in page
+        assert "Business closed scan at 12:30 (UPS)." in page
         pack = c.get("/api/dispute", params={"date": "2026-10-07", "at": "12:30", "claim": "business_closed"}).json()
         assert pack["draft"]["subject"].startswith("Business closed scan, 2026-10-07 12:30")
         main.book.add(DAY, "Bay Mills", order_ref="PO-5", tracking="1Z5")

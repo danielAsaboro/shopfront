@@ -3,6 +3,7 @@
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
+{% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
   <div class="page-head">
     <div>
       <div class="eyebrow">Receiving desk</div>
@@ -32,7 +33,8 @@
 
   <section class="lead">
     {% if lead %}
-    <p class="first">{{ lead[0] }}</p>
+    <p class="first{{ ' warn' if lead_is_scan }}">{{ lead[0] }}</p>
+    {% if lead_is_scan and pack_href %}<p class="reason"><a href="{{ pack_href }}">Build the dispute pack</a> · <a href="#atth">see the check</a></p>{% endif %}
     {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     {% elif r.unexpected %}
     <p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
@@ -115,7 +117,7 @@
     </div>
     {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
     {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</p>{% endif %}
-    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ asked_time }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}
+    {% if pack_href %}<p><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
     {% endif %}
     {% endif %}
   </section>

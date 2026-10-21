@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
+from app import provenance
 from app.files import private_dir, write_private
 from app.models import SEEN_SOURCES, ClassifiedVisit, VisitType
 
@@ -365,21 +366,55 @@ def _what(row: dict) -> str:
     return "a doorbell press" if row.get("ring_event") == "ding" else "a door event"
 
 
-def headline(r: dict) -> list[str]:
-    """Lines for the top of the briefing, most actionable first."""
-    lines = []
-    missing = [x["supplier"] for x in r["expected"] if x["status"] == "not_seen"]
-    closed = [x for x in r["expected"] if x["status"].startswith("seen_while_closed")]
+# Who put the courier at the door, for the lead: said exactly for its source (app/provenance.py)
+SAW = {
+    provenance.RING_ALERT: "Ring's package alert saw the courier at {t}",
+    provenance.REPLAY: "a replayed Ring package alert puts the courier at the door at {t}",
+    provenance.BEDROCK_RING: "Bedrock saw the courier in the Ring frame at {t}",
+    provenance.BEDROCK_LIVE: "Bedrock saw the courier in a frame from Ring live view at {t}",
+}
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _seen_line(x: dict) -> str:
+    v = x["visit"]
+    name = x["supplier"] + (f" ({x['order_ref']})" if x.get("order_ref") else "")
+    saw = SAW.get(provenance.of(v), "the courier was at the door at {t}").format(t=v["time"])
+    tail = ""
+    if x["status"].startswith("seen_while_closed"):
+        tail = ", while the shop was closed"
+    if x["status"].endswith("outside_window"):
+        tail += f", outside its {x['window_start']}–{x['window_end']} window"
+    return f"{name}: {saw}{tail}."
+
+
+def _possible_line(x: dict) -> str:
+    ps = x["possible"]
+    presses = all(p.get("ring_event") == "ding" for p in ps)
+    what = ("a doorbell press" if presses else "a door event") if len(ps) == 1 else \
+        ("doorbell presses" if presses else "door events")
+    return (f"Possible courier for {x['supplier']}: {what} at {_and([p['time'] for p in ps])}, "
+            f"not confirmed by a camera frame.")
+
+
+def headline(r: dict, scan: str | None = None, scan_first: bool = False) -> list[str]:
+    """Lines for the top of the receiving desk: what Ring or Bedrock confirmed first, then the carrier's scan
+    when one was checked (`scan`, its one-line answer), then what's missing, then the guesses. A scan the
+    door disputes (`scan_first`) is the page's headline, above everything."""
+    rows = r["expected"]
+    seen = sorted((x for x in rows if x["visit"]), key=lambda x: x["visit"]["time"])
+    closed = [x for x in seen if x["status"].startswith("seen_while_closed")]
+    confirmed = [_seen_line(x) for x in seen]
+    if r["total"] > 1 and len(seen) == r["total"] and not closed:
+        confirmed.insert(0, f"All {r['total']} expected deliveries reached the door.")
+    missing = [x["supplier"] for x in rows if x["status"] == "not_seen"]
+    lines = ([scan] if scan and scan_first else []) + confirmed + ([scan] if scan and not scan_first else [])
     if missing:
-        lines.append(f"No courier seen for {', '.join(missing)}.")
-    for x in r["expected"]:
-        if x["status"] == "possible":
-            what = " and ".join(f"{_what(p)} at {p['time']}" for p in x["possible"])
-            lines.append(f"Possible courier for {x['supplier']}: {what}, not confirmed by a camera frame.")
-    for x in closed:
-        lines.append(f"{x['supplier']}'s courier was at the door at {x['visit']['time']}, while the shop was closed.")
-    if r["total"] and all(x["visit"] for x in r["expected"]) and not closed:
-        lines.append(f"All {r['total']} expected deliveries reached the door.")
+        lines.append(f"No courier seen for {_and(missing)}.")
+    lines += [_possible_line(x) for x in rows if x["status"] == "possible" and x["possible"]]
     return lines
 
 

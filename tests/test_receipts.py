@@ -55,7 +55,7 @@ def test_a_confirmed_courier_beats_a_guessed_one():
     r = receipts([Expected("x1", DAY.isoformat(), "Bay Mills", "09:00", "11:00")], [press, seen(10, 40)], OPEN, NO_FRAMES)
     row = r["expected"][0]
     assert row["status"] == "seen" and row["visit"]["time"] == "10:40" and row["visit"]["labelled_by"] == "ring"
-    assert r["seen"] == 1 and headline(r) == ["All 1 expected deliveries reached the door."]
+    assert r["seen"] == 1 and headline(r) == ["Bay Mills: Ring's package alert saw the courier at 10:40."]
 
 
 def test_nothing_in_the_window_is_not_seen_and_an_order_not_due_yet_is_expected():
@@ -74,11 +74,11 @@ def test_staff_at_the_door_means_a_courier_before_opening_was_not_missed():
     r = receipts(rows, [staff(7, 45), seen(7, 47)], OPEN, NO_FRAMES)
     x = r["expected"][0]
     assert x["status"] == "seen" and x["visit"]["staff_in"] and not x["visit"]["shop_open"]
-    assert r["closed_couriers"] == 0 and headline(r) == ["All 1 expected deliveries reached the door."]
+    assert r["closed_couriers"] == 0 and headline(r) == ["Bay Mills: Ring's package alert saw the courier at 07:47."]
     # without anyone in, the same courier came while the shop was closed
     r = receipts(rows, [seen(7, 47)], OPEN, NO_FRAMES)
     assert r["expected"][0]["status"] == "seen_while_closed" and r["closed_couriers"] == 1
-    assert headline(r) == ["Bay Mills's courier was at the door at 07:47, while the shop was closed."]
+    assert headline(r) == ["Bay Mills: Ring's package alert saw the courier at 07:47, while the shop was closed."]
 
 
 def test_closed_couriers_count_only_confirmed_ones_matched_or_not():
@@ -99,3 +99,31 @@ def test_rules_never_call_a_press_a_delivery():
         v = RULES.classify(ev(hh, 0), hours)
         assert v.visit_type == VisitType.DOORBELL_PRESS and v.visit_type != VisitType.DELIVERY
         assert v.visit_type.value.replace("_", " ") == "doorbell press"
+
+
+def test_headline_leads_with_confirmed_facts_then_the_scan_then_guesses():
+    """Round 2 design: what Ring or Bedrock confirmed first, a checked scan next, the guesses last; a scan the
+    door disputes is the headline."""
+    rows = [Expected("a", DAY.isoformat(), "Valley Creamery", "13:00", "16:00", order_ref="PO-1042"),
+            Expected("b", DAY.isoformat(), "Hillside Mill", "10:00", "11:00", order_ref="PO-1041"),
+            Expected("c", DAY.isoformat(), "Dairy Co", "06:00", "07:00")]
+    r = receipts(rows, [seen(10, 12), RULES.classify(ev(14, 36), OPEN)], OPEN, NO_FRAMES)
+    lines = headline(r)
+    assert lines[0] == "Hillside Mill (PO-1041): Ring's package alert saw the courier at 10:12."
+    assert lines[1:] == ["No courier seen for Dairy Co.",
+                         "Possible courier for Valley Creamery: a doorbell press at 14:36, not confirmed by a camera frame."]
+    scan = "Business closed scan at 15:42. You were open, and the doorbell saw no courier near the scan."
+    assert headline(r, scan)[1] == scan and headline(r, scan)[0] == lines[0]
+    assert headline(r, scan, scan_first=True) == [scan] + lines
+
+
+def test_headline_says_a_bedrock_or_replayed_courier_exactly():
+    rows = [Expected("a", DAY.isoformat(), "Bay Mills", "09:00", "11:00")]
+    r = receipts(rows, [seen(10, 5, "bedrock")], OPEN, NO_FRAMES)
+    assert headline(r) == ["Bay Mills: Bedrock saw the courier in the Ring frame at 10:05."]
+    replay = seen(10, 5)
+    replay.event.source = "ring-webhook-replay"
+    r = receipts(rows, [replay], OPEN, NO_FRAMES)
+    assert headline(r) == ["Bay Mills: a replayed Ring package alert puts the courier at the door at 10:05."]
+    late = receipts(rows, [seen(12, 0)], OPEN, NO_FRAMES)
+    assert headline(late) == ["Bay Mills: Ring's package alert saw the courier at 12:00, outside its 09:00–11:00 window."]
