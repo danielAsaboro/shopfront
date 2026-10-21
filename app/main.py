@@ -259,11 +259,13 @@ def _desk(day: date, when: datetime | None, claim: str) -> dict:
     ring = _ring()
     r = _receipts(day)
     matched = {x["visit"]["time"] for x in r["expected"] if x["status"].startswith("seen_while_closed")}
-    # briefing._headline puts "N delivery attempts while the shop was closed" first when there are any
-    closed = b.headline[:1] if b.deliveries_while_closed else []
-    rest = b.headline[len(closed):]
+    # The briefing's closed-shop lines belong with the deliveries; the rest of it goes below
+    courier = [ln for ln in b.headline if "while the shop was closed" in ln]
+    presses = [ln for ln in b.headline if ln.startswith("Doorbell pressed while closed")]
+    rest = [ln for ln in b.headline if ln not in courier + presses]
     if {m["time"] for m in b.deliveries_while_closed} <= matched:
-        closed = []  # the receipts already say it
+        courier = []  # the receipts already say it
+    closed = courier + presses
     return {"b": b, "lead": headline(r) + closed, "rest": rest, "r": r, "rows": pages.desk_rows(r),
             "peak": max(b.hourly_customers + b.hourly_customers_last_week) or 1,
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),

@@ -13,12 +13,14 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 | `--ink` | #1d1d1f | #ececee | Text |
 | `--muted` | #6b6b70 | #9a9aa1 | Labels, reasons, footer |
 | `--line` | #e4e2dd | #2e2e33 | Rules between rows and figures |
+| `--edge` | #8a8780 | #6a6a72 | Borders of inputs and secondary buttons (3:1 or more on `--bg`) |
 | `--today` | #2f6fdb | #6b9cf0 | Today's data only |
 | `--lw` | #c9c7c1 | #4a4a50 | Last week's data only |
-| `--warn` / `--warn-bg` | #b4541a / #fbefe4 | #e48a52 / #3a2516 | Things the owner should act on, and the synthetic-data banner |
+| `--warn` / `--warn-bg` | #a14a14 / #fbefe4 | #e48a52 / #3a2516 | Things the owner should act on, the data-source banner and the pack watermark |
 
 **Colour discipline:** about 85% neutral, 10% blue, 5% orange.
-- Blue means "today" and is never a button or link colour.
+- Blue means "today" and is never a button or link colour. Links are ink, underlined (the underline in `--muted`, thicker on hover).
+- Contrast: text and links 4.5:1 or more, warn text on `--warn-bg` included; input borders 3:1. `color-scheme: light dark` so date and time pickers follow the theme. Inputs are 16px so phones don't zoom on focus.
 - Orange means "act on this" or "this isn't real Ring data". It never decorates.
 - Never put two accents in one component.
 
@@ -27,7 +29,9 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 
 ## Components
 
-- **Banner** (synthetic mode, replayed webhooks, error page). Shows the source of truth. Full width, warn colours, one sentence.
+- **Header.** The same on every page: "Shopfront · shop name" and links to the receiving desk, live door, set up and Ring. The current page is bold with an ink underline.
+- **Banner** (synthetic mode, replayed webhooks, Ring sign-in expired). On every page, error pages and the printed pack included. Shows the source of truth. Full width, warn colours, one sentence.
+- **Details.** Request IDs, hashes, sub_types, event IDs and the funnel sit in a closed "Details" toggle on owner pages. Printing a pack opens them.
 - **Receiving desk.** The day's orders, each with how its courier was seen (Ring alert, Bedrock frame, or "possible, unconfirmed" from the rules) or "not seen". Leads the dashboard.
 - **Check the door.** One row: the carrier's scan, its time, carrier and tracking, one button. The answer is one sentence, in warn colour only when the owner should act, with a link to the dispute pack.
 - **Dispute pack.** The verdict in one line, then the evidence (door log, posted hours, order), the "what this does not show" list, and the draft. Download and copy are the actions; Shopfront never sends.
@@ -36,7 +40,7 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 - **Chart.** Paired bars per hour, today against last week, with a legend inline in the heading.
 - **Needs a look.** A table of time, what happened, and why. Only rendered when there is something to show.
 - **Every door event.** A collapsed `<details>` with the label, the classifier and the reason for each event. This is the proof surface.
-- **Footer.** The data source, the last Ring X-Request-ID, the classifier, and links to the JSON.
+- **Footer.** The data source and what actually labelled the day (counts by Ring, Bedrock and rules), with the Ring X-Request-ID, funnel and JSON links under Details.
 
 ## States
 
@@ -44,7 +48,10 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 |---|---|
 | Synthetic | Banner on every page |
 | Live | Footer with the Ring request ID |
-| Ring error | `ring_error.html` with the named `RingStatus` and one action |
+| Ring error | `ring_error.html` with a plain sentence, "Reconnect Ring", and the named `RingStatus` under Details |
+| Ring sign-in expired (dashboard) | The receiving desk from orders and Ring's webhooks, with a notice; unconfirmed orders read "not confirmed", never "no courier seen", and the scan check waits for Ring |
+| Bad link or input | `error.html`: a title, one sentence and a way back; the HTTP status and detail under Details |
+| Demo or replayed data in a pack | The watermark ("DEMO DATA, not from a camera") above the verdict, on screen and in print |
 | Empty day | "No door activity recorded for <date>." |
 | Closed day | "The shop was closed." Doorbell presses while closed are still listed. |
 | No orders yet | One sentence on what Shopfront does, with links to import orders, check a scan and the dispute pack. |

@@ -10,14 +10,22 @@
   .draft { white-space: pre-wrap; border-left: 2px solid var(--line); padding: 4px 0 4px 14px; margin-top: 8px; }
   .actions { display:flex; flex-wrap:wrap; gap: 10px; align-items:center; margin-top: 14px; }
   .actions .primary { margin-top: 0; }
+  .watermark { border: 2px solid var(--warn); color: var(--warn); background: var(--warn-bg); border-radius: 8px;
+               padding: 10px 14px; margin: 16px 0 0; font-weight: 700; letter-spacing: .02em; }
+  .watermark span { display: block; font-weight: 400; font-size: 14px; letter-spacing: 0; margin-top: 2px; }
   .limits { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-  @media print { .actions { display:none; } .tech > summary { display: none; } }
+  @media print { .actions { display:none; } .tech > summary { display: none; }
+                 .watermark { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   @media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 2px; } .facts dt { padding-top: 8px; } }
 </style>
 {% endblock %}
 {% block main %}
   <div class="eyebrow">Dispute pack · {{ p.day|long_date }}</div>
   <h1>{% if p.claim %}{{ p.claim.label }} scan at {{ p.claim.time|local_time(p.day) }}{% elif p.order %}{{ p.order.supplier }}{% if p.order.order_ref %} · {{ p.order.order_ref }}{% endif %}{% else %}{{ p.shop }}{% endif %}</h1>
+
+  {% if p.watermark %}
+  <p class="watermark" role="alert">{{ p.watermark }}<span>{% if p.demo_data %}These door events came from Shopfront's demo generator, not a camera. {% endif %}{% if p.replayed %}Some came from Shopfront's webhook replay feeder, not a live Ring notification. {% endif %}Don't send this pack as evidence.</span></p>
+  {% endif %}
 
   <section class="lead">
     {% if p.finding %}
@@ -37,7 +45,7 @@
   <dl class="facts">
     {% if p.claim %}<dt>Carrier's scan</dt><dd>{{ p.claim.label }} at {{ p.claim.time|local_time(p.day) }}{% if p.claim.carrier %} · {{ p.claim.carrier }}{% endif %}{% if p.claim.tracking %} · tracking {{ p.claim.tracking }}{% endif %}</dd>{% endif %}
     {% if p.order %}<dt>Order</dt><dd>{{ p.order.order_ref or 'no reference' }} · {{ p.order.supplier }} · due {{ p.order.day }}, {{ p.order.window }}{% if p.order['items'] %}<br><span class="why">{{ p.order['items'] }}{% if p.order.amount %} · {{ p.order.amount }}{% endif %}</span>{% endif %}</dd>
-    <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.at|local_time(p.order.day) }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
+    <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.time }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
     <dt>Posted hours</dt><dd>{{ p.posted_hours }}</dd>
     {% if p.finding and p.finding.activity %}<dt>Door around the scan</dt><dd>{{ p.finding.activity.events }} events {{ p.finding.activity.from }}–{{ p.finding.activity.to }}{% if p.finding.activity.customers %} · {{ p.finding.activity.customers }} labelled customers{% endif %} · {{ p.finding.activity.seen }} confirmed by Ring or Bedrock</dd>{% endif %}
     <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
@@ -45,8 +53,9 @@
 
   {% if p.frame %}
   <section class="block" aria-labelledby="frameh">
-    <h2 id="frameh">Ring frame, {{ p.frame.time }}</h2>
-    <a href="{{ p.frame.url }}"><img class="frame-big" src="{{ p.frame.url }}" alt="Ring frame at {{ p.frame.time }}"></a>
+    <h2 id="frameh">{{ p.frame.label }}, {{ p.frame.time }}</h2>
+    <a href="{{ p.frame.url }}"><img class="frame-big" src="{{ p.frame.url }}" alt="{{ p.frame.label }} at {{ p.frame.time }}"></a>
+    <p class="why" style="margin:6px 0 0">{{ p.frame.provenance[:1]|upper }}{{ p.frame.provenance[1:] }}.</p>
     <details class="tech">
       <summary>Details</summary>
       <p class="hash" style="margin:0">SHA-256 {{ p.frame.sha256 }} · event {{ p.frame.event_id }}{% if p.frame.bedrock_request_id %} · Bedrock RequestId {{ p.frame.bedrock_request_id }}{% endif %}</p>
@@ -59,7 +68,7 @@
     <h2 id="logh">Door log, {{ p.timeline_window_min }} min either side</h2>
     <table>
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
-      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td>{{ t.type|replace('_', ' ') }}</td><td class="why">{{ t.labelled_by|how(t.reason) }}</td></tr>{% endfor %}
+      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td{% if not t.confirmed %} class="muted"{% endif %}>{{ t.type|replace('_', ' ') }}{% if not t.confirmed %} (guess){% endif %}</td><td class="why">{{ t.labelled_by|how(t.reason) }}</td></tr>{% endfor %}
     </table>
     <details class="tech">
       <summary>Details</summary>

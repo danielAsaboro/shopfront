@@ -84,9 +84,11 @@ def _sha256(path) -> str | None:
     return hashlib.sha256(path.read_bytes()).hexdigest() if path else None
 
 
-def _hhmm(iso: str) -> str:
-    """"2026-10-07T10:45-07:00" or "2026-10-07 10:45" -> "10:45", the shop-local wall-clock time it names."""
-    return datetime.fromisoformat(iso).strftime("%H:%M")
+def _hhmm(iso: str, tz: tzinfo | None = None) -> str:
+    """"2026-10-07T10:45-07:00" or "2026-10-07 10:45" -> "10:45" on the shop's clock. An aware time in
+    another offset (say UTC) is converted to `tz` first; a naive one is already shop-local."""
+    at = datetime.fromisoformat(iso)
+    return (at.astimezone(tz) if tz and at.tzinfo else at).strftime("%H:%M")
 
 
 def _timeline(visits: list[ClassifiedVisit], centre: datetime | None, frames: FrameStore) -> list[dict]:
@@ -97,12 +99,12 @@ def _timeline(visits: list[ClassifiedVisit], centre: datetime | None, frames: Fr
              "bedrock_request_id": v.request_id, "frame_url": frames.url(v.event.id)} for v in rows]
 
 
-def _order(e: Expected | None, receipt: dict | None) -> dict | None:
+def _order(e: Expected | None, receipt: dict | None, tz: tzinfo | None = None) -> dict | None:
     if not e:
         return None
     rec = dict(e.received) if e.received else None
     if rec and rec.get("at"):
-        rec["time"] = _hhmm(rec["at"])
+        rec["time"] = _hhmm(rec["at"], tz)
     return {"id": e.id, "supplier": e.supplier, "order_ref": e.order_ref, "carrier": e.carrier,
             "tracking": e.tracking, "items": e.items, "amount": e.amount, "day": e.day,
             "window": f"{e.window_start}–{e.window_end}" if e.window_start else "any time",
@@ -165,7 +167,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     tz = tz or (visits[0].event.timestamp.tzinfo if visits else None) or UTC
     carrier = carrier or (order.carrier if order else "")
     tracking = tracking or (order.tracking if order else "")
-    o = _order(order, receipt)
+    o = _order(order, receipt, tz)
     centre = datetime.fromisoformat(check["attempt_at"]) if check else None
     if centre is None and receipt and receipt.get("visit"):  # the courier who came for this order
         centre = next((v.event.timestamp for v in visits if v.event.id == receipt["visit"]["event_id"]), None)

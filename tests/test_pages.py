@@ -41,13 +41,19 @@ def c(tmp_path, monkeypatch):
     return TestClient(main.app)
 
 
-def replayed_courier(log: WebhookLog, at: datetime) -> None:
-    """A row as the webhook log stores a replayed package_delivery (Shopfront's demo feeder)."""
+def ring_courier(log: WebhookLog, at: datetime, replayed: bool = False) -> None:
+    """A row as the webhook log stores Ring's package_delivery Smart Alert: a courier Ring confirmed."""
     ms = int(at.timestamp() * 1000)
     log.path.parent.mkdir(parents=True, exist_ok=True)
+    row = {"request_id": f"r-{ms}", "type": "motion_detected", "id": f"dev_{ms}", "device": "dev",
+           "timestamp": ms, "sub_type": "package_delivery"}
     with log.path.open("a") as f:
-        f.write(json.dumps({"request_id": f"r-{ms}", "type": "motion_detected", "id": f"dev_{ms}", "device": "dev",
-                            "timestamp": ms, "sub_type": "package_delivery", "replayed": True}) + "\n")
+        f.write(json.dumps({**row, **({"replayed": True} if replayed else {})}) + "\n")
+
+
+def replayed_courier(log: WebhookLog, at: datetime) -> None:
+    """The same, sent by Shopfront's demo feeder."""
+    ring_courier(log, at, replayed=True)
 
 
 def dead_ring(tmp_path):
@@ -128,6 +134,7 @@ def test_first_run_panel_until_there_are_orders(c):
 
 
 def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
+    ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))
     page = c.get(f"/?date={SUNDAY}").text
     assert "Courier nobody listed" in page
     assert "No orders for this day" in page and 'href="/setup#orders">Import your orders' in page
@@ -148,10 +155,12 @@ def test_staff_tap_undo_label_and_shop_local_time(c):
     assert "Staff marked short at 09:12: 2 crates" in page
     assert ">Undo</button>" in page and "built-in method" not in page
     pack = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
-    assert "staff marked short at 09:12" in pack and "at 07:00" not in pack
+    assert "staff marked short at 09:12" in pack and "at 07:00" not in pack and "16:12" not in pack
+    assert "unpacked it at 09:12" in c.get(f"/api/dispute?date={SUNDAY}&order={e.id}").json()["draft"]["body"]
 
 
 def test_tapping_through_the_page(c):
+    ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))
     e = main.book.add(SUNDAY, "Sunday bread")
     r = c.post(f"/deliveries/{e.id}/received", data={"status": "ok"})
     assert r.status_code == 200 and "Staff marked all there at" in r.text and ">Undo</button>" in r.text
@@ -160,12 +169,31 @@ def test_tapping_through_the_page(c):
 
 
 def test_rows_in_time_order_and_late_matches_in_warn(c):
-    main.book.add(SUNDAY, "Late flour", "06:00", "07:00")  # the 11:xx courier is outside this window
+    ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))
+    main.book.add(SUNDAY, "Late flour", "06:00", "07:00")  # Ring's 11:40 courier is outside this window
     main.book.add(SUNDAY, "Evening veg", "19:00", "20:00")  # never seen: sorts by its window
     page = c.get(f"/?date={SUNDAY}").text
     rows = re.findall(r'<td class="t[^"]*">([^<]+)</td>', page.split('id="dlv"')[1].split('id="atth"')[0])
     assert rows == sorted(rows)
-    assert re.search(r'<td class="t warn">11:\d\d</td>', page)
+    assert re.search(r'<td class="t warn">11:40</td>', page) and "outside the window" in page
+
+
+def test_a_rules_match_is_only_possible_but_staff_can_still_say_what_arrived(c):
+    e = main.book.add(SUNDAY, "Sunday bread", "11:00", "12:00")  # the synthetic 11:28 press fits the window
+    page = c.get(f"/?date={SUNDAY}").text
+    assert "Possible courier, not confirmed by a camera frame" in page and "No courier seen" not in page
+    assert "A doorbell press at 11:28 fits the window; no camera frame confirmed a courier." in page
+    assert re.search(r'<td class="t muted">11:28</td>', page)  # muted, not the warn colour
+    assert f'action="/deliveries/{e.id}/received"' in page  # the staff tap is the owner's own confirmation
+    assert f"order={e.id}" not in page  # no dispute pack from a guess
+    assert "0/1" in page  # not counted as seen
+
+
+def test_an_order_not_due_yet_is_quiet(c):
+    tomorrow = datetime.now(TZ).date() + timedelta(days=1)
+    main.book.add(tomorrow, "Night bakery", "06:00", "07:00")
+    page = c.get(f"/?date={tomorrow}").text
+    assert "Not due yet" in page and "No courier seen for Night bakery" not in page
 
 
 def test_claim_row_fields_are_labelled_and_the_button_never_wraps(c):
@@ -292,3 +320,11 @@ def test_a_replayed_webhook_without_a_frame_says_replayed_not_synthetic(tmp_path
     vs = classify_day(ring, clf, WEDNESDAY, parse_hours(""), webhooks=log)
     replay = next(v for v in vs if v.event.source == "ring-webhook-replay")
     assert "replayed Ring event, no frame" in replay.reason and "synthetic" not in replay.reason
+
+
+def test_late_courier_verdicts_read_as_one_line():
+    late = {"outcome": "delivered_after_scan", "text": "The carrier scanned ...", "visit": {"time": "13:02",
+                                                                                          "minutes_after": 22}}
+    assert pages.verdict(late) == "Delivered late: the courier came at 13:02, 22 min after the scan."
+    assert pages.verdict({"outcome": "courier_came_later", "text": "x"}).startswith("No courier near the scan, but")
+    assert pages.verdict({"outcome": "something_new", "text": "First sentence. Second."}) == "First sentence."

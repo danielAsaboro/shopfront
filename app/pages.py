@@ -25,6 +25,9 @@ VERDICT = {
     "someone_not_a_courier": "Someone was at the door then, but not a courier.",
     "nothing_recorded": "The doorbell recorded nothing near that time.",
     "no_door_data": "Shopfront has no door events for that day.",
+    "courier_came_later": "No courier near the scan, but one came to the door later that day.",
+    "not_happened_yet": "That time hasn't happened yet.",
+    "no_such_local_time": "That time didn't exist that day: the clocks went forward.",
 }
 
 
@@ -81,6 +84,10 @@ def by(source: str | None) -> str:
 def verdict(finding: dict | None) -> str:
     if not finding:
         return ""
+    v = finding.get("visit") or {}
+    if finding.get("outcome") == "delivered_after_scan" and v.get("time"):
+        mins = v.get("minutes_after")
+        return f"Delivered late: the courier came at {v['time']}" + (f", {mins} min after the scan." if mins else ".")
     if finding.get("outcome") in VERDICT:
         return VERDICT[finding["outcome"]]
     text = str(finding.get("text", ""))
@@ -113,6 +120,8 @@ def desk_rows(r: dict) -> list[dict]:
     def key(x: dict) -> str:
         if x.get("visit"):
             return x["visit"]["time"]
+        if x.get("status") == "possible" and x.get("possible"):
+            return x["possible"][0]["time"]
         return x.get("window_start") or "99:99"
     return sorted(rows, key=key)
 
