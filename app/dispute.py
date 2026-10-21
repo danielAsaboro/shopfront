@@ -488,6 +488,9 @@ def _readme(p: dict, frame_name: str | None) -> str:
             ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])),
             "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
             "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
+    if p["demo_data"] or p["replayed"]:
+        lines += ["", "The pack page shows drawn illustrations for demo door events. They are not camera frames, "
+                  "not evidence, and not in this zip."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]
     return "\n".join(lines) + "\n"
 

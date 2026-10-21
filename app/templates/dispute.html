@@ -14,6 +14,10 @@
   .watermark { border: 2px solid var(--warn); color: var(--warn); background: var(--warn-bg); border-radius: 8px;
                padding: 10px 14px; margin: 16px 0 0; font-weight: 700; letter-spacing: .02em; }
   .watermark span { display: block; font-weight: 400; font-size: 14px; letter-spacing: 0; margin-top: 2px; }
+  .stills { display:grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; margin: 10px 0 0; }
+  .stills figure { margin: 0; min-width: 0; }
+  .stills img { display:block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
+  .stills figcaption { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
   .limits { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   @media print { .actions { display:none; } .tech > summary { display: none; }
                  .watermark { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
@@ -70,6 +74,13 @@
   {% if p.timeline %}
   <section class="block" aria-labelledby="logh">
     <h2 id="logh">Door log, {{ p.timeline_window_min }} min either side</h2>
+    {% set ns = namespace(drawn=0, shown=0) %}
+    <div class="stills" role="list" aria-label="Door around {{ 'the scan' if p.claim else 'the courier' }}">
+      {% for t in p.timeline %}{% set drawn = t|illustration %}{% if t.frame_url or drawn %}{% set ns.shown = ns.shown + 1 %}
+      <figure role="listitem">{% if t.frame_url %}<a href="{{ t.frame_url }}"><img src="{{ t.frame_url }}" alt="{{ t|frame_label }} at {{ t.time[:5] }}" loading="lazy"></a><figcaption>{{ t.time[:5] }} · {{ t|frame_label }}</figcaption>{% else %}{% set ns.drawn = ns.drawn + 1 %}<img src="{{ drawn }}" alt="{{ t.type|illustration_alt }} ({{ t.time[:5] }})" title="Illustration, not a camera frame" loading="lazy"><figcaption>{{ t.time[:5] }} · illustration</figcaption>{% endif %}</figure>{% endif %}
+      {% endfor %}
+    </div>
+    {% if ns.drawn %}<p class="why" style="margin:4px 0 0">Door around {{ 'the scan' if p.claim else 'the courier' }}: {{ 'illustrations, not camera frames' if ns.drawn == ns.shown else 'the drawn ones are illustrations, not camera frames' }}. Shopfront drew them for its demo events; no camera took them, and they aren't in the zip.</p>{% endif %}
     <table>
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
       {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td{% if not t.confirmed %} class="muted"{% endif %}>{{ t.type|visit_label(t.confirmed) }}</td><td class="why">{{ t.labelled_by|how(t.reason, none if t.event_source == 'synthetic' else t.event_source, t.frame_url) }}</td></tr>{% endfor %}

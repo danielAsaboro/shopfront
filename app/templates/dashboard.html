@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from "_frame_delete.html" import delete_frame %}
+{% from "_still.html" import still %}
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
@@ -80,7 +81,7 @@
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
           </div></td>
         <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason, x.visit.event_source, x.visit.frame_url) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason, maybe.event_source, maybe.frame_url) }}{% endif %}</td>
-        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
+        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% elif x.visit %}{{ still(x.visit, 'delivery') }}{% elif maybe %}{{ still(maybe, 'doorbell_press') }}{% endif %}</td>
       </tr>
       {% else %}
       {% set u = x.visit %}
@@ -88,7 +89,7 @@
         <td class="t">{{ u.time }}</td>
         <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
         <td class="why">{{ u.labelled_by|how(u.reason, u.event_source, u.frame_url) }}</td>
-        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="{{ u|frame_label }} at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% endif %}</td>
+        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="{{ u|frame_label }} at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% else %}{{ still(u, 'delivery') }}{% endif %}</td>
       </tr>
       {% endif %}
       {% endfor %}

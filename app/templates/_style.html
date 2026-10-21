@@ -98,11 +98,15 @@
   .first-run { border-left: 3px solid var(--ink); padding: 4px 0 4px 14px; margin: 20px 0 8px; }
   .first-run p { margin: 0 0 8px; font-size: 17px; }
   .first-run ul { margin: 0; padding-left: 18px; }
-  .receipts td.thumb { width: 72px; padding-right: 0; }
+  .receipts td.thumb { width: 88px; padding-right: 0; }
   .receipts td.thumb:empty { width: 0; padding: 0; }
   .receipts td.why { width: 30%; }
   .receipts img, .ask img.frame { display:block; width: 72px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   .ask img.frame { width: 240px; max-width: 100%; margin: 8px 0; }
+  /* Drawn stills for demo events: same slot as a frame, always captioned as a drawing */
+  figure.still { margin: 0; }
+  figure.still img { display:block; width: 88px; aspect-ratio: 4 / 3; border-radius: 4px; }
+  figure.still figcaption { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .row-ask { display:flex; gap:8px; margin-top: 10px; }
   .row-ask input { flex: 1 1 auto; }
   .ask .said { font-size: 17px; margin: 12px 0 4px; }

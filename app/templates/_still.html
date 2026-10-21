@@ -1,0 +1,3 @@
+{# A drawn still for a demo door event, in the slot a Ring frame would take (app/illustrations.py). Nothing
+   for a real Ring event: one with no frame shows no picture. #}
+{% macro still(row, visit_type=none) %}{% set src = row|illustration(visit_type) %}{% if src %}<figure class="still"><img src="{{ src }}" alt="{{ (visit_type or row.type)|illustration_alt }}" title="Illustration, not a camera frame" loading="lazy"><figcaption>Illustration</figcaption></figure>{% endif %}{% endmacro %}

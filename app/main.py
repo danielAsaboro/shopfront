@@ -23,7 +23,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
-from app import coverage, dispute, pages, provenance
+from app import coverage, dispute, illustrations, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
@@ -48,7 +48,8 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
-    long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
+    long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label,
+    illustration=illustrations.url_for, illustration_alt=illustrations.alt_for, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
@@ -813,6 +814,15 @@ def frame(request: Request, name: str):
     if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/illustrations/{name}.svg")
+def illustration(name: str):
+    """A drawn still for a demo door event (app/illustrations.py): it says on itself that it isn't a frame."""
+    if name not in illustrations.files():
+        raise HTTPException(404)
+    return Response(illustrations.svg(name), media_type="image/svg+xml",
+                    headers={"Cache-Control": "max-age=86400"})
 
 
 @app.post("/frames/{name}/delete")
