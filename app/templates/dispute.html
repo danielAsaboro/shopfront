@@ -49,6 +49,7 @@
     <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.unidentified %} ({{ p.order.unidentified }}, not identified){% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.time }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
     <dt>Posted hours</dt><dd>{{ p.posted_hours }}</dd>
     {% if p.finding and p.finding.activity %}<dt>Door around the scan</dt><dd>{{ p.finding.activity.events }} events {{ p.finding.activity.from }}–{{ p.finding.activity.to }}{% if p.finding.activity.customers %} · {{ p.finding.activity.customers }} labelled customers{% endif %} · {{ p.finding.activity.seen }} confirmed by Ring or Bedrock</dd>{% endif %}
+    {% if p.coverage %}<dt>Camera around the scan</dt><dd>{{ p.coverage.text }}</dd>{% endif %}
     <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
   </dl>
 

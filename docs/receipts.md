@@ -57,7 +57,19 @@ near midnight also look at the neighbouring day. Outcomes, first match wins:
 | `courier_came_later` | No such courier near then, but one later the same day | It may have arrived late; Shopfront can't tell whose it was |
 | `door_activity_unverified` | Any press or motion near then that nothing looked at | That Shopfront can't say it was a courier, or that it wasn't |
 | `someone_not_a_courier` | Everything near then was looked at, none a courier | What Bedrock called the nearest one |
-| `nothing_recorded` | Door events that day, none near then | Supports the owner's account, doesn't prove it |
+| `nothing_recorded` | Nothing within ±10 min, but door events within ±30 min (or Ring's last status notice said online) | Supports the owner's account, doesn't prove it |
+| `camera_offline` | Nothing near then, and Ring's `device_offline` notice covers the time | The camera may not have been watching; no draft |
+| `door_silent` | Nothing within ±30 min and no Ring status notice saying online | "Can't tell: the door recorded nothing around the scan"; no draft |
+
+**Was the camera watching?** (`app/coverage.py`) Ring documents `device_online` / `device_offline`
+webhooks (API reference, Notifications > Device Online / Device Offline) and `GET
+/v1/devices/{device_id}/status` (Device Discovery > Status), which only says whether the device is online
+*now*, so it can't speak for a past scan. Shopfront logs the notices with every other verified webhook
+and reads them for the shop's own doorbell and account. A `device_offline` covering the scan's ±10 min
+makes "nothing recorded" or "open, no courier" into `camera_offline`; door events within ±30 min show
+the doorbell was recording; with neither, the answer is `door_silent`. Every scan pack shows the camera
+line, and when no status notices have arrived (the Developer Playground sends no webhooks) its limits
+say an outage between door events wouldn't show.
 
 Gaps are measured between instants (UTC), never wall-clock readings: on a fall-back night 01:58 PDT and
 01:03 PST are five minutes apart, not 55. A time that happened twice is read as the first, and the text

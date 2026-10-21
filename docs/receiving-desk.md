@@ -81,7 +81,13 @@ First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse 
 | `courier_came_later` | Posted open, no such courier near the scan, one later the same day | It may have arrived late after a scan that doesn't match the hours; whose it was is unknown |
 | `door_activity_unverified` | Posted open, and a press or motion within 10 min that nothing looked at | Can't say whether a courier came; no draft |
 | `open_no_courier` | Posted open, door events within 30 min, and everything within 10 min was looked at and wasn't a courier (or there was nothing that close) | Open and operating; supports, doesn't prove, that nobody came |
-| `open_by_hours_only` | Posted open, nothing at the door within 30 min | Only the posted hours back the owner; no draft |
+| `camera_offline` | Posted open, no courier near the scan, and Ring's `device_offline` notice covers it | The camera may not have been watching; no draft |
+| `open_by_hours_only` | Posted open, nothing at the door within 30 min, Ring's last status notice said online | Only the posted hours back the owner; no draft |
+| `door_silent` | Posted open, nothing at the door within 30 min, no Ring status notice saying online | "Can't tell: the door recorded nothing around the scan"; no draft |
+
+Both checks ask whether the camera was watching (`app/coverage.py`, see
+[receipts.md](receipts.md#checking-a-carriers-attempt-time)): Ring's `device_online` / `device_offline`
+webhooks, then the door's own events within 30 minutes.
 
 A label from the time-of-day rules is never a sighting and never "not a courier" either: one near the
 scan makes the answer unverified. The activity counts give Ring's event kinds ("11 motion events") and

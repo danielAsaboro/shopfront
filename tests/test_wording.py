@@ -18,7 +18,10 @@ ORDER = Expected("exp-1042", DAY.isoformat(), "Northside Flour", "12:00", "14:00
 WIDE = replace(ORDER, id="exp-wide", window_start="08:00", window_end="18:00")
 PAPER = Expected("exp-p", DAY.isoformat(), "Pinecrest Paper Goods")
 
-# (name, claim, scan, visits, the outcome the door gives)
+# (name, claim, scan, visits, the outcome the door gives[, Ring's device_online/offline notices])
+ONLINE = [{"at": datetime(2026, 10, 14, 7, 55, tzinfo=LA), "online": True, "replayed": False}]
+OFFLINE = ONLINE + [{"at": datetime(2026, 10, 14, 12, 35, tzinfo=LA), "online": False, "replayed": False},
+                    {"at": datetime(2026, 10, 14, 13, 5, tzinfo=LA), "online": True, "replayed": False}]
 SCANS = [
     ("courier at door", rc.ATTEMPTED, (12, 40), lambda: [visit(12, 42, "delivery", "bedrock", eid="c")],
      rc.COURIER_AT_DOOR),
@@ -26,7 +29,10 @@ SCANS = [
      rc.UNVERIFIED),
     ("someone not a courier", rc.ATTEMPTED, (12, 40), lambda: [visit(12, 45, "customer", "bedrock")],
      rc.SOMEONE_NOT_COURIER),
-    ("nothing recorded", rc.ATTEMPTED, (12, 40), lambda: [visit(9, 0, "customer", "bedrock")], rc.NOTHING_RECORDED),
+    ("nothing recorded", rc.ATTEMPTED, (12, 40), lambda: [visit(12, 15, "customer", "bedrock")], rc.NOTHING_RECORDED),
+    ("door silent, attempt", rc.ATTEMPTED, (12, 40), lambda: [visit(9, 0, "customer", "bedrock")], rc.NO_COVERAGE),
+    ("camera offline, attempt", rc.ATTEMPTED, (12, 40), lambda: [visit(12, 15, "customer", "bedrock")],
+     rc.CAMERA_OFFLINE, OFFLINE),
     ("no door data, attempt", rc.ATTEMPTED, (12, 40), lambda: [], rc.NO_DOOR_DATA),
     ("courier later, attempt", rc.ATTEMPTED, (12, 40), pitch_day, rc.COURIER_LATER),
     ("open, no courier", rc.BUSINESS_CLOSED, (12, 40), confirmed_lunch, rc.OPEN_NO_COURIER),
@@ -34,13 +40,24 @@ SCANS = [
      rc.OPEN_NO_COURIER),
     ("open, courier came", rc.BUSINESS_CLOSED, (12, 40),
      lambda: confirmed_lunch() + [visit(12, 44, "delivery", "bedrock", eid="c")], rc.OPEN_COURIER_CAME),
-    ("open by hours only", rc.BUSINESS_CLOSED, (12, 40), lambda: [visit(9, 0)], rc.OPEN_BY_HOURS_ONLY),
+    ("open by hours only", rc.BUSINESS_CLOSED, (12, 40), lambda: [visit(9, 0)], rc.OPEN_BY_HOURS_ONLY, ONLINE),
+    ("door silent, closed scan", rc.BUSINESS_CLOSED, (12, 40), lambda: [visit(9, 0)], rc.NO_COVERAGE),
+    ("camera offline, closed scan", rc.BUSINESS_CLOSED, (12, 40), confirmed_lunch, rc.CAMERA_OFFLINE, OFFLINE),
     ("posted closed", rc.BUSINESS_CLOSED, (19, 30), confirmed_lunch, rc.POSTED_CLOSED),
     ("unverified closed scan", rc.BUSINESS_CLOSED, (12, 40),
      lambda: [visit(12, 41, "delivery", "rules", ring_event="ding")], rc.UNVERIFIED),
     ("no door data, closed scan", rc.BUSINESS_CLOSED, (12, 40), lambda: [], rc.NO_DOOR_DATA),
     ("courier later, closed scan", rc.BUSINESS_CLOSED, (12, 40), pitch_day, rc.COURIER_LATER),
 ]
+
+
+def _check(claim, hh, mm, vs, status=None):
+    when = datetime(2026, 10, 14, hh, mm, tzinfo=LA)
+    if claim == rc.BUSINESS_CLOSED:
+        return rc.check_closed_scan(when, vs, OPEN, now=NOW, status=status)
+    return rc.check_attempt(when, vs, now=NOW, status=status)
+
+
 SOURCES = ["ring", "ring-webhook", "synthetic", "ring-webhook-replay", "ring-live-browser"]
 ORDERS = [None, ORDER, WIDE]
 CARRIERS = ["", "Swift Parcel"]
@@ -71,19 +88,17 @@ def _texts(p):
 
 
 def scan_cases():
-    for (name, claim, (hh, mm), make, outcome), src, order, carrier, also in itertools.product(
+    for (name, claim, (hh, mm), make, outcome, *status), src, order, carrier, also in itertools.product(
             SCANS, SOURCES, ORDERS, CARRIERS, [(), (PAPER,)]):
-        yield pytest.param(claim, hh, mm, make, outcome, src, order, carrier, also,
+        yield pytest.param(claim, hh, mm, make, outcome, status[0] if status else None, src, order, carrier, also,
                            id=f"{name}-{src}-{order.id if order else 'no order'}-{carrier or 'no carrier'}"
                               f"{'-also fits' if also else ''}")
 
 
-@pytest.mark.parametrize("claim,hh,mm,make,outcome,src,order,carrier,also", list(scan_cases()))
-def test_no_scan_draft_accuses(claim, hh, mm, make, outcome, src, order, carrier, also):
+@pytest.mark.parametrize("claim,hh,mm,make,outcome,status,src,order,carrier,also", list(scan_cases()))
+def test_no_scan_draft_accuses(claim, hh, mm, make, outcome, status, src, order, carrier, also):
     vs = _with_source(make(), src)
-    when = datetime(2026, 10, 14, hh, mm, tzinfo=LA)
-    check = (rc.check_closed_scan(when, vs, OPEN, now=NOW) if claim == rc.BUSINESS_CLOSED
-             else rc.check_attempt(when, vs, now=NOW))
+    check = _check(claim, hh, mm, vs, status)
     assert check["outcome"] == outcome
     p = _pack(vs, check, order, carrier, also)
     for text in _texts(p):
@@ -93,13 +108,10 @@ def test_no_scan_draft_accuses(claim, hh, mm, make, outcome, src, order, carrier
 def test_every_outcome_is_covered():
     """The parametrisation above reaches every outcome the checks and the pack can give, drafts included."""
     seen, drafts = set(), set()
-    for _, claim, (hh, mm), make, *_ in SCANS:
+    for _, claim, (hh, mm), make, _outcome, *status in SCANS:
         for order in ORDERS:
             vs = make()
-            when = datetime(2026, 10, 14, hh, mm, tzinfo=LA)
-            check = (rc.check_closed_scan(when, vs, OPEN, now=NOW) if claim == rc.BUSINESS_CLOSED
-                     else rc.check_attempt(when, vs, now=NOW))
-            p = _pack(vs, check, order)
+            p = _pack(vs, _check(claim, hh, mm, vs, status[0] if status else None), order)
             seen.add(p["finding"]["outcome"])
             if p["draft"]:
                 drafts.add(p["finding"]["outcome"])

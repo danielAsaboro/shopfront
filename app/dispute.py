@@ -45,6 +45,9 @@ REPLAY_LIMIT = ("Some events came from Shopfront's webhook replay feeder (marked
                 "not from a Ring notification.")
 DEMO_LIMIT = ("Some events are synthetic: Shopfront's demo generator made them (marked synthetic). No camera "
               "recorded them.")
+NO_STATUS_LIMIT = ("Shopfront has no Ring device_online/device_offline notices for this doorbell around the scan, "
+                   "so it can show the camera was recording when it recorded events, not that it never went offline "
+                   "between them.")
 DEMO = "DEMO DATA, not from a camera"
 REPLAYED = "REPLAYED RING EVENTS, not live Ring notifications"
 WATERMARK_BODY = {
@@ -74,6 +77,10 @@ NO_DRAFT = {
     rc.UNVERIFIED: "Something was at the door near that time, but no camera frame confirmed who it was, so "
                    "Shopfront can't say a courier didn't come. Check the timeline before disputing.",
     rc.NO_DOOR_DATA: "Shopfront has no door events for that day.",
+    rc.CAMERA_OFFLINE: "Ring reported the doorbell offline around that time, so the door can't show whether a "
+                       "courier came. Ask the carrier for its proof of the attempt instead.",
+    rc.NO_COVERAGE: "The door recorded nothing around that time and nothing shows the camera was watching, so "
+                    "there's nothing to send as proof.",
     rc.COURIER_LATER: "A courier was at the door later that day, but Shopfront can't tell whose delivery it was. "
                       "Enter the tracking number of the order it was for, and the pack can draft a late-delivery "
                       "note to that supplier.",
@@ -208,14 +215,16 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     demo = "synthetic" in sources or "synthetic" in cited_sources
     replayed = any("replay" in s for s in sources + cited_sources)
     marks = [m for m, on in ((DEMO, demo), (REPLAYED, replayed)) if on]
-    limits = LIMITS + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else [])
+    cov = (check or {}).get("coverage")
+    limits = LIMITS + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else []) + (
+        [NO_STATUS_LIMIT] if cov and not cov.get("status_notices") else [])
     pack = {
         "shop": shop, "day": day.isoformat(), "posted_hours": posted_hours,
         "made_at": (made_at or datetime.now(tz)).astimezone(tz).isoformat(timespec="seconds"),
         "watermark": " · ".join(marks) or None, "demo_data": demo, "replayed": replayed,
         "claim": {"kind": check["claim"], "label": rc.CLAIMS[check["claim"]], "time": check["attempt"],
                   "at": check["attempt_at"], "carrier": carrier, "tracking": tracking} if check else None,
-        "finding": finding,
+        "finding": finding, "coverage": cov,
         "tolerance_min": check["tolerance_min"] if check else None,
         "order": o, "frame": frame, "timeline": timeline,
         "timeline_window_min": int(WINDOW.total_seconds() // 60) if centre else None,
@@ -432,6 +441,8 @@ def as_text(p: dict) -> str:
                   + (f" · staff marked {o['received']['status']} at {o['received']['time']}" if o["received"] else ""),
                   ""]
     lines.append(f"Posted hours that day: {p['posted_hours']}")
+    if p.get("coverage"):
+        lines.append(f"Camera around the scan: {p['coverage']['text']}")
     if p["frame"]:
         f = p["frame"]
         lines.append(f"{f['label']}: {f['time']} · event {f['event_id']} · {f['provenance']} · SHA-256 {f['sha256']}"

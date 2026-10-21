@@ -128,7 +128,7 @@ def test_carrier_facts_name_kinds_and_only_confirmed_customers(tmp_path):
 
 
 def test_nothing_recorded_does_not_say_the_camera_shows_otherwise(tmp_path):
-    vs = [visit(9, 0, "customer", "bedrock")]
+    vs = [visit(9, 0, "customer", "bedrock"), visit(17, 5, "customer", "bedrock")]  # recording at 17:05
     p = pack(vs, rc.check_attempt(at(17, 30), vs, now=NOW), tmp=tmp_path)
     assert p["finding"]["outcome"] == rc.NOTHING_RECORDED
     assert "shows otherwise" not in p["draft"]["body"] and "recorded nothing at our door within 10 minutes" in p["draft"]["body"]

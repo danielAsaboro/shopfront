@@ -13,6 +13,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from app import dispute, main
+from app import reconcile as rc
 from app.briefing import classify_day
 from app.classify.rules import RulesClassifier
 from app.deliveries import DeliveryBook, Expected, FrameStore, receipts
@@ -222,7 +223,10 @@ def test_closed_scan_other_outcomes():
     assert check_closed_scan(at(19, 32), [visit(13, 0)], OPEN)["outcome"] == POSTED_CLOSED
     assert check_closed_scan(at(14, 5), [visit(13, 0, VisitType.DELIVERY, "bedrock")], None)["outcome"] == POSTED_CLOSED
     assert check_closed_scan(at(14, 5), [], OPEN)["outcome"] == NO_DOOR_DATA
-    r = check_closed_scan(at(14, 5), [visit(9, 0)], OPEN)
+    r = check_closed_scan(at(14, 5), [visit(9, 0)], OPEN)  # nothing within 30 min, no Ring status: can't tell
+    assert r["outcome"] == rc.NO_COVERAGE and "may not have been watching" in r["text"]
+    online = [{"at": at(7, 55), "online": True, "replayed": False}]
+    r = check_closed_scan(at(14, 5), [visit(9, 0)], OPEN, status=online)  # Ring said online: hours only
     assert r["outcome"] == OPEN_BY_HOURS_ONLY and "not that someone was there" in r["text"]
 
 
@@ -254,8 +258,8 @@ def test_closed_scan_outcome_matches_the_evidence(scan_min, raw, has_hours):
         assert r["outcome"] == UNVERIFIED  # a guess near the scan is never "no courier"
     elif around:
         assert r["outcome"] == OPEN_NO_COURIER and r["activity"]["events"] == len(around)
-    else:
-        assert r["outcome"] == OPEN_BY_HOURS_ONLY
+    else:  # nothing within 30 minutes and no Ring status notice: the camera may not have been watching
+        assert r["outcome"] == rc.NO_COVERAGE
 
 
 # ---- the dispute pack -----------------------------------------------------------------------

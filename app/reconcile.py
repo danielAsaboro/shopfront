@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
 
-from app import provenance
+from app import coverage, provenance
 from app.models import SEEN_SOURCES, ClassifiedVisit, VisitType
 
 TOLERANCE = timedelta(minutes=10)  # carrier scans and doorbell clocks rarely agree to the minute
@@ -43,6 +43,9 @@ OPEN_NO_COURIER = "open_no_courier"  # posted open, door busy around the scan, n
 OPEN_COURIER_CAME = "open_courier_came"  # posted open and a courier was at the door near the scan
 OPEN_BY_HOURS_ONLY = "open_by_hours_only"  # posted open, but nothing at the door around the scan
 POSTED_CLOSED = "posted_closed"  # the shop's own hours say closed: the scan agrees with them
+# either claim, when the door is silent: was the camera watching? (app/coverage.py)
+CAMERA_OFFLINE = "camera_offline"  # Ring's device_offline notice covers the scan: nothing recorded proves nothing
+NO_COVERAGE = "door_silent"  # nothing within 30 min and no Ring notice saying online: can't tell
 # refused before looking at the door
 NOT_YET = "not_happened_yet"
 NO_SUCH_TIME = "no_such_local_time"
@@ -71,6 +74,8 @@ TEXT = {
                         "posted hours, not that someone was there.",
     POSTED_CLOSED: "Your posted hours have the shop closed at {attempt}, so the door can't contradict the carrier's "
                    "\"business closed\" scan.",
+    CAMERA_OFFLINE: "{coverage} Shopfront can't say whether a courier came near {attempt}.",
+    NO_COVERAGE: "Can't tell: the door recorded nothing around {attempt}. {coverage}",
     NOT_YET: "{attempt} on {day} hasn't happened yet (it's {now} at the shop), so there's nothing to check. Enter "
              "the time the carrier's tracking shows.",
     NO_SUCH_TIME: "{attempt} didn't exist on {day}: the clocks jumped forward an hour that night. Check the time on "
@@ -86,6 +91,10 @@ CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wor
                 "The doorbell recorded {what} at {time}, {gap} the scan, and nothing that looked at the door said "
                 "who it was, so Shopfront can't say whether a courier came.",
     NO_DOOR_DATA: "Shopfront has no door events at all for that day, so it can't check this scan.",
+    CAMERA_OFFLINE: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
+                    "{attempt}. {coverage} Shopfront can't say whether a courier came.",
+    NO_COVERAGE: "Can't tell: your posted hours had you open ({hours}) when the carrier scanned \"business closed\" "
+                 "at {attempt}, but the door recorded nothing between {lo} and {hi}. {coverage}",
 }
 
 def _by(v: ClassifiedVisit) -> str:
@@ -207,8 +216,9 @@ def _note(attempt: datetime) -> str:
 
 def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours: tuple[time, time] | None,
                       frame_url=lambda event_id: None, tolerance: timedelta = TOLERANCE,
-                      now: datetime | None = None) -> dict:
-    """A "business closed" scan at `scan` (aware, shop local time) against posted hours and the door."""
+                      now: datetime | None = None, status: list[dict] | None = None) -> dict:
+    """A "business closed" scan at `scan` (aware, shop local time) against posted hours and the door.
+    `status` is the doorbell's logged device_online/device_offline notices (app/coverage.py)."""
     tol = int(tolerance.total_seconds() // 60)
     base = {**_base(BUSINESS_CLOSED, scan, tolerance), "posted_hours": _hours_text(open_hours)}
     refused = _refusal(scan, now)
@@ -258,24 +268,35 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
         outcome = OPEN_NO_COURIER
     else:
         outcome = OPEN_BY_HOURS_ONLY
+    cov = coverage.check(scan, visits, status, tolerance) if posted_open and visits else None
+    if cov and outcome in (OPEN_NO_COURIER, OPEN_BY_HOURS_ONLY) and cov["state"] == coverage.CAMERA_DOWN:
+        outcome = CAMERA_OFFLINE
+    elif outcome == OPEN_BY_HOURS_ONLY and cov and cov["state"] == coverage.UNKNOWN:
+        outcome = NO_COVERAGE
+    fmt["coverage"] = cov["text"] if cov else ""
     if cited:
         fmt.update(time=_hhmm(cited.event.timestamp), gap=_gap(cited.event.timestamp, scan),
                    by=_by(cited), what=_what(cited))
     text = CLOSED_TEXT.get(outcome, TEXT[outcome]).format(**fmt) + _note(scan)
-    return {**base, "outcome": outcome, "text": text, "activity": activity,
+    if cov and cov["state"] == coverage.CAMERA_DOWN and outcome != CAMERA_OFFLINE:
+        text += " " + cov["text"]
+    return {**base, "outcome": outcome, "text": text, "activity": activity, "coverage": cov,
             "visit": _visit(cited, frame_url) if cited else None,
             "event_source": sorted({v.event.source for v in around + ([cited] if cited else [])}) or None}
 
 
 def check_attempt(attempt: datetime, visits: list[ClassifiedVisit], frame_url=lambda event_id: None,
-                  tolerance: timedelta = TOLERANCE, now: datetime | None = None) -> dict:
-    """`attempt` is the carrier's time (aware, shop local time); `visits` are that day's classified visits."""
+                  tolerance: timedelta = TOLERANCE, now: datetime | None = None,
+                  status: list[dict] | None = None) -> dict:
+    """`attempt` is the carrier's time (aware, shop local time); `visits` are that day's classified visits;
+    `status` is the doorbell's logged device_online/device_offline notices (app/coverage.py)."""
     base = _base(ATTEMPTED, attempt, tolerance)
     refused = _refusal(attempt, now)
     if refused:
         return _refused(base, refused, attempt, now)
     if not visits:
-        return {**base, "outcome": NO_DOOR_DATA, "text": TEXT[NO_DOOR_DATA], "visit": None, "event_source": None}
+        return {**base, "outcome": NO_DOOR_DATA, "text": TEXT[NO_DOOR_DATA], "visit": None, "event_source": None,
+                "coverage": None}
     near = [v for v in visits if abs(gap(v.event.timestamp, attempt)) <= tolerance]
     fmt = {"tol": base["tolerance_min"], "attempt": _hhmm(attempt)}
 
@@ -296,11 +317,19 @@ def check_attempt(attempt: datetime, visits: list[ClassifiedVisit], frame_url=la
         outcome, v = SOMEONE_NOT_COURIER, nearest(near)
     else:
         outcome = NOTHING_RECORDED
+    cov = coverage.check(attempt, visits, status, tolerance)
+    fmt["coverage"] = cov["text"]
+    if outcome == NOTHING_RECORDED and cov["state"] == coverage.CAMERA_DOWN:
+        outcome = CAMERA_OFFLINE
+    elif outcome == NOTHING_RECORDED and cov["state"] == coverage.UNKNOWN:
+        outcome = NO_COVERAGE
     if v:
         t = v.event.timestamp
         fmt.update(time=_hhmm(t), gap=_gap(t, attempt), what=_what(v), label=v.visit_type.value.replace("_", " "),
                    by=_by(v))
     text = TEXT[outcome].format(**fmt) + _note(attempt)
+    if cov["state"] == coverage.CAMERA_DOWN and outcome != CAMERA_OFFLINE:
+        text += " " + cov["text"]
     sources = [v.event.source] if v else sorted({x.event.source for x in visits})
     return {**base, "outcome": outcome, "text": text, "visit": _visit(v, frame_url) if v else None,
-            "event_source": sources}
+            "event_source": sources, "coverage": cov}

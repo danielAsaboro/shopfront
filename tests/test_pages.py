@@ -292,8 +292,10 @@ def test_dispute_page_leads_with_a_verdict_and_hides_the_jargon(c):
     for jargon in ("SHA-256", "X-Request-ID", "sub_type", "WHEP", "by rules:"):
         assert jargon not in visible, jargon
     scan = c.get(f"/dispute?date={WEDNESDAY}&at=03:17&claim=attempted").text
-    assert '<p class="first">The doorbell recorded nothing near that time.</p>' in scan
-    assert '<p class="reason">The doorbell recorded nothing within 10 minutes of 03:17.' in scan
+    # nothing within 30 minutes of 03:17 and no Ring status notice: the door can't speak for that time
+    assert '<p class="first">Can&#39;t tell: the door recorded nothing around the scan.</p>' in scan
+    assert '<p class="reason">Can&#39;t tell: the door recorded nothing around 03:17.' in scan
+    assert "may not have been watching" in scan
 
 
 def test_made_time_is_shop_local():

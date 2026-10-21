@@ -79,7 +79,7 @@ def send(url: str, kind: str, at: datetime, device: str, sub_type: str | None, k
 
 def main(argv: list[str] | None = None, transport: httpx.BaseTransport | None = None) -> int:
     ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
-    ap.add_argument("--type", default="motion_detected", choices=["motion_detected", "button_press"])
+    ap.add_argument("--type", default="motion_detected", choices=["motion_detected", "button_press", "device_online", "device_offline"])
     ap.add_argument("--sub-type", choices=SUB_TYPES, help="motion only; leave out to mimic Smart Alerts off")
     ap.add_argument("--at", default="now", help="now, HH:MM (today) or YYYY-MM-DDTHH:MM, shop local time")
     ap.add_argument("--device", default="replay-doorbell", help="the doorbell's Ring device ID (live mode needs the real one)")

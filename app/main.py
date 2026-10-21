@@ -22,7 +22,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
-from app import dispute, pages, provenance
+from app import coverage, dispute, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
@@ -624,12 +624,22 @@ def _local(at: datetime) -> datetime:
     return at.replace(tzinfo=settings.tz) if at.tzinfo is None else at.astimezone(settings.tz)
 
 
+def _status_notices() -> list[dict]:
+    """The doorbell's device_online / device_offline notifications Ring sent (app/coverage.py)."""
+    try:
+        rows = webhook_log.recent(1_000_000)
+    except ValueError:  # a damaged log line: no status, so coverage falls back to the door's own events
+        return []
+    return coverage.notices(rows, settings.tz, webhook_log.device_id, webhook_log.account_id)
+
+
 def _check_attempt(at: datetime, claim: str = ATTEMPTED) -> dict:
     at = _local(at)
+    status = _status_notices()
     if claim == BUSINESS_CLOSED:
         return check_closed_scan(at, _around(at, dispute.WINDOW), posted_hours(profile.hours(), at.date()),
-                                 frames.url)
-    return check_attempt(at, _around(at, TOLERANCE), frames.url)
+                                 frames.url, status=status)
+    return check_attempt(at, _around(at, TOLERANCE), frames.url, status=status)
 
 
 def _when(at: str) -> datetime:

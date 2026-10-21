@@ -27,6 +27,8 @@ VERDICT = {
     "someone_not_a_courier": "Someone was at the door then, but not a courier.",
     "nothing_recorded": "The doorbell recorded nothing near that time.",
     "no_door_data": "Shopfront has no door events for that day.",
+    "camera_offline": "The camera may not have been watching: Ring reported the doorbell offline then.",
+    "door_silent": "Can't tell: the door recorded nothing around the scan.",
     "courier_came_later": "No courier near the scan, but one came to the door later that day.",
     "not_happened_yet": "That time hasn't happened yet.",
     "no_such_local_time": "That time didn't exist that day: the clocks went forward.",

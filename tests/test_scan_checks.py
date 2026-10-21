@@ -51,7 +51,7 @@ WORKED_DAY = [
     ((12, 35), rc.UNVERIFIED),          # a rules-guessed "customer" at 12:30 could have been the courier
     ((14, 5), rc.UNVERIFIED),           # a doorbell press 1 min later, no frame: can't say no courier came
     ((13, 2), rc.OPEN_NO_COURIER),      # only a Bedrock-confirmed customer within 10 min, busy around it
-    ((15, 0), rc.OPEN_BY_HOURS_ONLY),   # open, nothing within 30 min
+    ((15, 0), rc.NO_COVERAGE),          # open, nothing within 30 min, no Ring status: can't tell
 ])
 def test_worked_day_business_closed(scan, outcome):
     assert check_closed_scan(at(*scan), WORKED_DAY, OPEN, now=NOW)["outcome"] == outcome
@@ -62,7 +62,8 @@ def test_worked_day_business_closed(scan, outcome):
     ((14, 0), rc.UNVERIFIED),            # a press 6 min later, no frame
     ((9, 4), rc.COURIER_LATER),          # a Bedrock customer near 09:04, Ring's courier at 11:00
     ((15, 55), rc.SOMEONE_NOT_COURIER),  # Bedrock saw a customer at 16:00 and no courier came later
-    ((20, 0), rc.NOTHING_RECORDED),      # nothing within 10 min, nothing after
+    ((20, 0), rc.NO_COVERAGE),           # nothing within 30 min, nothing after, no Ring status: can't tell
+    ((16, 20), rc.NOTHING_RECORDED),     # nothing within 10 min, but the 16:00 customer shows it was recording
 ])
 def test_worked_day_attempts(attempt, outcome):
     assert check_attempt(at(*attempt), WORKED_DAY, now=NOW)["outcome"] == outcome
@@ -106,7 +107,7 @@ def test_courier_later_the_same_day_is_not_no_courier():
 def test_a_courier_the_next_day_is_not_later_that_day():
     nxt = DAY + timedelta(days=1)
     r = check_attempt(at(20, 0), [visit(9, 0, VisitType.DELIVERY, "bedrock", day=nxt)], now=NOW)
-    assert r["outcome"] == rc.NOTHING_RECORDED
+    assert r["outcome"] == rc.NO_COVERAGE  # not a courier later; and nothing around 20:00 at all
 
 
 # ---- times that haven't happened, or never existed ------------------------------------------------

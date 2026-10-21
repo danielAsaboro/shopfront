@@ -8,6 +8,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from app import main
+from app import reconcile as rc
 from app.models import ClassifiedVisit, DoorEvent, VisitType
 from app.reconcile import (
     COURIER_AT_DOOR,
@@ -55,8 +56,16 @@ def test_someone_else_at_the_door():
 
 
 def test_nothing_near_the_attempt_is_not_called_proof():
-    r = check_attempt(at(19, 32), [visit(9, 0)])
+    r = check_attempt(at(19, 32), [visit(9, 0), visit(19, 10)])
     assert r["outcome"] == NOTHING_RECORDED and "doesn't prove it" in r["text"]
+    assert r["coverage"]["state"] == "door_events" and "nearest at 19:10" in r["coverage"]["text"]
+
+
+def test_a_silent_door_around_the_attempt_is_cant_tell():
+    """Item 5 of the judge round: with nothing within 30 minutes, "nothing recorded" used to make a draft; the
+    door can't show the camera was watching, so it's "can't tell", with no draft."""
+    r = check_attempt(at(19, 32), [visit(9, 0)])
+    assert r["outcome"] == rc.NO_COVERAGE and r["text"].startswith("Can't tell: the door recorded nothing around")
 
 
 def test_no_door_data_means_no_judgement():
@@ -84,8 +93,9 @@ def test_outcome_matches_the_evidence(attempt_min, raw):
         assert r["outcome"] == COURIER_AT_DOOR
     elif later:
         assert r["outcome"] == COURIER_LATER
-    elif not near:
-        assert r["outcome"] == NOTHING_RECORDED
+    elif not near:  # nothing near: only a door that was recording within 30 minutes makes that evidence
+        around = [v for v in vs if abs(v.event.timestamp - a) <= timedelta(minutes=30)]
+        assert r["outcome"] == (NOTHING_RECORDED if around else rc.NO_COVERAGE)
     elif guessed:
         assert r["outcome"] == UNVERIFIED
     else:
@@ -110,5 +120,5 @@ def test_dashboard_checks_an_attempt_time(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
     c = TestClient(main.app)
     page = c.get("/", params={"date": "2026-10-07", "attempt": "03:17"}).text
-    assert "The carrier's tracking says" in page and "recorded nothing within 10 minutes of 03:17" in page
+    assert "The carrier's tracking says" in page and "the door recorded nothing around 03:17" in page
     assert c.get("/", params={"date": "2026-10-07", "attempt": "late"}).status_code == 400
