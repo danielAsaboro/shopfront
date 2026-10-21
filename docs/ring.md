@@ -55,6 +55,7 @@ All Ring calls go to the production base URL `https://api.amazonvision.com`. Rin
 | 401 with a refresh token | `_request` | One forced refresh and retry, then `TOKEN_REJECTED` | Same page |
 | Refresh refused by oauth.ring.com | `_do_refresh` | `REFRESH_FAILED` (401) | "Re-link the Ring account" |
 | 403 | `_request` | `FORBIDDEN` (502) | "This token can't see the doorbell" |
+| (not sent) a frame from before a Playground token was issued | `frame` | `BEFORE_TOKEN`, with both times | Never asked: a Playground token only reads media recorded after its issue time (its JWT `iat`, else when it was pasted on /connect, else when Shopfront loaded it; `scripts/ring_proof.py` records its own start). Another team logged the 403 TIME_RANGE_NOT_AUTHORIZED Ring gives otherwise; the API reference doesn't say. `at_timestamp` is always sent in whole seconds (Image Snapshots > Request Body: an integer, epoch ms): the same team logged a fractional value answered 403 REQUEST_FORBIDDEN. |
 | 403 on a frame | `frame` | `FORBIDDEN`, with Ring's `errors[0].code` | That one frame isn't asked for again. Only `REQUEST_FORBIDDEN` ("Client is not authorized for the device", Image Snapshots > Error Codes) stops every frame of that device. |
 | 404 | `_request` | `DEVICE_NOT_FOUND` (502) | Same |
 | Token sees no devices | `device_id` | `NO_DEVICES` (502) | Same |

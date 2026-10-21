@@ -26,7 +26,11 @@ def test_dry_run_walks_every_step_and_records_every_request_id(tmp_path, capsys)
     assert rec["dry_run"] is True and "not evidence" in rec["note"]
     assert rec["online"] is True
     assert rec["event"]["event_type"] == "on_demand"  # what a Playground scene files
-    assert rec["frame"]["offset_into_event_ms"] == 5000 and rec["frame"]["attempts"] == 2  # 425 once, then the frame
+    # a few seconds in, asked in whole seconds (was: exactly 5000 ms in, to the millisecond); 425 once, then the frame
+    assert abs(rec["frame"]["offset_into_event_ms"] - 5000) <= 500 and rec["frame"]["attempts"] == 2
+    asked = rec["frame"]["x_media_timestamp"]  # the dry world echoes the requested timestamp
+    assert asked.isdigit() and int(asked) % 1000 == 0
+    assert rec["token_issued_from"] == "when this script started" and rec["token_issued_utc"] <= rec["event"]["start_utc"]
     assert rec["bedrock"]["labelled_by"] == "bedrock" and rec["bedrock"]["request_id"] == "dry-run-bedrock-0001"
     assert all(c["x_request_id"] for c in rec["calls"])
     statuses = [(c["method"], c["status"]) for c in rec["calls"] if "image/download" in c["url"]]

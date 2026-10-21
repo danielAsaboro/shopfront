@@ -34,7 +34,9 @@ class Clock:
 
 def make(handler, clock: Clock | None = None):
     http = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
-    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, device_id=DEV, http=http)
+    # a Playground token issued before the test's events: it may download their frames (test_ring_token_floor.py)
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http, issued_at=1_767_225_600.0), tz=TZ, device_id=DEV,
+                         http=http)
     if clock:
         ring.clock, ring.sleep, ring.jitter = clock.time, clock.sleep, lambda: 0.0
     return ring

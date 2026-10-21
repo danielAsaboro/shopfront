@@ -10,7 +10,7 @@ from app.classify.bedrock import BedrockClassifier
 from app.deliveries import is_possible_courier, is_seen_courier, staff_in
 from app.hours import posted_hours
 from app.models import Briefing, ClassifiedVisit, DoorEvent, VisitType
-from app.ring.api import RingApiClient, RingError
+from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.base import RingClient
 from app.ring.webhooks import ring_alert, ring_person, stage0_route
 
@@ -63,7 +63,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             try:  # keep Ring's frame as the receipt; no Bedrock call, Ring already said what it was
                 frames.save(v.event.id, ring.snapshot(v.event))
             except RingError as exc:
-                v.reason += f" (no Ring frame: {exc.status.value})"
+                v.reason += f" ({no_ring_frame(exc)})"
         visits.append(v)
     for e in events:
         if not isinstance(classifier, BedrockClassifier):
@@ -79,7 +79,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             try:
                 e.snapshot = ring.snapshot(e)
             except RingError as exc:
-                no_frame = f"no Ring frame: {exc.status.value}"
+                no_frame = no_ring_frame(exc)
         v = classifier.classify(e, open_hours, no_frame_reason=no_frame)
         if frames is not None and e.snapshot and v.source == "bedrock":
             frames.save(e.id, e.snapshot)  # keep the frame Bedrock saw, as the visit's receipt
@@ -92,6 +92,13 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
         stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped,
                                      "live_views": live_views}))
     return sorted(visits, key=lambda v: v.event.timestamp)
+
+
+def no_ring_frame(exc: RingError) -> str:
+    """Why there is no Ring frame, in a few words for a visit's reason."""
+    if exc.status == RingStatus.BEFORE_TOKEN:
+        return "no Ring frame: the event is from before the Playground token was issued"
+    return f"no Ring frame: {exc.status.value}"
 
 
 NO_FRAME = {  # why an event reached the classifier without a Ring frame, by where the event came from

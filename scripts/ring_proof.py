@@ -13,8 +13,10 @@ It walks through five steps and tells you when to act:
    History > Event types: "User or partner initiated a live view session"), usually about 30 s after the
    clip ends.
 3. The frame: POST /v1/devices/{id}/media/image/download, {"type": "at_timestamp"} a few seconds into that
-   event, retrying 416/425 while Ring is still processing the recording (API reference, Media Clips >
-   Download video after a webhook event).
+   event, in whole seconds, retrying 416/425 while Ring is still processing the recording (API reference,
+   Media Clips > Download video after a webhook event). A Playground token can only download media recorded
+   after it was issued, so the script records the token's issue time when it starts (the token's `iat` when it
+   is a JWT, else the moment the script started, which is no earlier) and never asks for a frame before it.
 4. The label: the frame goes to Amazon Bedrock through the same forced-tool classifier the app uses
    (app/classify/bedrock.py). Skip with --no-bedrock.
 5. The record: evidence/ring-proof-<utc>.json holds every call's HTTP status and X-Request-ID, the frame's
@@ -45,7 +47,7 @@ from typing import Callable
 import httpx
 
 from app.config import settings
-from app.ring.api import API_BASE, RingApiClient, RingAuth, RingError
+from app.ring.api import API_BASE, RingApiClient, RingAuth, RingError, RingStatus
 
 OUT = Path("evidence")
 EVENT_TYPES = "ding,motion,on_demand"
@@ -114,6 +116,10 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
     red = calls.redactor
     record: dict = {"captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "auth_mode": ring.auth.mode}
+    if ring.auth.issued_at:  # media before this can't be downloaded with a Playground token
+        record["token_issued_utc"] = datetime.fromtimestamp(ring.auth.issued_at, timezone.utc).isoformat(
+            timespec="seconds")
+        record["token_issued_from"] = ring.auth.issued_from
     try:
         say("Step 1 of 5: your Ring devices")
         devices = ring.list_devices()
@@ -127,6 +133,10 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
         record["online"] = ring.online()
         record["account_id_hash"] = red.add(ring.account_id(), "account")
         say(f"  {len(devices)} device(s); using camera {h(device)} (hashed), online: {record['online']}")
+        if ring.auth.mode == "playground":
+            floor = datetime.fromtimestamp(ring.auth.media_floor_ms() / 1000, timezone.utc)
+            say(f"  This Playground token can download frames recorded from {floor:%H:%M:%S} UTC "
+                f"({ring.auth.issued_from}); the scene you press next is after that.")
 
         say("\nStep 2 of 5: a new event in Ring's Event History")
         start = datetime.fromtimestamp(clock(), timezone.utc)
@@ -196,14 +206,18 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
                 say(f"  {v.visit_type.value} ({v.confidence:.2f}): {v.reason}  [RequestId {v.request_id}]")
     except RingError as exc:
         record["error"] = _error(exc)
-        say(f"  Ring said {exc.status.value}" + (f" ({exc.code})" if exc.code else "")
-            + f", X-Request-ID {exc.request_id}.")
+        if exc.status == RingStatus.BEFORE_TOKEN:  # never asked: say why in words
+            say(f"  {exc.detail} Press a scene again and re-run.")
+        else:
+            say(f"  Ring said {exc.status.value}" + (f" ({exc.code})" if exc.code else "")
+                + f", X-Request-ID {exc.request_id}.")
     return record
 
 
 # --- dry run: the documented shapes, no network ---------------------------------------------------------
 DRY_DEVICE = "ava1.ring.device.DRYRUN"
 DRY_ACCOUNT = "ava1.ring.account.DRYRUN"
+CLIP_S = 45.0  # a Playground scene's clip, played between the prompt and Enter
 
 
 class FakeClock:
@@ -271,6 +285,7 @@ def dry_world(clock: FakeClock) -> tuple[Callable[[httpx.Request], httpx.Respons
 
     def press(prompt: str) -> str:
         say(prompt + "(dry run: pressing a scene)")
+        clock.sleep(CLIP_S)  # the clip plays before Enter is pressed
         state["pressed_at"] = clock.time()
         return ""
 
@@ -313,7 +328,8 @@ def main(argv: list[str] | None = None) -> int:
         handler, ask, _ = dry_world(clock)
         http = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True,
                             event_hooks={"response": [calls]})
-        auth = RingAuth(access_token="dry-run-token", http=http)
+        auth = RingAuth(access_token="dry-run-token", http=http, issued_at=clock.time(),
+                        issued_from="when this script started")
         sleep, now = clock.sleep, clock.time
         out = args.out or Path(tempfile.mkdtemp(prefix="ring-proof-dry-run-"))
         raw_dir = None
@@ -325,14 +341,16 @@ def main(argv: list[str] | None = None) -> int:
                 "  RING_ACCESS_TOKEN=<token> .venv/bin/python -m scripts.ring_proof")
             return 2
         http = httpx.Client(timeout=30, follow_redirects=True, event_hooks={"response": [calls]})
+        import time as _time
+
+        started = _time.time()  # the token was issued no later than this: its media floor unless it says (iat)
         try:
             auth = RingAuth(access_token=access, refresh_token="" if access else settings.ring_refresh_token,
-                            client_id=settings.ring_client_id, client_secret=settings.ring_client_secret, http=http)
+                            client_id=settings.ring_client_id, client_secret=settings.ring_client_secret, http=http,
+                            issued_at=started, issued_from="when this script started")
         except RingError as exc:
             say(f"Ring isn't configured: {exc.detail}")
             return 2
-        import time as _time
-
         sleep, now, ask = _time.sleep, _time.time, input
         out = args.out or OUT
         raw_dir = out / "raw"

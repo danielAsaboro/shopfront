@@ -16,6 +16,7 @@ from app.ring.api import RingApiClient, RingAuth, RingError, RingStatus
 TZ = ZoneInfo("America/Los_Angeles")
 DEV = "ava1.ring.device.TEST"
 DAY = date(2026, 10, 7)
+EARLY = datetime(2026, 1, 1, tzinfo=ZoneInfo("UTC")).timestamp()
 
 
 def ms(h, m=0, d=DAY):
@@ -31,7 +32,8 @@ def hist(event_type, start):
 
 def client(handler, **auth):
     http = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
-    a = RingAuth(**(auth or {"access_token": "playground-token"}), http=http)
+    # a Playground token issued before the test's events: it may download their frames (see test_ring_token_floor)
+    a = RingAuth(**{"issued_at": EARLY, **(auth or {"access_token": "playground-token"})}, http=http)
     return RingApiClient(auth=a, tz=TZ, device_id=DEV, http=http), http
 
 

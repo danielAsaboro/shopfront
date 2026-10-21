@@ -27,6 +27,7 @@ header").
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import random
@@ -72,6 +73,11 @@ MEDIA_WINDOW = 120.0  # seconds after the requested time that a 416 can still tu
 # TIME_RANGE_NOT_AUTHORIZED other Playground integrations logged) refuses that request, not the token.
 DEVICE_FORBIDDEN_CODE = "REQUEST_FORBIDDEN"
 ON_DEMAND_OFFSET_MS = 5_000  # a live view's frame is asked for this far into the session
+# API reference, Image Snapshots > Request Body: `timestamp` is an integer, epoch milliseconds. Shopfront asks for
+# whole seconds: another Playground integration logged a fractional timestamp answered 403 REQUEST_FORBIDDEN
+# ("invalid request body"), the code that otherwise means the token can't read the device at all, and Ring
+# matches at_timestamp within a few seconds anyway.
+WHOLE_SECOND_MS = 1000
 
 
 class RingStatus(str, Enum):
@@ -89,6 +95,7 @@ class RingStatus(str, Enum):
     NETWORK_ERROR = "NETWORK_ERROR"          # no response at all (DNS, TLS, timeout)
     MALFORMED_RESPONSE = "MALFORMED_RESPONSE"  # 2xx with a body we can't read
     UNEXPECTED_STATUS = "UNEXPECTED_STATUS"  # any other HTTP status
+    BEFORE_TOKEN = "BEFORE_TOKEN"            # not asked: a Playground token only reads media from after it was issued
 
 
 _BY_HTTP = {401: RingStatus.TOKEN_REJECTED, 403: RingStatus.FORBIDDEN, 404: RingStatus.DEVICE_NOT_FOUND,
@@ -154,16 +161,43 @@ def status_for_http(code: int) -> RingStatus:
     return RingStatus.RING_UNAVAILABLE if code >= 500 else RingStatus.UNEXPECTED_STATUS
 
 
+def whole_second(ms: int | float) -> int:
+    """Epoch ms rounded to the nearest whole second, as an int (see WHOLE_SECOND_MS)."""
+    return int((ms + WHOLE_SECOND_MS // 2) // WHOLE_SECOND_MS) * WHOLE_SECOND_MS  # half up, not to even
+
+
+def jwt_issued_at(token: str) -> float | None:
+    """The `iat` claim (epoch seconds) when a token is a JWT, else None. Read only to know which frames a
+    Playground token can download; nothing is verified or trusted beyond that."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        body = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        iat = body.get("iat") if isinstance(body, dict) else None
+    except (ValueError, TypeError):
+        return None
+    if isinstance(iat, (int, float)) and not isinstance(iat, bool) and 0 < iat <= _time.time() + 300:
+        return float(iat)
+    return None
+
+
 class RingAuth:
     """Access token for Ring API calls.
 
-    Playground mode: a fixed access token (about 30 minutes), never refreshed.
+    Playground mode: a fixed access token (about 30 minutes), never refreshed. It can only download media
+    recorded after it was issued: an earlier time answers 403 (TIME_RANGE_NOT_AUTHORIZED, "Requested time range
+    is not within authorized boundaries", logged by another Playground integration; the API reference doesn't
+    say). So the issue time is kept (`issued_at`): the token's `iat` when it is a JWT, else when it was pasted on
+    /connect (or the caller's own record, e.g. scripts/ring_proof.py's start), else when it was loaded here.
+    Frames from before it aren't asked for (`media_floor_ms`).
     Refresh mode: refresh token + client credentials. Ring rotates the refresh token on every
     refresh, so the newest one is saved to `token_file` and preferred over the configured one.
     """
 
     def __init__(self, *, access_token: str = "", refresh_token: str = "", client_id: str = "",
-                 client_secret: str = "", token_file: Path | None = None, http: httpx.Client | None = None):
+                 client_secret: str = "", token_file: Path | None = None, http: httpx.Client | None = None,
+                 issued_at: float | None = None, issued_from: str = "when it was pasted"):
         if access_token and refresh_token:
             raise RingError(RingStatus.NOT_CONFIGURED, "set RING_ACCESS_TOKEN or RING_REFRESH_TOKEN, not both")
         if refresh_token and not (client_id and client_secret):
@@ -171,6 +205,12 @@ class RingAuth:
         if not (access_token or refresh_token):
             raise RingError(RingStatus.NOT_CONFIGURED, "set RING_ACCESS_TOKEN or RING_REFRESH_TOKEN")
         self.mode = "playground" if access_token else "refresh"
+        self.issued_at: float | None = None
+        self.issued_from = ""
+        if access_token:
+            jwt = jwt_issued_at(access_token)
+            self.issued_at, self.issued_from = (jwt, "the token's iat") if jwt else \
+                (issued_at, issued_from) if issued_at else (_time.time(), "when Shopfront loaded it")
         self._access = access_token
         self._expiry = float("inf") if access_token else 0.0
         self._refresh = refresh_token
@@ -180,6 +220,12 @@ class RingAuth:
         self._http = http or httpx.Client(timeout=20)
         if self.mode == "refresh" and token_file and token_file.exists():
             self._refresh = json.loads(token_file.read_text()).get("refresh_token") or refresh_token
+
+    def media_floor_ms(self) -> int:
+        """The earliest media time this token may download, epoch ms (0: no limit Shopfront knows of)."""
+        if self.mode != "playground" or not self.issued_at:
+            return 0
+        return -(-int(self.issued_at * 1000) // WHOLE_SECOND_MS) * WHOLE_SECOND_MS  # up to a whole second
 
     def token(self, force_refresh: bool = False) -> str:
         if self.mode == "playground":
@@ -489,8 +535,12 @@ class RingApiClient(RingClient):
         `retry_for` > 0 the unchanged request is retried on those two, on Ring's schedule (5, 10, 20, 30 s
         plus jitter), until `retry_for` seconds have passed or 2 minutes after the requested time, whichever
         comes first. A page load passes 0 and never waits; a recent miss isn't remembered, so the next load
-        asks again."""
-        ms = self.frame_ms(event) if at_ms is None else at_ms
+        asks again.
+
+        The time is sent in whole seconds (`whole_second`). With a Playground token, a time before the token was
+        issued isn't asked for at all: when the event runs past that moment (a live view), its frame is asked
+        for at the first whole second after it; otherwise it is BEFORE_TOKEN, with the times in its detail."""
+        ms = self._media_time(event, self.frame_ms(event) if at_ms is None else at_ms)
         known = self._no_frame.get((event.device_id, "*")) or self._no_frame.get((event.device_id, ms))
         if known:  # the token may not download this device's images at all, or Ring said no for this time
             raise known
@@ -527,6 +577,21 @@ class RingApiClient(RingClient):
                      media_timestamp=resp.headers.get("X-Media-Timestamp"),
                      media_origin=resp.headers.get("X-Media-Origin"),
                      request_id=resp.headers.get("X-Request-ID"), attempts=attempts)
+
+    def _media_time(self, event: DoorEvent, ms: int) -> int:
+        ms = whole_second(ms)
+        floor = self.auth.media_floor_ms()
+        if ms >= floor:
+            return ms
+        ends = int(event.ends.timestamp() * 1000) if event.ends else int(event.timestamp.timestamp() * 1000)
+        if ends >= floor:  # the event was still going when the token was issued
+            return floor
+        def hms(t: int) -> str:
+            return datetime.fromtimestamp(t / 1000, tz=self.tz).strftime("%H:%M:%S")
+        raise RingError(RingStatus.BEFORE_TOKEN,
+                        f"Ring only lets a Developer Playground token download frames recorded after it was issued "
+                        f"({hms(floor)}, {self.auth.issued_from}); this event was at {hms(ms)}. Frames of events "
+                        f"after {hms(floor)} can be downloaded with this token.")
 
     # Live view (WHEP). The browser builds the SDP offer; the Bearer token stays on the server.
     def whep_start(self, sdp_offer: str) -> tuple[str, str]:
