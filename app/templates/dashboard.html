@@ -5,6 +5,10 @@
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
 {% set prefill = request.query_params.get('claim') %}
+{% set scan_order = (r.expected|selectattr('tracking', 'equalto', tracking)|first) if tracking else none %}
+{% set dflt = default_cost(profile.currency) %}
+{% set per_miss = profile.redelivery_cost if profile.redelivery_cost is not none else dflt %}
+{% macro stake(o) %}{% if o and (o.amount or per_miss is not none) %}<p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}{% if o.amount and per_miss is not none %}, and {% endif %}{% if per_miss is not none %}{{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery{% if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}{% endif %}.</p>{% endif %}{% endmacro %}
 {% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
   <div class="page-head">
     <div>
@@ -41,7 +45,7 @@
   <section class="lead">
     {% if lead %}
     <p class="first{{ ' warn' if lead_is_scan }}">{{ lead[0] }}</p>
-    {% if lead_is_scan and pack_href %}<p class="reason"><a href="{{ pack_href }}">Build the dispute pack</a> · <a href="#atth">see the check</a></p>{% endif %}
+    {% if lead_is_scan and pack_href %}{{ stake(scan_order) }}<p class="reason"><a href="{{ pack_href }}">Build the dispute pack</a> · <a href="#atth">see the check</a></p>{% endif %}
     {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     {% elif r.unexpected %}
     <p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
@@ -50,7 +54,7 @@
     {% else %}
     <p class="first">No door activity recorded for {{ b.date }}.</p>
     {% endif %}
-    {% if money %}<p class="money">{{ money }}</p>{% elif not profile.redelivery_cost %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
+    {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
   </section>
   {% endif %}
 
@@ -82,7 +86,8 @@
 
   {% if not first_run %}
   <section class="figures" aria-label="The day in three numbers">
-    <div><span class="v {% if not ring_down and r.expected|selectattr('status', 'equalto', 'not_seen')|list %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
+    {% set n_possible = r.expected|selectattr('status', 'equalto', 'possible')|list|length %}
+    <div><span class="v {% if not ring_down and r.expected|selectattr('status', 'equalto', 'not_seen')|list %}warn{% endif %}">{% if not r.total %}—{% elif n_possible %}{{ r.seen }}<small> confirmed</small>{% else %}{{ r.seen ~ '/' ~ r.total }}{% endif %}</span><span class="l">{% if r.total and n_possible %}{{ n_possible }} possible, of {{ r.total }} expected{% else %}Expected deliveries seen{% endif %}</span></div>
     <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Couriers while closed</span></div>
     <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
   </section>
@@ -90,7 +95,7 @@
 
   <section class="block" aria-labelledby="dlv">
     <h2 id="dlv">Deliveries</h2>
-    {% if r.total %}<span class="legend">{{ r.seen }} of {{ r.total }} expected reached the door</span>{% endif %}
+    {% if r.total %}<span class="legend">{% if n_possible %}{{ r.seen }} confirmed, {{ n_possible }} possible, of {{ r.total }} expected{% else %}{{ r.seen }} of {{ r.total }} expected reached the door{% endif %}</span>{% endif %}
     {% if not r.total %}
     <p class="why" style="margin:6px 0 0">No orders for this day. <a href="/setup#orders">Import your orders</a> or add one by hand, and Shopfront will check each one off as the doorbell sees the courier.</p>
     {% endif %}

@@ -1,7 +1,8 @@
 """The owner's shop profile: name, posted hours and what a missed delivery costs them.
 
 Set on /setup and saved to `.data/shop.json`. Until then the .env values apply. The cost is the
-owner's own number; Shopfront never supplies an industry average.
+owner's own number; until they give one, the money line uses a survey average for their currency
+(app/deliveries.py COST_DEFAULTS, sourced), and every place it shows says it is that average.
 """
 
 from __future__ import annotations

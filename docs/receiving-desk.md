@@ -120,6 +120,19 @@ credentials the section says, in plain words, that reading a screenshot needs an
 typed form works as before. Owner-only and same-site, like every other write (`app/owner.py`).
 Tested against botocore's Stubber in `tests/test_scan_extract.py`; **not run against live Bedrock yet**.
 
+## What a missed delivery costs
+
+The dashboard's week line ("Last 7 days: … that's $X") and the "At stake" line under a disputed scan
+multiply what the door saw by a cost per missed delivery. That is the owner's own number from `/setup`.
+Until they give one, Shopfront uses a survey average for their currency and says so wherever it shows,
+with a link: Loqate's *Fixing Failed Deliveries 2021* report (Censuswide survey of 304 retail executives
+in the US, UK and Germany, December 2020): "In the US, 8% of first-time deliveries fail, at an average
+cost of $17.20", €14.69 in Germany, £11.60 in the UK
+(<https://info.loqate.com/hubfs/Loqate%202021/Fixing%20Failed%20Deliveries/Fixing%20Failed%20Deliveries%20-%20Final.pdf>).
+It is the sender's cost per failed parcel, not the shop's lost trade, so the pages call it a survey
+average and ask for the owner's number. Other currencies get no default. The "At stake" line also
+names the order's own value from the imported CSV, as written there.
+
 ## 4. Staff tap (`/deliveries/{id}/received`)
 
 Optional. Once Ring or Bedrock has seen the courier for an order, staff can tap **All there**,

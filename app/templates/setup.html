@@ -47,10 +47,11 @@
       <div class="hours">
         {% for d, h in days %}<label class="field">{{ d }}<input name="h{{ loop.index0 }}" value="{{ '' if h == 'closed' else h }}" placeholder="closed"></label>{% endfor %}
       </div>
-      <p class="why" style="margin:16px 0 6px">What does one missed delivery cost you (a redelivery fee, a lost morning's stock)? Shopfront uses only your number.</p>
+      {% set dflt = default_cost(p.currency) %}
+      <p class="why" style="margin:16px 0 6px">What does one missed delivery cost you (a redelivery fee, a lost morning's stock)?{% if dflt is not none %} Left empty, Shopfront uses {{ p.currency }}{{ '%.2f'|format(dflt) }}: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). That is the sender's cost, so your own number is better.{% else %} Shopfront uses only your number.{% endif %}</p>
       <div class="fields">
         <label class="field tiny">Currency<input name="currency" value="{{ p.currency }}" maxlength="3"></label>
-        <label class="field narrow">Per delivery<input name="redelivery_cost" value="{{ cost_typed if cost_typed is not none else ('%g'|format(p.redelivery_cost) if p.redelivery_cost is not none else '') }}" inputmode="decimal" placeholder="e.g. 15"></label>
+        <label class="field narrow">Per delivery<input name="redelivery_cost" value="{{ cost_typed if cost_typed is not none else ('%g'|format(p.redelivery_cost) if p.redelivery_cost is not none else '') }}" inputmode="decimal" placeholder="{{ '%.2f'|format(dflt) if dflt is not none else 'e.g. 15' }}"></label>
         <button type="submit">Save</button>
       </div>
     </section>

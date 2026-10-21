@@ -223,3 +223,14 @@ def test_one_unidentified_press_is_offered_to_one_order_and_says_so(tmp_path):
     by = {x["supplier"]: x for x in r["expected"]}
     assert [p["time"] for p in by["Pinecrest Paper Goods"]["possible"]] == ["10:09"]
     assert [p["time"] for p in by["Valley Creamery"]["possible"]] == ["14:36"]
+
+
+def test_until_the_owner_sets_a_cost_the_money_line_uses_the_sourced_survey_average():
+    """Round 2: impact on screen without setup. The default is Loqate's 2021 survey figure, and the line says
+    it's a survey average, not the owner's number."""
+    from app.deliveries import COST_SOURCE, default_cost
+    assert (default_cost("$"), default_cost("£"), default_cost("€"), default_cost("CHF")) == (17.20, 11.60, 14.69, None)
+    line = money_line(0, 2, 17.20, "$", default=True)
+    assert line == ("Last 7 days: 2 expected deliveries with no courier seen at the door. At $17.20 each, the survey "
+                    "average for a failed delivery (not your own number yet), that's about $34.40.")
+    assert COST_SOURCE["url"].startswith("https://info.loqate.com/") and "304 retail executives" in COST_SOURCE["what"]

@@ -32,8 +32,8 @@ from app.owner import COOKIE, COOKIE_DAYS, UNSAFE, OwnerGate, PublicDemoGate
 from app.scan_extract import MAX_BYTES as MAX_SCAN_BYTES
 from app.scan_extract import ScanReader, ScanReadError
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
-from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
-                            receipts)
+from app.deliveries import (COST_SOURCE, RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, default_cost, frame_name,
+                            headline, money_line, receipts)
 from app.hours import normalize_clock, posted_hours
 from app.live import LiveError, LiveLog
 from app.ring import RingSource
@@ -71,6 +71,7 @@ templates.env.filters.update(
     relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
+templates.env.globals.update(cost_source=COST_SOURCE, default_cost=default_cost)
 templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(illustrations.FAVICON)
 
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
@@ -209,7 +210,8 @@ def _receipts(day: date, visits=None) -> dict:
 
 def _week_money(day: date) -> str | None:
     p = profile.get()
-    if p.redelivery_cost is None:
+    cost = p.redelivery_cost if p.redelivery_cost is not None else default_cost(p.currency)  # labelled default
+    if cost is None:
         return None
     closed = missing = 0
     for i in range(7):
@@ -220,7 +222,7 @@ def _week_money(day: date) -> str | None:
             return None
         closed += r["closed_couriers"]  # Ring- or Bedrock-confirmed couriers only, staff not in
         missing += sum(1 for x in r["expected"] if x["status"] == "not_seen" and not x.get("possible_elsewhere"))
-    return money_line(closed, missing, p.redelivery_cost, p.currency)
+    return money_line(closed, missing, cost, p.currency, default=p.redelivery_cost is None)
 
 
 def _ring_error_body(exc: RingError) -> dict:

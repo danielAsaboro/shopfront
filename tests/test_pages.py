@@ -202,7 +202,7 @@ def test_a_rules_match_is_only_possible_but_staff_can_still_say_what_arrived(c):
     assert 'value="ok" class="quiet"' in form and ">It arrived</button>" in form
     assert 'value="short"' not in form and 'value="damaged"' not in form and 'name="note"' not in form
     assert f"order={e.id}" not in page  # no dispute pack from a guess
-    assert "0/1" in page  # not counted as seen
+    assert "0<small> confirmed</small>" in page and "1 possible, of 1 expected" in page  # not counted as seen
 
 
 def test_an_order_not_due_yet_is_quiet(c):
@@ -454,3 +454,25 @@ def test_fresh_install_shows_no_ask_example_about_orders_it_doesnt_have(c):
     assert "PO-1041" not in page and "ask-example" not in page.split("</style>")[-1]
     main.book.add(WEDNESDAY, "Bay Mills")
     assert 'class="ask-example"' in c.get(f"/?date={WEDNESDAY}").text
+
+
+def test_impact_is_on_screen_with_a_sourced_default(c):
+    """Round 2: no cost set yet. The week line uses the survey average and links its source; a disputed scan
+    says what's at stake; /setup shows the default as the placeholder and names where it comes from."""
+    from app.deliveries import COST_SOURCE
+    main.book.add(SUNDAY, "Evening veg", "19:00", "20:00")  # never seen: a missed delivery this week
+    page = c.get(f"/?date={SUNDAY}").text
+    assert "the survey average for a failed delivery (not your own number yet)" in page
+    assert f'href="{COST_SOURCE["url"]}"' in page and 'href="/setup#shop">Use your own number</a>' in page
+    setup = c.get("/setup").text
+    assert 'placeholder="17.20"' in setup and "Left empty, Shopfront uses $17.20" in setup
+    assert f'href="{COST_SOURCE["url"]}"' in setup
+    main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", tracking="NP1", amount="$318.75")
+    # find a time the door disputes, so the scan is the headline
+    for hhmm in ("14:30", "12:30", "11:00", "16:30"):
+        page = c.get(f"/?date={WEDNESDAY}&claim=business_closed&attempt={hhmm}&tracking=NP1").text
+        if 'class="reason stake"' in page:
+            break
+    stake = page.split('class="reason stake">')[1].split("</p>")[0]
+    assert stake.startswith("At stake: PO-1042 from Valley Creamery, $318.75 of stock, and about $17.20 for the "
+                            "redelivery (survey average")

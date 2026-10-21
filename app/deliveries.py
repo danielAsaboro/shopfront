@@ -467,9 +467,31 @@ def elsewhere_text(x: dict) -> str:
             f"the closer fit")
 
 
-def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str) -> str | None:
-    """The owner's own redelivery cost times what the door saw. No cost set means no line. Both counts
-    must come from couriers Ring or Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows)."""
+# What a failed delivery costs, until the owner says what it costs them: Loqate's "Fixing Failed Deliveries
+# 2021" report (survey by Censuswide, December 2020, of 304 retail executives in the US, UK and Germany): "In
+# the US, 8% of first-time deliveries fail, at an average cost of $17.20. In Germany, 7% ... costing on
+# average €14.69 apiece. In the UK, it's a 6% failure rate at an average cost of £11.60 each." It is the
+# sender's cost per failed parcel, not the shop's lost trade, so every page that uses it says so.
+COST_DEFAULTS = {"$": 17.20, "£": 11.60, "€": 14.69}
+COST_SOURCE = {
+    "name": "Loqate, Fixing Failed Deliveries 2021",
+    "what": "the average cost of one failed first-time delivery, from a December 2020 survey of 304 retail "
+            "executives in the US, UK and Germany",
+    "url": "https://info.loqate.com/hubfs/Loqate%202021/Fixing%20Failed%20Deliveries/"
+           "Fixing%20Failed%20Deliveries%20-%20Final.pdf",
+}
+
+
+def default_cost(currency: str) -> float | None:
+    """The survey's figure for this currency, or None when the survey has none for it."""
+    return COST_DEFAULTS.get((currency or "").strip())
+
+
+def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str,
+               default: bool = False) -> str | None:
+    """A redelivery cost times what the door saw: the owner's own number, or with `default` the survey
+    average above, said as such. No cost means no line. Both counts must come from couriers Ring or
+    Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows)."""
     n = closed_attempts + missing
     if cost is None or n == 0:
         return None
@@ -479,4 +501,7 @@ def money_line(closed_attempts: int, missing: int, cost: float | None, currency:
     if missing:
         parts.append(f"{missing} expected deliver{'ies' if missing != 1 else 'y'} with no courier seen at the door")
     amount = f"{currency}{cost * n:,.2f}".replace(".00", "")
+    if default:
+        return (f"Last 7 days: {' and '.join(parts)}. At {currency}{cost:.2f} each, the survey average for a failed "
+                f"delivery (not your own number yet), that's about {amount}.")
     return f"Last 7 days: {' and '.join(parts)}. At your {currency}{cost:g} per redelivery, that's {amount}."
