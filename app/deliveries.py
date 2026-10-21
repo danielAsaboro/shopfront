@@ -166,7 +166,7 @@ class FrameStore:
 
 def _is_open(t: datetime, open_hours: tuple[time, time] | None) -> bool:
     tt = t.timetz().replace(tzinfo=None)
-    return bool(open_hours) and open_hours[0] <= tt < open_hours[1]
+    return open_hours is not None and open_hours[0] <= tt < open_hours[1]
 
 
 def _utc(t: datetime) -> datetime:

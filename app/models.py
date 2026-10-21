@@ -53,7 +53,8 @@ class Briefing:
     busiest_hour_last_week: int | None = None
     busiest_hour_last_week_count: int = 0
     deliveries: int = 0
-    deliveries_while_closed: list[dict] = field(default_factory=list)
+    deliveries_while_closed: list[dict] = field(default_factory=list)  # couriers Ring or Bedrock saw, nobody in
+    presses_while_closed: list[dict] = field(default_factory=list)  # rule-guessed "deliveries": presses, not couriers
     after_hours: list[dict] = field(default_factory=list)
     first_activity: str | None = None
     last_activity: str | None = None
