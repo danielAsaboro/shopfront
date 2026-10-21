@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
@@ -349,6 +350,19 @@ def _record(day: date) -> dict:
                                                    default, dispute.DISPUTE)}
 
 
+def _demo_scan() -> dict | None:
+    """On a demo install (scripts/demo.py's marker in the data folder), the demo's business-closed scan,
+    so the desk can offer it already filled in."""
+    if not (DATA / ".shopfront-demo").exists():
+        return None
+    try:
+        scan = json.loads((DATA / "demo-scan.json").read_text())
+    except (OSError, ValueError):
+        return None
+    keys = ("date", "attempt", "claim", "carrier", "tracking")
+    return {k: str(scan.get(k, "")) for k in keys} if isinstance(scan, dict) and scan.get("attempt") else None
+
+
 def _claim(value: str | None) -> str:
     value = (value or ATTEMPTED).strip().lower().replace(" ", "_")
     if value not in CLAIMS:
@@ -391,7 +405,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         desk["lead"] = [f"{r['seen']} of {r['total']} expected deliveries confirmed by Ring's webhooks. "
                         "The rest can't be checked until Ring is reconnected."] if r["total"] else []
     return _page(request, "dashboard.html", {
-        **desk, "ring_down": ring_down, "asked_time": attempt or "",
+        **desk, "ring_down": ring_down, "asked_time": attempt or "", "demo_scan": _demo_scan(),
         "kept": checks.find(day.isoformat(), attempt, claim, carrier.strip()[:40], tracking.strip()[:60])
         if attempt and desk.get("attempt") else None,
         **({"ring_problem": None} if ring_down else {}),  # the page's own notice says it, with what still works

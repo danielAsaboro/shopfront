@@ -22,6 +22,14 @@
     </form>
   </div>
 
+  {% if demo_scan and not (attempt and asked_time == demo_scan.attempt and b.date|string == demo_scan.date) %}
+  <form method="get" action="/" class="try-demo no-print" aria-label="The demo's scan">
+    {% for k, v in demo_scan.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <button type="submit">Try the business-closed check</button>
+    <span class="why">Demo: {{ demo_scan.carrier }} scanned {{ demo_scan.tracking }} "business closed" at {{ demo_scan.attempt }} on {{ demo_scan.date|long_date }}.</span>
+  </form>
+  {% endif %}
+
   {% if ring_down %}
   {% set st = ring_down.status.value %}
   <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif st == "RATE_LIMITED" %}Ring asked Shopfront to slow down{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until {% if st == "RATE_LIMITED" %}you reload in {{ ring_down.retry_after ~ ' seconds' if ring_down.retry_after else 'a minute' }}{% else %}you <a href="/connect">reconnect Ring</a>{% endif %}. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>

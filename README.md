@@ -48,18 +48,19 @@ the scan time) and imports the three orders in
 [samples/orders.csv](samples/orders.csv), dated to that day. It starts Shopfront at
 http://127.0.0.1:8000 on synthetic door events and replays one signed Ring `package_delivery`
 webhook at 10:12, signed the way [scripts/feed_webhook.py](scripts/feed_webhook.py) does it. Then it
-prints three links:
+prints three links, the check first:
 
-1. **The receiving desk** (`/?date=…`): the day's orders, which ones a courier was seen for, and how.
-   Ring's 10:12 alert is the flour order's (PO-1041, due 10:00–11:00) confirmed courier; the script
-   checks the desk says so and stops if it doesn't. The carrier record shows two earlier demo checks of
-   Northline Parcel this month; "Keep in Northline Parcel's record" under a check adds it.
-2. **The business-closed check:** the made-up carrier "Northline Parcel" scanned the dairy order
+1. **The business-closed check:** the made-up carrier "Northline Parcel" scanned the dairy order
    PO-1042 "business closed" at 14:30, inside its 13:00–16:00 window and during posted hours. It's an
    ordinary busy afternoon minute, not a hand-picked quiet one: any open-hours time with the door in use
    around it gives "You were open" (a test sweeps the day every 15 minutes). An unidentified doorbell
    press near the scan is named as unidentified, never offered as the courier. The script asks the
-   running app what the door shows and prints its answer.
+   running app what the door shows and prints its answer. On the demo's desk, "Try the business-closed
+   check" opens the same check, already filled in.
+2. **The receiving desk** (`/?date=…`): the day's orders, which ones a courier was seen for, and how.
+   Ring's 10:12 alert is the flour order's (PO-1041, due 10:00–11:00) confirmed courier; the script
+   checks the desk says so and stops if it doesn't. The carrier record shows two earlier demo checks of
+   Northline Parcel this month; "Keep in Northline Parcel's record" under a check adds it.
 3. **The dispute pack** (`/dispute?…`): the finding, the door log around the scan, the posted hours,
    what the pack can't show, two drafts to pick from (to the supplier, and to the carrier about its
    scan), and a zip (`/dispute.zip`).

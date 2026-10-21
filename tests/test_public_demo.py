@@ -117,13 +117,15 @@ def test_landing_page_opens_on_the_demo_day_with_the_banner(client, demo):
     assert int(page.headers["content-length"]) == len(page.content)
 
 
-def test_desk_shows_the_carrier_record(client, demo):
-    """The one-command demo's seeded history, read-only here."""
+def test_desk_shows_the_carrier_record_and_offers_the_demo_scan(client, demo):
+    """The one-command demo's seeded history and its filled-in check, read-only here."""
     desk = client.get(demo.links["desk"]).text
     n = len(main.checks.all())  # earlier open days in the demo day's month: two, unless it is the month's start
     assert n == 2 or demo.day.day <= 7
     if n:
         assert "Northline Parcel scanned you closed" in desk and "during posted hours" in desk
+    button = desk.split('class="try-demo', 1)[1].split("</form>", 1)[0]
+    assert "Try the business-closed check" in button and f'name="attempt" value="{demo.scan}"' in button
 
 
 def test_banner_links_open_the_check_and_the_pack(client, demo):

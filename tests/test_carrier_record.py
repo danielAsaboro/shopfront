@@ -1,7 +1,8 @@
 """Kept scan checks and the carrier record they add up to (app/checks.py), the desk's month of money, and
-the demo's seeded history. Round 3 audit: "make the B2B edge visible".
+the demo's seeded history and filled-in business-closed check. Round 3 audit: "make the B2B edge visible".
 Local only."""
 
+import json
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
@@ -145,7 +146,7 @@ def test_back_is_only_a_local_path(monkeypatch):
     assert r.headers["location"] == "/#record"
 
 
-# ---- the demo: two earlier checks ------------------------------------
+# ---- the demo: two earlier checks, and the desk offers the demo's scan ------------------------------------
 
 def test_demo_seeds_two_earlier_checks_this_month_marked_demo(tmp_path):
     day = date(2026, 10, 20)
@@ -156,3 +157,33 @@ def test_demo_seeds_two_earlier_checks_this_month_marked_demo(tmp_path):
     [r] = kc.carrier_record(kc.CheckBook(tmp_path / "checks.json").all(), day)
     assert r["text"] == f"{demo.CARRIER} scanned you closed twice in October, every time during posted hours."
     assert r["all_demo"]
+
+
+def test_desk_offers_the_demo_scan_already_filled_in_only_on_a_demo_install():
+    orders = demo.dated_orders(demo.SAMPLE.read_text(), DAY)
+    c = TestClient(main.app)
+    assert "Try the business-closed check" not in c.get("/", params={"date": DAY.isoformat()}).text
+    main.DATA.mkdir(parents=True, exist_ok=True)
+    scan = demo.note_demo_scan(main.DATA, DAY, orders)
+    assert (main.DATA / demo.MARKER).exists()
+    desk = c.get("/", params={"date": DAY.isoformat()}).text
+    button = desk.split('class="try-demo', 1)[1].split("</form>", 1)[0]
+    assert "Try the business-closed check" in button
+    for k, v in scan.items():
+        assert f'name="{k}" value="{v}"' in button
+    assert scan == {"date": DAY.isoformat(), "carrier": demo.CARRIER, "tracking": "NP4471002958",
+                    "attempt": demo.SCAN_AT, "claim": "business_closed"}
+    # once the scan is checked, the verdict card is the top; the button doesn't repeat it
+    shown = c.get("/", params={k: v for k, v in scan.items()}).text
+    assert 'class="try-demo' not in shown
+    (main.DATA / demo.MARKER).unlink()  # the same file without the demo's marker: not a demo install
+    assert "Try the business-closed check" not in c.get("/", params={"date": DAY.isoformat()}).text
+    json.loads((main.DATA / "demo-scan.json").read_text())  # still there, just not offered
+
+
+def test_demo_prints_the_check_url_first():
+    """What scripts/demo.py prints: the check's link before anything else, then the story."""
+    import inspect
+    printed = inspect.getsource(demo.main).split('print(f"""', 1)[1]
+    assert printed.lstrip().startswith("Start here, the business-closed check:\n   {check_url}")
+    assert printed.index("{check_url}") < printed.index("{desk}") < printed.index("{pack_url}")

@@ -235,6 +235,7 @@ def seed(data: Path, tz, today: date) -> tuple[date, str]:
     key = secrets.token_hex(16)  # signs this one replay and is then forgotten; the app holds no webhook key
     demo.feed_package_alert(_Direct(WebhookLog(data / "ring-webhooks.jsonl"), key), day, tz, key)
     demo.seed_past_checks(data, day, tz)  # the carrier record's history, marked demo
+    demo.note_demo_scan(data, day, orders)  # the desk's "Try the business-closed check"
     return day, orders
 
 

@@ -19,7 +19,8 @@ What it does, in order:
    day, marked demo), so the pack's camera line shows the coverage path; the demo stops if it doesn't.
 6. Keeps two earlier "business closed" checks for the same made-up carrier, on open days earlier in the
    month, checked against that day's synthetic door the way the desk checks one, and marked demo; the desk's
-   carrier record then has a history to show.
+   carrier record then has a history to show. It also notes the demo scan (demo-scan.json), so the desk
+   offers it, already filled in, as "Try the business-closed check".
 7. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
    It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
    same answer (tests/test_demo.py sweeps the whole day). Asks the running app what the door shows,
@@ -215,6 +216,20 @@ def seed_past_checks(data: Path, day: date, tz: ZoneInfo) -> list[dict]:
     return kept
 
 
+def note_demo_scan(data: Path, day: date, orders_text: str) -> dict:
+    """data/demo-scan.json: the demo's business-closed scan, which the desk offers already filled in on a
+    demo install (the MARKER file in the same folder)."""
+    import json
+
+    order = next(r for r in csv.DictReader(io.StringIO(orders_text)) if r["order_ref"] == SCAN_ORDER)
+    scan = {"date": day.isoformat(), "carrier": CARRIER, "tracking": order["tracking"], "attempt": SCAN_AT,
+            "claim": "business_closed"}
+    (data / "demo-scan.json").write_text(json.dumps(scan))
+    if not (data / MARKER).exists():
+        (data / MARKER).write_text("made by scripts/demo.py; deleted on the next demo run\n")
+    return scan
+
+
 class DemoMismatch(SystemExit):
     """The pages don't say what the demo is about to tell the viewer."""
 
@@ -278,6 +293,7 @@ def main() -> None:
     orders_csv.write_text(dated_orders(SAMPLE.read_text(), day))
     n = _import_orders(data, orders_csv.read_text())
     past = seed_past_checks(data, day, tz)
+    note_demo_scan(data, day, orders_csv.read_text())
 
     key = os.getenv("RING_HMAC_KEY") or settings.ring_hmac_key or DEMO_HMAC_KEY
     env = {**os.environ, "SHOPFRONT_DATA_DIR": str(data), "RING_MODE": "synthetic", "RING_HMAC_KEY": key,
@@ -295,21 +311,24 @@ def main() -> None:
         check_url = f"{base}/?{urlencode({**q, 'attempt': scan, 'claim': 'business_closed'})}"
         pack_url = f"{base}/dispute?{urlencode({**q, 'at': scan, 'claim': 'business_closed'})}"
         print(f"""
+Start here, the business-closed check:
+   {check_url}
+
 Shopfront demo is running at {base}
 {SHOP_NAME}, {day:%A %d %B %Y}, open {hours[0]:02d}:00-{hours[1]:02d}:00. Door events are synthetic and the
 Ring webhook is a signed replay: every page says so. Nothing here is sent to anyone.
 
-1. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
+1. {CARRIER} scanned the dairy order {SCAN_ORDER} (tracking {order['tracking']}) "business closed" at {scan}.
+   The link above checks that scan against the posted hours and the door; the desk's
+   "Try the business-closed check" button opens the same check.
+   Shopfront's answer: {check.get('text') or check}
+   "Keep in {CARRIER}'s record" adds it to the {len(past)} earlier demo checks of {CARRIER}
+   ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}) on the desk's carrier record.
+
+2. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
    The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by Ring's
    package_delivery Smart Alert; the desk shows it as that order's courier.
-   The carrier record shows the {len(past)} earlier demo checks of {CARRIER}
-   ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}).
    {desk}
-
-2. {CARRIER} scanned the dairy order {SCAN_ORDER} (tracking {order['tracking']}) "business closed" at {scan}.
-   Check that scan against the posted hours and the door; "Keep in {CARRIER}'s record" adds it:
-   {check_url}
-   Shopfront's answer: {check.get('text') or check}
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,
    and two drafts, to {' and to '.join(d['to'] or 'the carrier' for d in story['pack']['drafts'])}; you pick one,
