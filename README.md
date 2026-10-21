@@ -103,6 +103,8 @@ stops DNS-rebinding pages. Forms and API calls from other websites are refused t
 If Ring refuses, the page shows the named reason (`TOKEN_REJECTED`, `FORBIDDEN`, …). It never swaps in synthetic data.
 Real Ring webhooks need a public HTTPS URL for `POST /webhooks/ring` and the HMAC key from partner
 onboarding in `RING_HMAC_KEY`. The `demo-key` in `.env.example` is only for local replays.
+[infra/template.yaml](infra/template.yaml) is that URL on AWS (`cd infra && sam build && sam deploy --guided`,
+see [docs/aws.md](docs/aws.md)); it has not been deployed yet.
 
 Door frames are pictures of people, so Shopfront deletes them after `SHOPFRONT_FRAME_DAYS` days
 (default 30; `0` keeps them). Each frame on the receiving desk and the dispute pack also has a
@@ -135,7 +137,7 @@ Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AW
 |---|---|
 | Repo calls Ring at runtime | ✓ [`app/ring/api.py`](app/ring/api.py): devices, Event History, image download, WHEP live view, token refresh |
 | Shown working through a Ring simulator or device | ✓ Live calls to the Ring Developer Playground (the simulator the hackathon FAQ accepts): devices, Event History and a live-view session, with request IDs below. ✗ Not yet: video frames from a playing Playground clip, and webhooks from Ring (the Playground sends none) |
-| AWS service with documented integration | ✓ Amazon Bedrock: [docs/bedrock.md](docs/bedrock.md) (frame labels, Converse) and the Strands agent in [`app/agent.py`](app/agent.py). ✗ No live Bedrock call captured yet |
+| AWS service with documented integration | ✓ Amazon Bedrock: [docs/bedrock.md](docs/bedrock.md) (frame labels, Converse) and the Strands agent in [`app/agent.py`](app/agent.py). ✗ No live Bedrock call captured yet. Webhook endpoint on AWS (Lambda Function URL, DynamoDB, Secrets Manager, S3, CloudWatch Logs): [docs/aws.md](docs/aws.md), **template ready, not yet deployed** |
 | Setup and run instructions | ✓ [Run the demo](#run-the-demo) |
 | Repo access for judges | ✓ [MIT](LICENSE) licence. ✗ Not yet on GitHub (private, shared with the Amazon reviewers at submission) |
 
@@ -178,6 +180,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Orders import | [`app/orders.py`](app/orders.py), `POST /orders/import` | CSV with column aliases (Order ID, PO number, Vendor, Tracking number, …) |
 | Receiving desk | [`app/deliveries.py`](app/deliveries.py), [`app/reconcile.py`](app/reconcile.py), [`app/dispute.py`](app/dispute.py) | Orders matched to couriers, carrier scans checked, dispute packs. [docs/receiving-desk.md](docs/receiving-desk.md), [docs/receipts.md](docs/receipts.md) |
 | Agent | [`app/agent.py`](app/agent.py), `POST /api/ask` | Strands agent with a Bedrock model and five tools |
+| AWS webhook endpoint | [`infra/template.yaml`](infra/template.yaml), [`app/store/`](app/store/) | **Template ready, not yet deployed.** SAM: Lambda Function URL running the same HMAC check, DynamoDB dedupe and log, key in Secrets Manager; `SHOPFRONT_WEBHOOK_STORE=dynamodb` reads it. [docs/aws.md](docs/aws.md) |
 | Briefing | [`app/briefing.py`](app/briefing.py) | Today vs the same weekday last week |
 | Demo | [`scripts/demo.py`](scripts/demo.py), [`samples/orders.csv`](samples/orders.csv) | The one-command demo above |
 | Web | [`app/main.py`](app/main.py), [`app/templates/`](app/templates/) | Pages: `/`, `/setup`, `/dispute`, `/live`, `/connect`. JSON: `/api/deliveries`, `/api/attempt`, `/api/dispute`, `/api/events`, `/api/briefing`, `/api/webhooks`, `/api/ask`, `/healthz`. Zip: `/dispute.zip` |
