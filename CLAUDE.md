@@ -24,7 +24,7 @@ Design: follow design.md; tokens in app/templates/_style.html. One accent (blue)
 
 Rules that disqualify (Devpost, Ring track): repo must call Ring at runtime (not just name it) · video < 3 min, public on YouTube/Vimeo, shows Ring working through a simulator or real device · open-source licence visible in the GitHub About box, or private repo shared with the Amazon reviewers · product feedback for every tool used · English.
 
-Evidence rules: a claim is done only with a row in the private hackathon/evidence.md and an artifact (Ring X-Request-ID, Bedrock RequestId, test output). Mocks and synthetic data are never evidence. The README proof table shows labels.
+Evidence rules: a claim is done only with a row in the private hackathon/evidence.md and an artifact (Ring X-Request-ID, Bedrock RequestId, test output). Mocks and synthetic data are never evidence. The proof table in docs/status.md shows labels.
 Forbidden artifacts: plans, research, briefs, audits and the tracker live in the private parent folder (../amazon-appdev-2026/hackathon/), never in this repo. Recover, don't delete.
 Workflow: prove the live Ring path first, then Bedrock, then polish, then the demo.
 Context rules: no MCP unless needed; cite Ring docs by URL and section.

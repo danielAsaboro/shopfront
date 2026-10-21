@@ -30,7 +30,7 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 ## Components
 
 - **Header.** The same on every page: "Shopfront · shop name" and links to the receiving desk, live door, set up and Ring. The current page is bold with an ink underline.
-- **Banner** (synthetic mode, replayed webhooks, Ring sign-in expired). On every page, error pages and the printed pack included. Shows the source of truth. Full width, warn colours, one sentence.
+- **Banner** (synthetic mode, replayed webhooks, Ring sign-in expired). On every page, error pages and the printed pack included, except where the page carries its own watermark saying the same (the dispute page's pack watermark, which links to Connect Ring), so the warning appears once. Shows the source of truth. Full width, warn colours, one sentence.
 - **Details.** Request IDs, hashes, sub_types, event IDs and the funnel sit in a closed "Details" toggle on owner pages. Printing a pack opens them.
 - **Receiving desk.** The day's orders, each with how its courier was seen (Ring alert, Bedrock frame, or "possible, unconfirmed" from the rules) or "not seen". Leads the dashboard.
 - **Check the door.** One row: the carrier's scan, its time, carrier and tracking, one button. The answer is one sentence, in warn colour only when the owner should act, with a link to the dispute pack.
@@ -47,7 +47,7 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 
 | State | What shows |
 |---|---|
-| Synthetic | Banner on every page |
+| Synthetic | Banner on every page (or the pack's watermark on the dispute page) |
 | Live | Footer with the Ring request ID |
 | Ring error | `ring_error.html` with a plain sentence, "Reconnect Ring", and the named `RingStatus` under Details |
 | Ring sign-in expired (dashboard) | The receiving desk from orders and Ring's webhooks, with a notice; unconfirmed orders read "not confirmed", never "no courier seen", and the scan check waits for Ring |

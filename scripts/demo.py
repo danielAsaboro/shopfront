@@ -329,8 +329,9 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}) on the desk's carrier record.
 
 2. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
-   The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by Ring's
-   package_delivery Smart Alert; the desk shows it as that order's courier.
+   The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by a replayed
+   package_delivery alert (Shopfront's signed feeder, in Ring's webhook shape, not sent by Ring); the desk
+   shows it as that order's courier.
    {desk}
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,
