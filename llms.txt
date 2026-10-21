@@ -1,21 +1,26 @@
 # Shopfront
 
-> A morning briefing for small-shop owners, built from the Ring doorbell they already have. Ring track and AWS Builder entry, Amazon "Build, Ship, Shape" Developer Hackathon 2026.
+> The carrier scanned "business closed". Your doorbell says you were open. A receiving desk for small shops with a Ring doorbell. Ring track and AWS Builder entry, Amazon "Build, Ship, Shape" Developer Hackathon 2026.
 
-Shopfront reads a shop's Ring doorbell history (Ring Partner API Event History and image download), labels each visit from the Ring frame with Amazon Bedrock (Converse API, image block), and writes a briefing: deliveries that rang while closed, staff first and last at the door, and hourly foot traffic vs the same weekday last week. Ring failures are shown as named states, never replaced with synthetic data. Synthetic demo mode exists for running without a Ring account and is labelled on every page.
+Shopfront imports the shop's orders and invoices (CSV), watches the door through the Ring Partner API (Event History, image download, WHEP live view, signed webhooks), checks a carrier's "business closed" or "delivery attempted" scan against the posted hours and the door events around it, and builds a dispute pack (finding, door log, posted hours, order, request IDs, a draft) that the owner sends themselves. Ring's `package_delivery` motion sub_type marks a courier with no model call; other visits are labelled by Amazon Bedrock from the Ring frame, or by time-of-day rules (marked as guesses) when there is no frame. Ask Shopfront is a Strands agent on Bedrock with tools over the same data. A morning briefing of yesterday at the door is a secondary view.
+
+Live so far: Ring Partner API calls against the Ring Developer Playground (devices, Event History, a WHEP live-view session, a 403 on image download, a 401 on a bad token), with X-Request-IDs. Not captured live yet: a Ring frame, a webhook sent by Ring, any Bedrock call. Ring failures are shown as named states, never replaced with synthetic data. The demo (`python -m scripts.demo`) runs on synthetic door events and a signed webhook replay, labelled as such on every page.
 
 ## Docs
-- [README](README.md): run instructions and the labelled proof table
+- [README](README.md): the problem, the one-command demo, the labelled proof table
+- [Receiving desk](docs/receiving-desk.md): orders import, stage 0, carrier-scan checks, dispute packs
+- [Receipts](docs/receipts.md): what a courier sighting proves, the matcher, how the classifier and agent are evaluated
 - [Ring integration](docs/ring.md): endpoints, failure table, docs-vs-live differences, live proof
-- [Bedrock integration](docs/bedrock.md): model, prompt flow, failure handling
+- [Bedrock integration](docs/bedrock.md): frame labels, the Strands agent, failure handling
 - [Design](design.md)
 
 ## Code
 - [Ring client](app/ring/api.py)
-- [Webhook receiver](app/ring/webhooks.py)
-- [Bedrock classifier](app/classify/bedrock.py)
-- [Briefing](app/briefing.py)
+- [Webhook receiver](app/ring/webhooks.py) and [replay feeder](scripts/feed_webhook.py)
+- [Orders import](app/orders.py), [scan checks](app/reconcile.py), [dispute packs](app/dispute.py)
+- [Bedrock classifier](app/classify/bedrock.py) and [agent](app/agent.py)
+- [Demo](scripts/demo.py) with [sample orders](samples/orders.csv)
 - [Tests](tests/)
 
 ## Evidence
-- [evidence/](evidence/): JSON captures of live Ring and Bedrock calls with request IDs
+- [evidence/](evidence/): JSON records of live Ring calls with X-Request-IDs (no Bedrock captures yet)

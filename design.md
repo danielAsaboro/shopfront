@@ -1,7 +1,7 @@
 # Shopfront design
 
-**Feel:** morning paper, calm, factual. A briefing to read over coffee, not a security console.
-**Direction:** one column, editorial type, rules instead of boxes. The first sentence is the most important thing that happened at the door.
+**Feel:** a receiving desk, calm and factual. It answers "did my delivery come, and is the carrier's scan true?" It is not a security console.
+**Direction:** one column, editorial type, rules instead of boxes. The first thing on the page is what the owner is waiting for: today's orders and any carrier scan that needs checking. The briefing of yesterday at the door comes after.
 
 ## Tokens
 
@@ -27,8 +27,11 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 
 ## Components
 
-- **Banner** (synthetic mode, error page). Shows the source of truth. Full width, warn colours, one sentence.
-- **Lead.** `headline[0]` in large type, the rest as a short list. Order: deliveries while closed → staff at the door → traffic vs last week → busiest hour → after-hours.
+- **Banner** (synthetic mode, replayed webhooks, error page). Shows the source of truth. Full width, warn colours, one sentence.
+- **Receiving desk.** The day's orders, each with how its courier was seen (Ring alert, Bedrock frame, or "possible, unconfirmed" from the rules) or "not seen". Leads the dashboard.
+- **Check the door.** One row: the carrier's scan, its time, carrier and tracking, one button. The answer is one sentence, in warn colour only when the owner should act, with a link to the dispute pack.
+- **Dispute pack.** The verdict in one line, then the evidence (door log, posted hours, order), the "what this does not show" list, and the draft. Download and copy are the actions; Shopfront never sends.
+- **Lead.** `headline[0]` in large type, the rest as a short list. Order: orders not seen and couriers seen → doorbell presses while closed → staff at the door → traffic vs last week → busiest hour → after-hours.
 - **Figures.** Exactly three numbers in one row, divided by rules, with no cards. They stay in one row on phones.
 - **Chart.** Paired bars per hour, today against last week, with a legend inline in the heading.
 - **Needs a look.** A table of time, what happened, and why. Only rendered when there is something to show.
@@ -43,11 +46,12 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 | Live | Footer with the Ring request ID |
 | Ring error | `ring_error.html` with the named `RingStatus` and one action |
 | Empty day | "No door activity recorded for <date>." |
-| Closed day | "The shop was closed." Deliveries while closed are still flagged. |
+| Closed day | "The shop was closed." Doorbell presses while closed are still listed. |
+| No orders yet | One sentence on what Shopfront does, with links to import orders, check a scan and the dispute pack. |
 | First week after linking | "No history for the same day last week yet." |
 
 ## Don't
 
 - No cards inside cards, no grid of 6+ stat tiles.
-- No security-camera language (alerts, intruders, threats). This is a business briefing.
-- No live video embed. The briefing is about yesterday.
+- No security-camera language (intruders, threats). This is a business tool. "Smart Alert" only as Ring's product name.
+- No live video on the dashboard; it is about orders and yesterday. `/live` is a separate page because the Ring Developer Playground plays its simulated scenes only over the live-view stream, so that is where the simulator is shown and where frames reach Bedrock.
