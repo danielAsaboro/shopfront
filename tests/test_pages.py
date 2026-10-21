@@ -491,12 +491,12 @@ def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
     assert fold.count("b-demo") == 1
 
 
-def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypatch):
-    """Round 2: on demo data "Live door" led to a page with nothing to watch. It shows with Ring connected;
-    without, the Ring link reads "Connect Ring", and /live itself says how, plainly."""
+def test_live_door_is_in_the_nav_on_every_page(c, tmp_path, monkeypatch):
+    """Round 2 hid "Live door" on demo data; round 8: the tab showed on /live only, so the tabs changed from page to
+    page. It is always there; without Ring the Ring link reads "Connect Ring", and /live itself says how, plainly."""
     page = c.get(f"/?date={WEDNESDAY}").text
     nav = page.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
-    assert 'href="/live"' not in nav and ">Connect Ring</a>" in nav
+    assert 'href="/live">Live door</a>' in nav and ">Connect Ring</a>" in nav
     live = c.get("/live").text
     assert "Live view plays your own Ring doorbell here" in live and "so it needs Ring connected" in live and 'aria-current="page">Live door' in live
     monkeypatch.setattr(main, "_chrome", lambda r: {**chrome(r), "ring_mode": "ring"})
