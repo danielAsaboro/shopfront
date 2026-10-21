@@ -241,8 +241,13 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
             desk = _desk(day, None, claim)
         finally:
             _ring_override.reset(token)
+        r = desk["r"]  # "no courier seen" would be a guess without the history
+        desk["lead"] = [f"{r['seen']} of {r['total']} expected deliveries confirmed by Ring's webhooks. "
+                        "The rest can't be checked until Ring is reconnected."] if r["total"] else []
     return _page(request, "dashboard.html", {
-        **desk, "ring_down": ring_down, "asked_time": attempt or "", "status_text": STATUS_TEXT,
+        **desk, "ring_down": ring_down, "asked_time": attempt or "",
+        **({"ring_problem": None} if ring_down else {}),  # the page's own notice says it, with what still works
+        "status_text": STATUS_TEXT,
         "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
         "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE,
         "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})

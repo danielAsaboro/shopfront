@@ -201,11 +201,15 @@ def test_dashboard_degrades_when_the_ring_token_expires(c, tmp_path, monkeypatch
     monkeypatch.setattr(main, "source", dead_ring(tmp_path))
     day = datetime.now(TZ).date() - timedelta(days=1)
     main.book.add(day, "Bay Mills", "12:00", "15:00", order_ref="PO-1042")
+    main.book.add(day, "Dairy Co", "07:00", "07:30", order_ref="PO-1043")
     replayed_courier(main.webhook_log, datetime.combine(day, datetime.min.time(), TZ) + timedelta(hours=13, minutes=2))
     r = c.get(f"/?date={day}&claim=business_closed&attempt=12:40")
     assert r.status_code == 200
-    assert "Ring sign-in expired (TOKEN_REJECTED)" in r.text and 'href="/connect">Reconnect Ring' in r.text
+    assert "Ring sign-in expired, so this is your orders" in r.text and "(TOKEN_REJECTED" in r.text
+    assert 'href="/connect">reconnect Ring' in r.text and r.text.count('class="banner warn-bg"') == 2  # replay + Ring
     assert "PO-1042" in r.text and "13:02" in r.text  # the order and Ring's pushed courier still show
+    assert "1 of 2 expected deliveries confirmed by Ring" in r.text and "No courier seen" not in r.text
+    assert "Not confirmed: door history unavailable" in r.text and "order=" not in r.text  # no pack from a guess
     assert "Checking a scan needs the door history from Ring" in r.text and "Build the dispute pack" not in r.text
     # the other pages carry the notice too, and /setup says what Ring really said
     assert "Ring sign-in expired" in c.get("/live").text

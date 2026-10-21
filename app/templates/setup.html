@@ -14,7 +14,8 @@
          border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; overflow-wrap: anywhere; }
   .msg { margin: 12px 0 0; }
   .orders td form { margin: 0; }
-  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } .fields .narrow { flex: 1 1 40%; } }
+  .narrow-only { display: none; }
+  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } .orders .wide { display: none; } .narrow-only { display: inline; } .fields .narrow { flex: 1 1 40%; } }
 </style>
 {% endblock %}
 {% macro message(where) %}
@@ -91,8 +92,8 @@
     <h3>Your list{% if orders %} <span class="why" style="font-weight:400">· {{ orders|length + orders_more }} on {{ order_days }} day{{ 's' if order_days != 1 }}, newest first</span>{% endif %}</h3>
     {% if orders %}
     <table class="orders">
-      <tr><th scope="col">Day</th><th scope="col">Supplier</th><th scope="col">Window</th><th scope="col"><span class="sr">Remove</span></th></tr>
-      {% for e in orders %}<tr><td class="t"><a href="/?date={{ e.day }}">{{ e.day }}</a></td><td>{{ e.supplier }}{% if e.order_ref %} <span class="why">· {{ e.order_ref }}</span>{% endif %}{% if e.carrier %} <span class="why">· {{ e.carrier }}</span>{% endif %}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}</td><td class="t">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
+      <tr><th scope="col">Day</th><th scope="col">Supplier</th><th scope="col" class="wide">Window</th><th scope="col"><span class="sr">Remove</span></th></tr>
+      {% for e in orders %}<tr><td class="t"><a href="/?date={{ e.day }}">{{ e.day }}</a></td><td>{{ e.supplier }}{% if e.order_ref %} <span class="why">· {{ e.order_ref }}</span>{% endif %}{% if e.carrier %} <span class="why">· {{ e.carrier }}</span>{% endif %}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}<span class="narrow-only why"><br>{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</span></td><td class="t wide">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
         <td style="text-align:right"><form method="post" action="/deliveries/{{ e.id }}/remove"><button class="quiet" aria-label="Remove {{ e.supplier }} on {{ e.day }}">Remove</button></form></td></tr>{% endfor %}
     </table>
     {% if orders_more %}<p class="why">And {{ orders_more }} older. Re-import a shorter file, or remove old ones, to see them here.</p>{% endif %}

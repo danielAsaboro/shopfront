@@ -13,7 +13,8 @@
   </div>
 
   {% if ring_down %}
-  <p class="banner warn-bg" role="status">Showing your orders and the deliveries Ring sent by webhook only. Door history for {{ b.date }} is missing until you <a href="/connect">reconnect Ring</a> ({{ ring_down.status.value }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %}).</p>
+  {% set st = ring_down.status.value %}
+  <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until you <a href="/connect">reconnect Ring</a>. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
   {% if first_run %}
@@ -42,7 +43,7 @@
   </section>
 
   <section class="figures" aria-label="The day in three numbers">
-    <div><span class="v {% if r.total and r.seen < r.total %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
+    <div><span class="v {% if r.total and r.seen < r.total and not ring_down %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
     <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Couriers while closed</span></div>
     <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
   </section>
@@ -58,10 +59,11 @@
       {% for x in rows %}
       {% if x.kind == 'expected' %}
       {% set late = 'outside_window' in x.status %}
+      {% set unknown = ring_down and x.status == 'not_seen' %}
       <tr>
         <td class="t {{ 'warn' if late }}">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}</span>{% endif %}
-          <br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
           {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if x.visit and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
@@ -69,7 +71,7 @@
               <label class="sr" for="note-{{ x.id }}">Note for {{ x.supplier }} (optional)</label>
               <input id="note-{{ x.id }}" name="note" placeholder="note (optional)" maxlength="200">
             </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
-            {% if x.status == 'not_seen' or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
+            {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
           </div></td>
         <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
