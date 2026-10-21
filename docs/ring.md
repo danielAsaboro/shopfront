@@ -46,7 +46,7 @@ Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /
 | `POST https://oauth.ring.com/oauth/token` (`authorization_code`) | Account linking: redeem Ring's code | client id + secret | `RingLink.exchange` |
 | `POST /v1/accounts/me/app-integrations` | Account linking: confirm with the nonce (status `awaiting`) | Bearer (the matched token) | `RingLink.claim` |
 | `PATCH /v1/accounts/me/app-integrations` | Account linking: `{"status": "completed"}` (mandatory) | Bearer (the matched token) | `RingLink.claim` |
-| `POST /ring/link/token`, `GET`/`POST /ring/link`, `GET /ring/link/home` (ours) | Token Exchange URL, Account Link URL, App Homepage URL | see section 10 | `app/main.py`, [app/ring/link.py](../app/ring/link.py) |
+| `POST /ring/link/token`, `GET`/`POST /ring/link`, `GET /ring/link/home` (ours) | Token Exchange URL, Account Link URL, App Homepage URL | see section 10 | [app/routes/ring.py](../app/routes/ring.py), [app/ring/link.py](../app/ring/link.py) |
 
 All Ring calls go to the production base URL `https://api.amazonvision.com`. Ring's docs list no separate staging API host.
 
@@ -121,7 +121,7 @@ To add rows, run `RING_ACCESS_TOKEN=<Playground token> .venv/bin/python -m scrip
 
 ## 10. Account linking (one-way)
 
-How a shop uses Shopfront every day: the owner adds Shopfront from the Ring AppStore once, and Shopfront stays signed in on a refresh token it rotates. The Playground token paste on `/connect` stays, for trying Shopfront out. `/setup` offers both. Code: [app/ring/link.py](../app/ring/link.py), routes in [app/main.py](../app/main.py), tests in [tests/test_ring_link.py](../tests/test_ring_link.py) (MockTransport shaped like the reference's examples).
+How a shop uses Shopfront every day: the owner adds Shopfront from the Ring AppStore once, and Shopfront stays signed in on a refresh token it rotates. The Playground token paste on `/connect` stays, for trying Shopfront out. `/setup` offers both. Code: [app/ring/link.py](../app/ring/link.py), routes in [app/routes/ring.py](../app/routes/ring.py), tests in [tests/test_ring_link.py](../tests/test_ring_link.py) (MockTransport shaped like the reference's examples).
 
 All section names below are from the API reference, https://developer.amazon.com/docs/ring/api-documentation.html.
 

@@ -1,7 +1,7 @@
 # Shopfront
 **The carrier scanned "business closed". Your doorbell says you were open.**
 
-![The demo's check of a "business closed" scan at 14:30: posted hours, the door events either side, and the verdict "You were open"](docs/img/verdict.png)
+![The demo's check of a "business closed" scan at 14:30: posted hours, the door events either side, the verdict "You were open", and the carrier's record for the month](docs/img/verdict.png)
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
