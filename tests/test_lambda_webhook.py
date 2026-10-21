@@ -337,3 +337,74 @@ def test_the_lambda_package_needs_only_the_standard_library(tmp_path):
                          capture_output=True, text=True, cwd=tmp_path)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "/webhooks/ring True"
+
+
+# ---- alarms and tracing ------------------------------------------------------------------------------------
+def test_hmac_failures_and_only_they_match_the_metric_filter(queue, caplog):
+    term = template()["Resources"]["HmacFailureMetricFilter"]["Properties"]["FilterPattern"].strip('"')
+    raw = json.dumps(PAYLOAD).encode()
+    with caplog.at_level("INFO", logger="shopfront.webhook"):
+        call(request(raw, sign(raw, "wrong")), queue)                  # BAD_SIGNATURE
+        call(request(raw, sign(raw, KEY)), queue)                      # QUEUED
+        call(request(raw, sign(raw, KEY)), queue, key="")              # NOT_CONFIGURED
+        call(request(b'{"x": 1}', sign(b'{"x": 1}', KEY)), queue)      # MALFORMED
+    lines = [r.getMessage() for r in caplog.records if r.name == "shopfront.webhook"]
+    assert [json.loads(line)["status"] for line in lines if term in line] == ["BAD_SIGNATURE"]
+
+
+def test_only_failed_records_are_logged_at_error_level(ddb, caplog):
+    """ConsumerFailureMetricFilter counts $.level = ERROR in the consumer's JSON log."""
+    pattern = template()["Resources"]["ConsumerFailureMetricFilter"]["Properties"]["FilterPattern"]
+    assert pattern == '{ $.level = "ERROR" }'
+    good = {"request_id": "g", "type": "motion_detected", "device": SHOP_DEVICE, "account": SHOP_ACCOUNT,
+            "timestamp": 1791388973000}
+    records = [{"messageId": "1", "body": json.dumps(good)}, {"messageId": "2", "body": json.dumps(good)},
+               {"messageId": "3", "body": json.dumps(good | {"request_id": "x", "account": "other"})},
+               {"messageId": "4", "body": "{"}]
+    with caplog.at_level("INFO", logger="shopfront.webhook.consumer"):
+        out = consumer(ddb)({"Records": records})
+    assert out == {"batchItemFailures": [{"itemIdentifier": "4"}]}
+    levels = {json.loads(r.getMessage())["status"]: r.levelname for r in caplog.records
+              if r.name == "shopfront.webhook.consumer"}
+    assert levels == {"ACCEPTED": "INFO", "DUPLICATE": "INFO", "IGNORED": "INFO", "FAILED": "ERROR"}
+
+
+def test_alarms_notify_one_topic_with_an_optional_email():
+    t = template()
+    res = t["Resources"]
+    alarms = {k: v["Properties"] for k, v in res.items() if v["Type"] == "AWS::CloudWatch::Alarm"}
+    assert set(alarms) == {"DeadLetterQueueAlarm", "HmacFailureAlarm", "ConsumerErrorsAlarm", "WebhookErrorsAlarm",
+                           "DemoThrottlesAlarm"}
+    assert all(a["AlarmActions"] == [{"Ref": "AlarmTopic"}] for a in alarms.values())
+    assert all(a["TreatMissingData"] == "notBreaching" for a in alarms.values())
+    dlq = alarms["DeadLetterQueueAlarm"]
+    assert (dlq["Namespace"], dlq["MetricName"], dlq["Threshold"], dlq["ComparisonOperator"]) == (
+        "AWS/SQS", "ApproximateNumberOfMessagesVisible", 0, "GreaterThanThreshold")
+    assert dlq["Dimensions"] == [{"Name": "QueueName", "Value": {"GetAtt": "WebhookDeadLetterQueue.QueueName"}}]
+    hmac_alarm = alarms["HmacFailureAlarm"]
+    assert hmac_alarm["MetricName"] == "HmacFailures" and hmac_alarm["Threshold"] == {"Ref": "HmacFailureThreshold"}
+    assert (res["HmacFailureMetricFilter"]["Properties"]["LogGroupName"] == {"Ref": "WebhookLogGroup"})
+    consumer_metrics = {m["Id"]: m for m in alarms["ConsumerErrorsAlarm"]["Metrics"]}
+    assert consumer_metrics["errors"]["MetricStat"]["Metric"]["Dimensions"] == [
+        {"Name": "FunctionName", "Value": {"Ref": "WebhookConsumerFunction"}}]
+    assert consumer_metrics["failed"]["MetricStat"]["Metric"]["MetricName"] == "ConsumerFailedRecords"
+    throttles = alarms["DemoThrottlesAlarm"]
+    assert throttles["MetricName"] == "Throttles"
+    assert throttles["Dimensions"] == [{"Name": "FunctionName", "Value": {"Ref": "PublicDemoFunction"}}]
+    sub = res["AlarmEmailSubscription"]
+    assert sub["Condition"] == "HasAlarmEmail" and sub["Properties"]["Protocol"] == "email"
+    assert t["Parameters"]["AlarmEmail"]["Default"] == ""
+
+
+def test_every_function_traces_with_xray():
+    t = template()
+    res = t["Resources"]
+    assert t["Globals"]["Function"]["Tracing"] == "Active"
+    functions = [k for k, v in res.items() if v["Type"] == "AWS::Serverless::Function"]
+    assert sorted(functions) == ["PublicDemoFunction", "RingWebhookFunction", "WebhookConsumerFunction"]
+    assert all(res[f]["DependsOn"] == "TracingPolicy" and "Tracing" not in res[f]["Properties"] for f in functions)
+    policy = res["TracingPolicy"]["Properties"]
+    roles = sorted(r["Ref"] for r in policy["Roles"])
+    assert roles == sorted(res[f]["Properties"]["Role"]["GetAtt"].split(".")[0] for f in functions)
+    [stmt] = policy["PolicyDocument"]["Statement"]
+    assert stmt["Action"] == ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]  # and nothing else on "*"

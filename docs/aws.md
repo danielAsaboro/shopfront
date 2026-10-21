@@ -90,6 +90,30 @@ retries stored once, a batch with a poison message and a failing write reporting
 record that keeps failing landing in the dead-letter queue after its fifth receive. It also checks that
 the packaged code imports with no third-party packages, and each role's IAM actions are exactly the ones above.
 
+### Alarms and tracing
+
+Every alarm notifies one SNS topic (`AlarmTopicArn`), with an email subscription when `AlarmEmail` is set.
+Each one is quiet (`notBreaching`) when there is no data, so a quiet door doesn't page anyone.
+
+| Alarm | Fires when | What it usually means |
+|---|---|---|
+| `DeadLetterQueueAlarm` | the dead-letter queue holds any message (`ApproximateNumberOfMessagesVisible` > 0) | an event couldn't be stored after 5 tries: read the consumer's log, fix, redrive |
+| `HmacFailureAlarm` | more than `HmacFailureThreshold` requests in 5 minutes had a missing or wrong `X-Signature` | the key was rotated at Ring but not in the secret, or someone is probing the public URL |
+| `ConsumerErrorsAlarm` | the consumer's Lambda `Errors` plus the records it reported as failed, in 5 minutes, is above 0 | DynamoDB refused writes, or an unreadable message; the dead-letter queue catches what doesn't recover |
+| `WebhookErrorsAlarm` | the Function URL handler's Lambda `Errors` is above 0 | Ring got a 5xx and will retry; it shouldn't happen |
+| `DemoThrottlesAlarm` | the public demo is throttled more than 10 times in each of two 5-minute periods | someone is hammering the demo link (its reserved concurrency is the cost cap), or `DemoConcurrency` is 0 and people still visit |
+
+The HMAC count is a CloudWatch Logs metric filter on the Function URL handler's own log line: it logs
+`{"status": "BAD_SIGNATURE"}` for every rejected signature and nothing else it logs contains that term
+(tested). The consumer's failed records are a metric filter on its JSON log's `$.level = "ERROR"`: it
+logs only failures at that level (tested). Both metrics live in the `Shopfront/<stack name>` namespace.
+
+All three functions run with X-Ray active tracing. The Function URL handler passes its trace header
+(`_X_AMZN_TRACE_ID`) on each message as the SQS `AWSTraceHeader` system attribute, so the consumer's work on
+that message joins the same trace: Ring's request, the HMAC check, `SendMessage`, the queue wait and the
+DynamoDB transaction show as one trace. The X-Ray write permission is a separate policy on the three roles,
+because `xray:PutTraceSegments` takes no resource-level permissions; it is the only `*` in the stack.
+
 ## 2. The public demo
 
 A second function in the same stack serves Shopfront's own pages to anyone with the link, so a judge
@@ -119,7 +143,7 @@ picked and checked through the app. `/` opens on that day, and every page carrie
 | Allowlist ([`PublicDemoApp`](../app/public_demo.py)) | Only `GET`/`HEAD` on `/`, `/dispute`, `/dispute.zip`, `/setup`, `/api/{deliveries,events,briefing,attempt,dispute,webhooks}`, `/healthz`, `/illustrations/*`, `/frames/*` (and the favicon) reach the app. Everything else, on every path, is answered 403 before the body is read: a page that says what the action would do on the shop's own computer, or `{"error": "PUBLIC_DEMO"}` for `/api/*` and the webhook. New routes are refused until someone adds them. The business-closed check and the dispute pack are GETs that compute in memory, so they work. |
 | Owner gate ([`PublicDemoGate`](../app/owner.py)) | There is no owner: no request is local, no cookie is valid, no code pairs, no secret exists. A request passes only inside the allowlist's `admit_visitor()` (a context variable, not anything a visitor sends). `app.main:app` started with `SHOPFRONT_PUBLIC_DEMO=1` but without the allowlist refuses every route, the webhook included. |
 | Stores | Orders, profile, frames, webhook log, live sessions and the classification cache are swapped for versions that raise on any write. The Ring source is pinned to the synthetic generator and never reads a token file; pasting a token or pairing is refused. |
-| No Bedrock | The rules classifier labels the door; Ask shows its labelled example answer; the screenshot reader is off; the agent factory raises. The function's IAM role can only write its own logs, so it couldn't call Bedrock, DynamoDB, S3 or Secrets Manager anyway. |
+| No Bedrock | The rules classifier labels the door; Ask shows its labelled example answer; the screenshot reader is off; the agent factory raises. The function's IAM role can only write its own logs and X-Ray traces, so it couldn't call Bedrock, DynamoDB, S3 or Secrets Manager anyway. |
 | No background work | It answers the ASGI lifespan itself, so nothing the app starts in the background (Ring status polling) runs. |
 | Crawlers | `robots.txt` disallows everything and every response says `X-Robots-Tag: noindex, nofollow`. |
 
@@ -172,6 +196,8 @@ sam build && sam deploy --guided
 | LogRetentionDays | 30 | Days CloudWatch keeps the webhook functions' logs. |
 | DemoConcurrency | 2 | Public demo requests at once (the cost cap). `0` = demo off, `-1` = no reservation (see section 2). |
 | DemoLogRetentionDays | 7 | Days CloudWatch keeps the public demo's logs. |
+| AlarmEmail | empty | Optional address the alarm topic emails (AWS sends a confirmation link first). Empty: subscribe anything you like to `AlarmTopicArn` yourself. |
+| HmacFailureThreshold | 5 | Bad or missing signatures in 5 minutes above which `HmacFailureAlarm` fires. |
 
 SAM asks twice whether a function URL "has no authentication. Is this okay?": answer **y** to both (the
 webhook's authentication is the HMAC; the demo is public on purpose and read-only), and **Y** to IAM role
@@ -179,7 +205,8 @@ creation. SAM saves the answers in `infra/samconfig.toml`, which is
 git-ignored because it can hold your Ring IDs; later deploys are just `sam build && sam deploy`.
 
 The stack's outputs: `DemoUrl`, `WebhookUrl`, `HmacSecretArn`, `WebhookTableName`, `FramesBucketName`,
-`AppPolicyArn`, `LogGroupName`, `ConsumerLogGroupName`, `QueueUrl`, `DeadLetterQueueArn`, `DemoLogGroupName`.
+`AppPolicyArn`, `LogGroupName`, `ConsumerLogGroupName`, `QueueUrl`, `DeadLetterQueueArn`, `DemoLogGroupName`,
+`AlarmTopicArn`.
 
 `DemoUrl` (`https://<id>.lambda-url.<region>.on.aws/`) is the link for judges. Open it once yourself:
 the first request is the cold start. To print it again later:
