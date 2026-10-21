@@ -1,22 +1,18 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · Ring unavailable</title>
-{% include "_style.html" %}
-</head>
-<body>
-<main>
-  <div class="eyebrow">Shopfront · {{ shop }}</div>
+{% extends "_base.html" %}
+{% block title %}Ring unavailable{% endblock %}
+{% block main %}
+  <div class="eyebrow">Ring doorbell</div>
   <h1>Can't read Ring right now</h1>
-  <p class="banner warn-bg"><strong>{{ e.status.value }}</strong>{% if e.http_status %} · HTTP {{ e.http_status }}{% endif %}{% if e.request_id %} · X-Request-ID {{ e.request_id }}{% endif %}</p>
-  <p>{% if e.status.value in ('TOKEN_REJECTED', 'NOT_CONFIGURED') %}The Ring token is missing or expired. <a href="/connect">Paste a fresh Playground token</a>, or set a refresh token with client credentials in <code>.env</code>.
+  <p style="font-size:17px;margin:12px 0 0">{% if e.status.value in ('TOKEN_REJECTED', 'NOT_CONFIGURED') %}The Ring sign-in is missing or has expired. Paste a fresh token from the Ring Developer Playground.
   {% elif e.status.value == 'REFRESH_FAILED' %}Ring refused the refresh token. Re-link the Ring account to get a new one.
-  {% elif e.status.value in ('FORBIDDEN', 'DEVICE_NOT_FOUND', 'NO_DEVICES') %}This token can't see the doorbell. Check <code>RING_DEVICE_ID</code> and which devices were shared with the app.
-  {% elif e.status.value == 'RATE_LIMITED' %}Ring is rate-limiting requests. Try again in a minute.
-  {% else %}Ring didn't answer cleanly. Nothing below is shown until it does, so the briefing never mixes in made-up data.{% endif %}</p>
-  <p class="proof">{{ e.detail }}</p>
-</main>
-</body>
-</html>
+  {% elif e.status.value in ('FORBIDDEN', 'DEVICE_NOT_FOUND', 'NO_DEVICES') %}This Ring sign-in can't see the doorbell. Check which devices were shared with Shopfront.
+  {% elif e.status.value == 'RATE_LIMITED' %}Ring is asking Shopfront to slow down. Try again in a minute.
+  {% else %}Ring didn't answer cleanly. Nothing is shown until it does, so Shopfront never mixes in made-up data.{% endif %}</p>
+  <p style="margin-top:20px"><a class="primary" href="/connect">Reconnect Ring</a> &nbsp; <a href="/setup">Set up</a></p>
+  <details class="tech block">
+    <summary>Details</summary>
+    <p class="why" style="margin:0"><strong>{{ e.status.value }}</strong>{% if e.http_status %} · HTTP {{ e.http_status }}{% endif %}{% if e.request_id %} · X-Request-ID {{ e.request_id }}{% endif %}{% if e.detail %} · {{ e.detail }}{% endif %}</p>
+    {% if e.status.value in ('FORBIDDEN', 'DEVICE_NOT_FOUND', 'NO_DEVICES') %}<p class="why">Check <code>RING_DEVICE_ID</code> in <code>.env</code>.</p>{% endif %}
+    {% if e.status.value == 'NOT_CONFIGURED' %}<p class="why">Or set a refresh token with client credentials in <code>.env</code>.</p>{% endif %}
+  </details>
+{% endblock %}

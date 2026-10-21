@@ -1,37 +1,49 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · {{ b.shop_name }}</title>
-{% include "_style.html" %}
-</head>
-<body>
-<main>
-  {% if b.ring_source == "synthetic" %}
-  <div class="banner warn-bg" role="status">Synthetic demo data. These events were generated locally, not read from a Ring device. <a href="/connect">Connect Ring</a> to use your doorbell.</div>
+{% extends "_base.html" %}
+{% block title %}Receiving desk, {{ b.date }}{% endblock %}
+{% block main %}
+  <div class="page-head">
+    <div>
+      <div class="eyebrow">Receiving desk</div>
+      <h1>{{ b.date|long_date }}</h1>
+    </div>
+    <form method="get" class="no-print">
+      <label class="field">Day<input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></label>
+      <noscript><button type="submit" class="secondary">Show</button></noscript>
+    </form>
+  </div>
+
+  {% if ring_down %}
+  {% set st = ring_down.status.value %}
+  <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until you <a href="/connect">reconnect Ring</a>. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
-  <header>
-    <div>
-      <div class="eyebrow">Shopfront · the front door, {{ b.date }}</div>
-      <h1>{{ b.shop_name }}</h1>
-    </div>
-    <nav style="display:flex;gap:12px;align-items:center"><a href="/live">Live door</a><a href="/setup">Set up</a><form method="get" aria-label="Pick a date"><input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></form></nav>
-  </header>
+  {% if first_run %}
+  <section class="first-run" aria-label="What Shopfront does">
+    <p>Shopfront checks your deliveries against your Ring doorbell: it ticks off each order when the doorbell sees the courier, and when a carrier scans "business closed" while you were open, it builds the dispute pack for you to send.</p>
+    <ul>
+      <li><a href="/setup#orders">Import your orders or invoices</a> (a CSV from your POS, accountant or Amazon Business)</li>
+      <li><a href="#atth">Check a "business closed" scan</a> against your posted hours and the door</li>
+      <li>From that check, <a href="#atth">build a dispute pack</a>: the door log, the Ring frame and a draft message</li>
+    </ul>
+  </section>
+  {% endif %}
 
   <section class="lead">
-    {% if b.headline %}
-    <p class="first">{{ b.headline[0] }}</p>
-    {% if b.headline|length > 1 %}<ul>{% for line in b.headline[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    {% if lead %}
+    <p class="first">{{ lead[0] }}</p>
+    {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    {% elif r.unexpected %}
+    <p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
+    {% elif b.visits %}
+    <p class="first">No orders listed for {{ b.date }}, and no courier seen.</p>
     {% else %}
     <p class="first">No door activity recorded for {{ b.date }}.</p>
     {% endif %}
-    {% if money %}<p class="money">{{ money }}</p>{% elif not profile.redelivery_cost %}<p class="proof" style="margin-top:10px"><a href="/setup">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
+    {% if money %}<p class="money">{{ money }}</p>{% elif not profile.redelivery_cost %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
   </section>
 
-  <section class="figures">
-    <div><span class="v {% if r.total and r.seen < r.total %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
+  <section class="figures" aria-label="The day in three numbers">
+    <div><span class="v {% if r.total and r.seen < r.total and not ring_down %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
     <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Couriers while closed</span></div>
     <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
   </section>
@@ -39,70 +51,100 @@
   <section class="block" aria-labelledby="dlv">
     <h2 id="dlv">Deliveries</h2>
     {% if r.total %}<span class="legend">{{ r.seen }} of {{ r.total }} expected reached the door</span>{% endif %}
-    {% if r.expected or r.unexpected %}
+    {% if not r.total %}
+    <p class="why" style="margin:6px 0 0">No orders for this day. <a href="/setup#orders">Import your orders</a> or add one by hand, and Shopfront will check each one off as the doorbell sees the courier.</p>
+    {% endif %}
+    {% if rows %}
     <table class="receipts">
-      {% for x in r.expected %}<tr>
-        <td class="t">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
+      {% for x in rows %}
+      {% if x.kind == 'expected' %}
+      {% set late = 'outside_window' in x.status %}
+      {% set unknown = ring_down and x.status == 'not_seen' %}
+      <tr>
+        <td class="t {{ 'warn' if late }}">{{ x.visit.time if x.visit else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—') }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}</span>{% endif %}
-          <br><span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status else '' }}">{{ status_text[x.status] }}</span>{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
-          {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' else '' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at[-5:] }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
+          {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if x.visit and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
               {% for k in ['ok', 'short', 'damaged'] %}<button name="status" value="{{ k }}">{{ received[k] }}</button>{% endfor %}
-              <input name="note" placeholder="note (optional)" maxlength="200">
-            </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received.clear }}</button></form>{% endif %}
-            {% if x.status == 'not_seen' or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
+              <label class="sr" for="note-{{ x.id }}">Note for {{ x.supplier }} (optional)</label>
+              <input id="note-{{ x.id }}" name="note" placeholder="note (optional)" maxlength="200">
+            </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
+            {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
           </div></td>
-        <td class="why">{% if x.visit %}by {{ x.visit.labelled_by }}: {{ x.visit.reason }}{% endif %}</td>
+        <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
-      </tr>{% endfor %}
-      {% for u in r.unexpected %}<tr>
+      </tr>
+      {% else %}
+      {% set u = x.visit %}
+      <tr>
         <td class="t">{{ u.time }}</td>
         <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
-        <td class="why">by {{ u.labelled_by }}: {{ u.reason }}</td>
+        <td class="why">{{ u.labelled_by|how(u.reason) }}</td>
         <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="Ring frame at {{ u.time }}" loading="lazy"></a>{% endif %}</td>
-      </tr>{% endfor %}
+      </tr>
+      {% endif %}
+      {% endfor %}
     </table>
-    {% else %}
-    <p class="proof" style="margin-top:6px">No couriers seen and none expected. <a href="/setup#orders">Import your orders</a> or <a href="/setup#deliveries">list what you're expecting</a>, and Shopfront will check each one off as the doorbell sees it.</p>
     {% endif %}
   </section>
 
   <section class="block" aria-labelledby="atth">
     <h2 id="atth">The carrier's tracking says</h2>
-    <form method="get" action="/#atth" class="row-ask claim">
+    {% if ring_down %}
+    <p class="why" style="margin:6px 0 0">Checking a scan needs the door history from Ring. <a href="/connect">Reconnect Ring</a>, then check it here.</p>
+    {% else %}
+    <form method="get" action="/#atth" class="fields" style="margin-top:10px">
       <input type="hidden" name="date" value="{{ b.date }}">
-      <label class="sr" for="claim">Carrier's scan</label>
-      <select name="claim" id="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == claim }}>{{ label }}</option>{% endfor %}</select>
-      <label class="sr" for="attempt">at</label>
-      <input type="time" name="attempt" id="attempt" value="{{ attempt.attempt[-5:] if attempt else '' }}" required>
-      <input name="carrier" placeholder="Carrier (optional)" value="{{ carrier }}" maxlength="40" aria-label="Carrier">
-      <input name="tracking" placeholder="Tracking no. (optional)" value="{{ tracking }}" maxlength="60" aria-label="Tracking number">
+      <label class="field fit">Scan<select name="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == claim }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="field fit">At<input type="time" name="attempt" value="{{ asked_time }}" required></label>
+      <label class="field grow">Carrier (optional)<input name="carrier" value="{{ carrier }}" maxlength="40"></label>
+      <label class="field grow">Tracking no. (optional)<input name="tracking" value="{{ tracking }}" maxlength="60"></label>
       <button type="submit">Check the door</button>
     </form>
-    {% if attempt %}<p class="{{ 'warn' if attempt.outcome in disputable else '' }}" role="status" style="margin-top:8px">{{ attempt.text }}</p>
-    {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
-    {% if attempt.visit %}<p class="why">by {{ attempt.visit.labelled_by }}: {{ attempt.visit.reason }}{% if attempt.visit.bedrock_request_id %} · Bedrock RequestId {{ attempt.visit.bedrock_request_id }}{% endif %}</p>{% endif %}
-    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ attempt.attempt[-5:] }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}{% endif %}
+    {% if attempt %}
+    <div role="status" style="margin-top:14px">
+      <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
+      <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
+    </div>
+    {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
+    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason) }}</p>{% endif %}
+    {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ asked_time }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}
+    {% endif %}
+    {% endif %}
   </section>
+
+  {% if b.deliveries_while_closed or b.after_hours %}
+  <section class="block" aria-labelledby="look">
+    <h2 id="look">Needs a look</h2>
+    <table>
+      {% for m in b.deliveries_while_closed %}<tr><td class="t">{{ m.time }}</td><td class="warn">Doorbell pressed while closed</td><td class="why">{{ m.reason }}</td></tr>{% endfor %}
+      {% for a in b.after_hours %}<tr><td class="t">{{ a.time }}</td><td>After-hours motion</td><td class="why">{{ a.reason }}</td></tr>{% endfor %}
+    </table>
+  </section>
+  {% endif %}
 
   <section class="block ask" aria-labelledby="askh">
     <h2 id="askh">Ask about the door</h2>
     {% if can_ask %}
     <form id="ask" class="row-ask">
+      <label class="sr" for="q">Your question about the door</label>
       <input name="q" id="q" placeholder="Did the flour delivery come yesterday?" maxlength="500" autocomplete="off" required>
       <button type="submit">Ask</button>
     </form>
     <div id="answer" aria-live="polite"></div>
     {% else %}
-    <p class="proof" style="margin-top:6px">Answers come from a Strands agent on Amazon Bedrock. Sign in to AWS (<code>aws login</code>) and restart to turn it on.</p>
+    <p class="why" style="margin:6px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine.</p>
+    <details class="tech"><summary>Details</summary><p class="why" style="margin:0">Answers come from a Strands agent on Amazon Bedrock. Sign in to AWS (<code>aws login</code>) and restart Shopfront to turn it on.</p></details>
     {% endif %}
   </section>
 
-
-  <section class="block">
-    <h2>Foot traffic by hour · {{ b.customers }} customers, last wk {{ b.customers_last_week }}</h2>
-    <span class="legend"><i style="background:var(--today)"></i>Today<i style="background:var(--lw)"></i>Same day last week</span>
+  {% if not ring_down %}
+  <details class="block">
+    <summary><h2>The rest of the day · {{ b.customers }} customers, last week {{ b.customers_last_week }}</h2></summary>
+    {% if rest %}<ul style="margin:10px 0 0;padding-left:18px">{% for line in rest %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    <p style="margin:16px 0 0"><span class="why">Customers by hour</span><span class="legend"><i style="background:var(--today)"></i>Today<i style="background:var(--lw)"></i>Same day last week</span></p>
     <div class="chart" role="img" aria-label="Customers per hour, today vs last week">
       {% for h in range(6, 23) %}
       <div class="col" title="{{ '%02d' % h }}:00 — today {{ b.hourly_customers[h] }}, last week {{ b.hourly_customers_last_week[h] }}">
@@ -111,57 +153,59 @@
       </div>
       {% endfor %}
     </div>
-    <div class="axis">{% for h in range(6, 23) %}<span>{{ h }}</span>{% endfor %}</div>
-  </section>
-
-  {% if b.deliveries_while_closed or b.after_hours %}
-  <section class="block">
-    <h2>Needs a look</h2>
-    <table>
-      {% for m in b.deliveries_while_closed %}<tr><td class="t">{{ m.time }}</td><td class="warn">Doorbell while closed: likely a missed delivery</td><td class="why">{{ m.reason }}</td></tr>{% endfor %}
-      {% for a in b.after_hours %}<tr><td class="t">{{ a.time }}</td><td>After-hours motion</td><td class="why">{{ a.reason }}</td></tr>{% endfor %}
-    </table>
-  </section>
+    <div class="axis" aria-hidden="true">{% for h in range(6, 23) %}<span>{{ h }}</span>{% endfor %}</div>
+  </details>
   {% endif %}
 
   <details class="block">
     <summary><h2>Every door event ({{ b.visits|length }})</h2></summary>
     <table>
-      <tr><th>Time</th><th>Ring event</th><th>Label</th><th>By</th><th>Why</th></tr>
-      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td>{{ v.type|replace('_', ' ') }}</td><td>{{ v.classifier }}</td><td class="why">{{ v.reason }}</td></tr>{% endfor %}
+      <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
+      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td>{{ v.type|replace('_', ' ') }}</td><td class="why">{{ v.classifier|how(v.reason) }}</td></tr>{% endfor %}
     </table>
   </details>
 
   <footer class="proof">
-    {% if b.ring_source == "ring" %}
-    Source: Ring Event History API (<a href="/connect">token</a>){% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}
-    {% else %}Source: synthetic generator (no Ring calls){% endif %}
-    · Labels: {{ 'Amazon Bedrock vision on Ring frames, rules when no frame' if b.classifier == 'bedrock' else 'time-of-day rules' }}
-    {% if funnel and funnel.events %}· Funnel: {{ funnel.events }} door events{% if funnel.webhook_events %}, {{ funnel.webhook_events }} from Ring webhooks{% if funnel.replayed %} (some replayed by Shopfront's feeder){% endif %}{% endif %} · {{ funnel.skipped_stage0 }} skipped by Ring's sub_type · {{ funnel.labelled_by_ring }} labelled by Ring · {{ funnel.reached_bedrock }} reached Bedrock · {{ funnel.labelled_by_rules }} by rules{% endif %}
-    · <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a>
+    Door data: {% if ring_down %}Ring webhooks only (door history unavailable){% elif b.ring_source == "ring" %}your Ring doorbell{% else %}synthetic demo generator, no Ring calls{% endif %}
+    · Labelled: {{ labels }}
+    <details class="tech">
+      <summary>Details</summary>
+      {% if b.ring_source == "ring" %}Ring Event History API{% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}<br>{% endif %}
+      {% if funnel and funnel.events %}Funnel: {{ funnel.events }} door events{% if funnel.webhook_events %}, {{ funnel.webhook_events }} from Ring webhooks{% if funnel.replayed %} (some replayed by Shopfront's feeder){% endif %}{% endif %} · {{ funnel.skipped_stage0 }} skipped by Ring's sub_type · {{ funnel.labelled_by_ring }} labelled by Ring · {{ funnel.reached_bedrock }} reached Bedrock · {{ funnel.labelled_by_rules }} by rules<br>{% endif %}
+      <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a> · <a href="/api/deliveries?date={{ b.date }}">deliveries JSON</a>
+    </details>
   </footer>
-</main>
+{% endblock %}
+{% block scripts %}
 {% if can_ask %}
 <script>
 const f = document.getElementById("ask"), out = document.getElementById("answer");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const PLAIN = {
+  AGENT_UNAVAILABLE: "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine.",
+  BAD_QUESTION: "Type a question about the door, like \"Did the flour come yesterday?\"",
+};
 f.addEventListener("submit", async e => {
   e.preventDefault();
   const q = document.getElementById("q").value, btn = f.querySelector("button");
-  btn.disabled = true; out.innerHTML = '<p class="proof">Asking Bedrock…</p>';
+  btn.disabled = true; out.innerHTML = '<p class="why">Looking at the door…</p>';
   try {
     const res = await fetch("/api/ask", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question: q})});
-    const d = await res.json();
-    if (!res.ok) { out.innerHTML = `<p class="warn">Can't answer right now · ${esc(d.error)}</p><p class="proof">${esc(d.detail || "")}</p>`; return; }
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const said = PLAIN[d.error] || "Shopfront couldn't answer that right now.";
+      out.innerHTML = `<p class="warn">${esc(said)}</p>`
+        + `<details class="tech"><summary>Details</summary><p class="why" style="margin:0">${esc(d.error || res.status)}${d.detail ? " · " + esc(d.detail) : ""}</p></details>`;
+      return;
+    }
     const tools = d.tools.map(t => `${t.tool}(${Object.values(t.args).join(", ")})`).join(" · ") || "no tools";
     out.innerHTML = `<p class="said">${esc(d.answer).replace(/\n/g, "<br>")}</p>`
       + (d.frame_url ? `<a href="${esc(d.frame_url)}"><img class="frame" src="${esc(d.frame_url)}" alt="Ring frame the answer refers to"></a>` : "")
-      + `<p class="proof">Strands agent on Bedrock (${esc(d.model)}) · looked at ${esc(tools)}`
-      + (d.bedrock_request_ids.length ? ` · Bedrock RequestId ${esc(d.bedrock_request_ids.at(-1))}` : "") + ` · ${d.seconds}s</p>`;
-  } catch (err) { out.innerHTML = `<p class="warn">Can't reach Shopfront: ${esc(err)}</p>`; }
+      + `<details class="tech"><summary>How Shopfront answered</summary><p class="why" style="margin:0">Strands agent on Bedrock (${esc(d.model)}) · looked at ${esc(tools)}`
+      + (d.bedrock_request_ids.length ? ` · Bedrock RequestId ${esc(d.bedrock_request_ids.at(-1))}` : "") + ` · ${d.seconds}s</p></details>`;
+  } catch (err) { out.innerHTML = `<p class="warn">Can't reach Shopfront. Is it still running?</p>`; }
   finally { btn.disabled = false; }
 });
 </script>
 {% endif %}
-</body>
-</html>
+{% endblock %}

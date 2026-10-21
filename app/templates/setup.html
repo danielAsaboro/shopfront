@@ -1,103 +1,110 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · Set up</title>
-{% include "_style.html" %}
+{% extends "_base.html" %}
+{% block title %}Set up{% endblock %}
+{% block head %}
 <style>
-  .setup-step { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .setup-step { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); scroll-margin-top: 8px; }
   .setup-step h2 { display: block; }
-  .setup-step .n { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 6px; }
-  .hours { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-  .hours label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .hours input, .row input { width: 100%; font: inherit; padding: 6px 8px; border: 1px solid var(--line);
-                             border-radius: 6px; background: transparent; color: var(--ink); }
-  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-  .row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
-  .row .grow { flex: 1 1 180px; } .row .narrow { flex: 0 0 96px; } .row .tiny { flex: 0 0 56px; }
-  .done { color: var(--muted); }
+  .setup-step h3 { font-size: 15px; margin: 18px 0 4px; }
+  .setup-step .n { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .hours { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+  .hours input, .fields input:not([type=checkbox]) { width: 100%; }
+  .fields .narrow { flex: 1 1 130px; } .fields .tiny { flex: 0 0 72px; }
+  .check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink); padding: 8px 0; }
   .fmt { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: pre-wrap;
-         border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; }
-  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } }
+         border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+  .msg { margin: 12px 0 0; }
+  .orders td form { margin: 0; }
+  .narrow-only { display: none; }
+  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } .orders .wide { display: none; } .narrow-only { display: inline; } .fields .narrow { flex: 1 1 40%; } }
 </style>
-</head>
-<body>
-<main>
-  <div class="eyebrow">Shopfront · set up</div>
+{% endblock %}
+{% macro message(where) %}
+  {% if section == where and error %}<p class="banner warn-bg msg" role="alert">{{ error[:1]|upper }}{{ error[1:] }}</p>{% endif %}
+  {% if section == where and notice %}<p class="banner note ok msg" role="status">{{ notice }}</p>{% endif %}
+{% endmacro %}
+{% block main %}
+  <div class="eyebrow">Set up</div>
   <h1>{{ p.name }}</h1>
-  {% if error %}<p class="banner warn-bg" role="alert">{{ error }}</p>{% endif %}
-  {% if imported %}<p class="banner" style="border:1px solid var(--line)" role="status">{{ imported }}</p>{% endif %}
+  <p class="why" style="margin:6px 0 0">Four steps: connect your doorbell, tell Shopfront your hours, list what you're expecting, then watch the door.</p>
 
-  <section class="setup-step">
+  <section class="setup-step" id="ring">
     <h2><span class="n">1</span>Ring doorbell</h2>
     {% if ring == "ring" %}
-    <p>Connected to Ring. <a href="/connect">Change token</a></p>
+    <p>Connected to Ring: Shopfront reads your doorbell's history. <a href="/connect">Change token</a></p>
     {% elif ring_error %}
-    <p class="warn">Ring refused the saved token ({{ ring_error }}). <a href="/connect">Paste a fresh one</a></p>
+    <p class="warn">Ring refused the saved sign-in ({{ ring_error }}), so Shopfront can't read your door history. <a href="/connect">Paste a fresh token</a></p>
     {% else %}
     <p>Not connected, so Shopfront is showing synthetic demo data. <a href="/connect">Connect Ring</a> with a token from the Ring Developer Playground.</p>
     {% endif %}
   </section>
 
   <form method="post" action="/setup">
-    <section class="setup-step">
+    <section class="setup-step" id="shop">
       <h2><span class="n">2</span>Your shop</h2>
-      <div class="row" style="margin-top:8px"><label class="grow">Shop name<input name="name" value="{{ p.name }}" maxlength="60" required></label></div>
-      <p class="proof" style="margin:14px 0 6px">Posted hours, 24-hour clock like <code>8-18</code>. Leave a day blank if you're closed.</p>
+      {{ message('shop') }}
+      <div class="fields" style="margin-top:8px"><label class="field grow">Shop name<input name="name" value="{{ p.name }}" maxlength="60" required></label></div>
+      <p class="why" style="margin:16px 0 6px">Posted hours on the 24-hour clock, like <code>8-18</code>. Leave a day blank if you're closed.</p>
       <div class="hours">
-        {% for d, h in days %}<label>{{ d }}<input name="h{{ loop.index0 }}" value="{{ '' if h == 'closed' else h }}" placeholder="closed" inputmode="numeric"></label>{% endfor %}
+        {% for d, h in days %}<label class="field">{{ d }}<input name="h{{ loop.index0 }}" value="{{ '' if h == 'closed' else h }}" placeholder="closed"></label>{% endfor %}
       </div>
-      <p class="proof" style="margin:14px 0 6px">What does one missed delivery cost you (a redelivery fee, a lost morning's stock)? Shopfront uses only your number.</p>
-      <div class="row">
-        <label class="tiny">Currency<input name="currency" value="{{ p.currency }}" maxlength="3"></label>
-        <label class="narrow">Per delivery<input name="redelivery_cost" value="{{ '%g'|format(p.redelivery_cost) if p.redelivery_cost is not none else '' }}" inputmode="decimal" placeholder="e.g. 15"></label>
-        <div class="connect" style="margin:0"><button type="submit">Save</button></div>
+      <p class="why" style="margin:16px 0 6px">What does one missed delivery cost you (a redelivery fee, a lost morning's stock)? Shopfront uses only your number.</p>
+      <div class="fields">
+        <label class="field tiny">Currency<input name="currency" value="{{ p.currency }}" maxlength="3"></label>
+        <label class="field narrow">Per delivery<input name="redelivery_cost" value="{{ cost_typed if cost_typed is not none else ('%g'|format(p.redelivery_cost) if p.redelivery_cost is not none else '') }}" inputmode="decimal" placeholder="e.g. 15"></label>
+        <button type="submit">Save</button>
       </div>
     </section>
   </form>
 
   <section class="setup-step" id="orders">
-    <h2><span class="n">3</span>Your orders and invoices</h2>
-    <p class="proof" style="margin:8px 0">Export open purchase orders or supplier invoices as a CSV from your POS, inventory system or accountant, or the order-history report from Amazon Business. Each becomes a delivery the door checks off, so a receipt or a dispute names the order it was for. Re-importing the same file updates it.</p>
-    <form method="post" action="/orders/import" enctype="multipart/form-data" class="row">
-      <label class="grow">CSV file<input type="file" name="file" accept=".csv,text/csv" required></label>
-      <label class="narrow" style="flex-basis:170px;display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" name="day_first" value="1" style="width:auto"> Dates are day/month</label>
-      <div class="connect" style="margin:0"><button type="submit">Import</button></div>
+    <h2><span class="n">3</span>Deliveries you're expecting</h2>
+    <p class="why" style="margin:8px 0 0">Each courier the doorbell sees is matched to one of these and kept with its time and Ring frame, so a receipt or a dispute names the order it was for. Import your orders, add one by hand, or both.</p>
+    {{ message('orders') }}
+
+    <h3>From your orders or invoices</h3>
+    <p class="why" style="margin:0 0 8px">A CSV of open purchase orders or supplier invoices from your POS, inventory system or accountant, or the order-history report from Amazon Business. Re-importing the same file updates it.</p>
+    <form method="post" action="/orders/import" enctype="multipart/form-data" class="fields">
+      <label class="field grow">CSV file<input type="file" name="file" accept=".csv,text/csv" required></label>
+      <label class="check fit"><input type="checkbox" name="day_first" value="1"> Dates are day/month</label>
+      <button type="submit">Import</button>
     </form>
-    <details style="margin-top:8px"><summary class="proof" style="margin:0">CSV format</summary>
+    <details style="margin-top:6px"><summary class="why">CSV format</summary>
       <p class="fmt">day,supplier,window_start,window_end,order_ref,carrier,tracking,items,amount
-2026-10-21,Bay Mills,09:00,11:00,PO-1042,UPS,1Z999AA10123456784,"Flour 25kg x4",$212.40</p>
-      <p class="proof" style="margin:4px 0">Only <code>day</code> and <code>supplier</code> are needed. Other names work too: Order ID, PO number, Vendor, Seller Name, Expected delivery, Tracking number, Carrier Name &amp; Tracking Number.</p>
+2026-10-21,Bay Mills,09:00,11:00,PO-1042,Northline Freight,NF123456784,"Flour 25kg x4",$212.40</p>
+      <p class="why" style="margin:4px 0">Only <code>day</code> and <code>supplier</code> are needed. Other names work too: Order ID, PO number, Vendor, Seller Name, Expected delivery, Tracking number, Carrier Name &amp; Tracking Number.</p>
     </details>
-  </section>
 
-  <section class="setup-step" id="deliveries">
-    <h2><span class="n">4</span>Deliveries you're expecting</h2>
-    <p class="proof" style="margin:8px 0">Each courier the doorbell sees is matched to one of these and kept with its time and Ring frame, so you have a receipt when a supplier says they came.</p>
-    {% if expected %}
-    <table>
-      <tr><th>Day</th><th>Supplier</th><th>Window</th><th></th></tr>
-      {% for e in expected %}<tr><td class="t">{{ e.day }}</td><td>{{ e.supplier }}{% if e.order_ref %} <span class="why">· {{ e.order_ref }}</span>{% endif %}{% if e.carrier %} <span class="why">· {{ e.carrier }}</span>{% endif %}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}</td><td class="t">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
-        <td><form method="post" action="/deliveries/{{ e.id }}/remove"><button class="linkish" style="font:inherit;background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline">remove</button></form></td></tr>{% endfor %}
-    </table>
-    {% endif %}
-    <form method="post" action="/deliveries" class="row" style="margin-top:12px">
-      <label class="narrow" style="flex-basis:150px">Day<input type="date" name="day" value="{{ today }}" required></label>
-      <label class="grow">Supplier<input name="supplier" placeholder="e.g. Flour from Bay Mills" maxlength="80" required></label>
-      <label class="narrow">Order ref<input name="order_ref" maxlength="60" placeholder="optional"></label>
-      <label class="narrow">Carrier<input name="carrier" maxlength="40" placeholder="optional"></label>
-      <label class="narrow">From<input type="time" name="window_start"></label>
-      <label class="narrow">To<input type="time" name="window_end"></label>
-      <div class="connect" style="margin:0"><button type="submit">Add</button></div>
+    <h3 id="deliveries">Or add one by hand</h3>
+    <form method="post" action="/deliveries" style="display:grid;gap:10px">
+      <div class="fields">
+        <label class="field fit">Day<input type="date" name="day" value="{{ today }}" required></label>
+        <label class="field grow">Supplier<input name="supplier" placeholder="e.g. Flour from Bay Mills" maxlength="80" required></label>
+      </div>
+      <div class="fields">
+        <label class="field narrow">Order ref<input name="order_ref" maxlength="60" placeholder="optional"></label>
+        <label class="field narrow">Carrier<input name="carrier" maxlength="40" placeholder="optional"></label>
+        <label class="field narrow">Window from<input type="time" name="window_start"></label>
+        <label class="field narrow">to<input type="time" name="window_end"></label>
+        <button type="submit">Add</button>
+      </div>
     </form>
+
+    <h3>Your list{% if orders %} <span class="why" style="font-weight:400">· {{ orders|length + orders_more }} on {{ order_days }} day{{ 's' if order_days != 1 }}, newest first</span>{% endif %}</h3>
+    {% if orders %}
+    <table class="orders">
+      <tr><th scope="col">Day</th><th scope="col">Supplier</th><th scope="col" class="wide">Window</th><th scope="col"><span class="sr">Remove</span></th></tr>
+      {% for e in orders %}<tr><td class="t"><a href="/?date={{ e.day }}">{{ e.day }}</a></td><td>{{ e.supplier }}{% if e.order_ref %} <span class="why">· {{ e.order_ref }}</span>{% endif %}{% if e.carrier %} <span class="why">· {{ e.carrier }}</span>{% endif %}{% if e.note %} <span class="why">· {{ e.note }}</span>{% endif %}<span class="narrow-only why"><br>{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</span></td><td class="t wide">{{ e.window_start ~ '–' ~ e.window_end if e.window_start else 'any time' }}</td>
+        <td style="text-align:right"><form method="post" action="/deliveries/{{ e.id }}/remove"><button class="quiet" aria-label="Remove {{ e.supplier }} on {{ e.day }}">Remove</button></form></td></tr>{% endfor %}
+    </table>
+    {% if orders_more %}<p class="why">And {{ orders_more }} older. Re-import a shorter file, or remove old ones, to see them here.</p>{% endif %}
+    {% else %}
+    <p class="why" style="margin:0">Nothing yet.</p>
+    {% endif %}
   </section>
 
-  <section class="setup-step">
-    <h2><span class="n">5</span>Watch the door</h2>
-    <p>Open the live door to see a courier labelled as they arrive, or read today's briefing.</p>
-    <a class="primary" href="/live">Open the live door</a> &nbsp; <a href="/?date={{ today }}">Today's briefing</a>
+  <section class="setup-step" id="watch">
+    <h2><span class="n">4</span>Watch the door</h2>
+    <p>The receiving desk ticks off each delivery as the doorbell sees it. Open the live door to see a courier labelled as they arrive.</p>
+    <a class="primary" href="/?date={{ today }}">Open today's receiving desk</a> &nbsp; <a href="/live">Live door</a>
   </section>
-</main>
-</body>
-</html>
+{% endblock %}

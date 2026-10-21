@@ -1,0 +1,294 @@
+"""The owner's pages: shared header and banner, error pages, the receiving desk, setup and the dispute pack.
+Synthetic events and fakes only; never Ring or Bedrock."""
+
+import json
+import re
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+import app.main as main
+from app import pages
+from app.briefing import classify_day
+from app.classify.bedrock import BedrockClassifier
+from app.classify.rules import RulesClassifier
+from app.deliveries import DeliveryBook, FrameStore
+from app.hours import parse_hours
+from app.ring import RingSource
+from app.ring.api import RingApiClient, RingAuth
+from app.ring.synthetic import SyntheticRingClient
+from app.ring.webhooks import WebhookLog
+from app.shop import Profile, ShopProfile
+
+TZ = ZoneInfo("America/Los_Angeles")
+SUNDAY = date(2026, 10, 11)  # closed; the synthetic courier rings at 11:xx
+WEDNESDAY = date(2026, 10, 7)  # open 8-18
+PAGES = ["/", "/setup", "/connect", "/live", f"/dispute?date={WEDNESDAY}&at=03:17&claim=attempted", "/no-such-page"]
+
+
+@pytest.fixture
+def c(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
+    monkeypatch.setattr(main, "classifier", RulesClassifier())
+    monkeypatch.setattr(main, "profile", ShopProfile(tmp_path / "shop.json", "Corner Bakery", ""))
+    monkeypatch.setattr(main, "book", DeliveryBook(tmp_path / "expected.json"))
+    monkeypatch.setattr(main, "frames", FrameStore(tmp_path))
+    monkeypatch.setattr(main, "webhook_log", WebhookLog(tmp_path / "hooks.jsonl"))
+    monkeypatch.setattr(main, "_aws_creds_available", lambda region: False)
+    return TestClient(main.app)
+
+
+def replayed_courier(log: WebhookLog, at: datetime) -> None:
+    """A row as the webhook log stores a replayed package_delivery (Shopfront's demo feeder)."""
+    ms = int(at.timestamp() * 1000)
+    log.path.parent.mkdir(parents=True, exist_ok=True)
+    with log.path.open("a") as f:
+        f.write(json.dumps({"request_id": f"r-{ms}", "type": "motion_detected", "id": f"dev_{ms}", "device": "dev",
+                            "timestamp": ms, "sub_type": "package_delivery", "replayed": True}) + "\n")
+
+
+def dead_ring(tmp_path):
+    """A live Ring client whose token Ring refuses (401), behind a source that hands it out."""
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(401, text="expired")))
+    ring = RingApiClient(auth=RingAuth(access_token="old", http=http), tz=TZ, device_id="dev", http=http)
+
+    class Source:
+        _key = ("live", "old", "")
+
+        def get(self):
+            return ring
+
+        def pasted_token(self):
+            return "old"
+    return Source()
+
+
+# ---- every page --------------------------------------------------------------------------------
+
+def test_every_page_has_the_nav_banner_and_the_saved_shop_name(c):
+    main.profile.save(Profile("Rosa's Florist", "8-18,8-18,8-18,8-18,8-18,closed,closed"))
+    for path in PAGES:
+        page = c.get(path).text
+        assert 'nav aria-label="Shopfront"' in page and 'href="/setup"' in page and 'href="/"' in page, path
+        assert "Synthetic demo data" in page, path
+        assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
+
+
+def test_replays_are_named_in_the_banner(c):
+    replayed_courier(main.webhook_log, datetime(2026, 10, 7, 13, 2, tzinfo=TZ))
+    for path in ["/setup", "/live", f"/?date={WEDNESDAY}"]:
+        assert "replayed by Shopfront's demo feeder" in c.get(path).text, path
+
+
+def test_dispute_banner_prints():
+    css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
+    assert re.search(r"@media print \{[^@]*\.banner \{[^}]*print-color-adjust: exact", css)
+
+
+# ---- error pages -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path,code,said", [
+    ("/no-such-page", 404, "Page not found"),
+    ("/?date=0001-01-01", 400, "That date doesn&#39;t look right"),
+    ("/?date=9999-12-31", 400, "That date doesn&#39;t look right"),
+    ("/?date=nope", 400, "That date doesn&#39;t look right"),
+    (f"/?date={WEDNESDAY}&attempt=late", 400, "That time doesn&#39;t look right"),
+    ("/dispute", 400, "A dispute pack needs something to dispute"),
+    (f"/dispute?date={WEDNESDAY}&order=exp-gone", 404, "That order isn&#39;t here"),
+])
+def test_errors_are_pages_in_plain_words(c, path, code, said):
+    r = c.get(path)
+    assert r.status_code == code and r.headers["content-type"].startswith("text/html")
+    assert said in r.text and 'nav aria-label="Shopfront"' in r.text and "<details" in r.text
+
+
+def test_a_form_missing_a_field_is_a_page_and_the_api_stays_json(c):
+    r = c.post("/connect", data={})
+    assert r.status_code == 422 and "Something in that request was missing" in r.text
+    assert c.get("/api/briefing?date=0001-01-01").status_code == 400
+    assert c.get("/api/briefing?date=0001-01-01").json()["detail"].startswith("pick a date")
+
+
+def test_an_unexpected_failure_is_a_page(c, monkeypatch):
+    monkeypatch.setattr(main, "_briefing", lambda *a, **k: 1 / 0)
+    r = TestClient(main.app, raise_server_exceptions=False).get(f"/?date={WEDNESDAY}")
+    assert r.status_code == 500 and "Something went wrong on Shopfront&#39;s side" in r.text
+
+
+# ---- the receiving desk ------------------------------------------------------------------------
+
+def test_first_run_panel_until_there_are_orders(c):
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert "What Shopfront does" in page and 'href="/setup#orders"' in page and 'href="#atth"' in page
+    main.book.add(WEDNESDAY, "Bay Mills")
+    assert "What Shopfront does" not in c.get(f"/?date={WEDNESDAY}").text
+
+
+def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
+    page = c.get(f"/?date={SUNDAY}").text
+    assert "Courier nobody listed" in page
+    assert "No orders for this day" in page and 'href="/setup#orders">Import your orders' in page
+
+
+def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
+    main.book.add(WEDNESDAY, "Bay Mills")
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert page.index('id="dlv"') < page.index('id="atth"') < page.index("Customers by hour")
+    assert re.search(r"<details class=\"block\">\s*<summary><h2>The rest of the day", page)
+
+
+def test_staff_tap_undo_label_and_shop_local_time(c):
+    e = main.book.add(SUNDAY, "Sunday bread")
+    # stored tz-aware; a UTC time must still show the shop's 09:12, never the offset
+    main.book.mark_received(e.id, "short", "2 crates", datetime(2026, 10, 11, 16, 12, tzinfo=timezone.utc))
+    page = c.get(f"/?date={SUNDAY}").text
+    assert "Staff marked short at 09:12: 2 crates" in page
+    assert ">Undo</button>" in page and "built-in method" not in page
+    pack = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
+    assert "staff marked short at 09:12" in pack and "at 07:00" not in pack
+
+
+def test_tapping_through_the_page(c):
+    e = main.book.add(SUNDAY, "Sunday bread")
+    r = c.post(f"/deliveries/{e.id}/received", data={"status": "ok"})
+    assert r.status_code == 200 and "Staff marked all there at" in r.text and ">Undo</button>" in r.text
+    r = c.post(f"/deliveries/{e.id}/received", data={"status": "clear"})
+    assert 'name="status" value="ok"' in r.text
+
+
+def test_rows_in_time_order_and_late_matches_in_warn(c):
+    main.book.add(SUNDAY, "Late flour", "06:00", "07:00")  # the 11:xx courier is outside this window
+    main.book.add(SUNDAY, "Evening veg", "19:00", "20:00")  # never seen: sorts by its window
+    page = c.get(f"/?date={SUNDAY}").text
+    rows = re.findall(r'<td class="t[^"]*">([^<]+)</td>', page.split('id="dlv"')[1].split('id="atth"')[0])
+    assert rows == sorted(rows)
+    assert re.search(r'<td class="t warn">11:\d\d</td>', page)
+
+
+def test_claim_row_fields_are_labelled_and_the_button_never_wraps(c):
+    page = c.get(f"/?date={WEDNESDAY}").text
+    form = page.split('id="atth"')[1].split("</form>")[0]
+    for label in ("Scan", "At", "Carrier (optional)", "Tracking no. (optional)"):
+        assert f'class="field' in form and f">{label}<" in form
+    css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
+    assert "white-space: nowrap" in css.split("button, .primary, .secondary {")[1].split("}")[0]
+    assert ".fields > button, .fields > .btn { flex: none; }" in css
+
+
+def test_inputs_are_labelled(c):
+    main.book.add(SUNDAY, "Sunday bread")
+    page = c.get(f"/?date={SUNDAY}").text
+    assert re.search(r'<label class="field">Day<input type="date"', page)
+    note = re.search(r'<input id="(note-[^"]+)" name="note"', page).group(1)
+    assert f'<label class="sr" for="{note}">' in page
+
+
+def test_footer_says_what_labelled_the_day(c):
+    page = c.get(f"/?date={WEDNESDAY}").text
+    footer = page.split('<footer class="proof">')[1]
+    assert "Bedrock" not in footer.split("<details")[0] and "by time-of-day rules" in footer
+
+
+def test_ask_unavailable_is_one_plain_sentence(c):
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine." in page
+
+
+def test_dashboard_degrades_when_the_ring_token_expires(c, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "source", dead_ring(tmp_path))
+    day = datetime.now(TZ).date() - timedelta(days=1)
+    main.book.add(day, "Bay Mills", "12:00", "15:00", order_ref="PO-1042")
+    main.book.add(day, "Dairy Co", "07:00", "07:30", order_ref="PO-1043")
+    replayed_courier(main.webhook_log, datetime.combine(day, datetime.min.time(), TZ) + timedelta(hours=13, minutes=2))
+    r = c.get(f"/?date={day}&claim=business_closed&attempt=12:40")
+    assert r.status_code == 200
+    assert "Ring sign-in expired, so this is your orders" in r.text and "(TOKEN_REJECTED" in r.text
+    assert 'href="/connect">reconnect Ring' in r.text and r.text.count('class="banner warn-bg"') == 2  # replay + Ring
+    assert "PO-1042" in r.text and "13:02" in r.text  # the order and Ring's pushed courier still show
+    assert "1 of 2 expected deliveries confirmed by Ring" in r.text and "No courier seen" not in r.text
+    assert "Not confirmed: door history unavailable" in r.text and "order=" not in r.text  # no pack from a guess
+    assert "Checking a scan needs the door history from Ring" in r.text and "Build the dispute pack" not in r.text
+    # the other pages carry the notice too, and /setup says what Ring really said
+    assert "Ring sign-in expired" in c.get("/live").text
+    setup = c.get("/setup").text
+    assert "Ring refused the saved sign-in (TOKEN_REJECTED)" in setup and "Connected to Ring" not in setup
+
+
+# ---- setup -------------------------------------------------------------------------------------
+
+def test_setup_is_one_orders_step_with_both_inputs(c):
+    page = c.get("/setup").text
+    orders = page.split('id="orders"')[1].split('id="watch"')[0]
+    assert 'action="/orders/import"' in orders and 'action="/deliveries"' in orders
+    assert page.count('class="n"') == 4
+
+
+def test_setup_messages_land_next_to_their_section(c):
+    r = c.post("/orders/import", files={"file": ("o.csv", "day,supplier\n2026-09-01,Bay Mills\n", "text/csv")})
+    orders = r.text.split('id="orders"')[1]
+    assert "Imported 1 new" in orders and 'role="status"' in orders
+    assert "Imported 1 new" not in r.text.split('id="orders"')[0]
+    form = {"name": "Corner Bakery", "currency": "$", **{f"h{i}": "8-18" for i in range(7)}}
+    shop = c.post("/setup", data=form).text.split('id="shop"')[1].split('id="orders"')[0]
+    assert "Saved." in shop
+
+
+def test_setup_lists_every_order_day_and_removes_one(c):
+    old = main.book.add(date(2026, 9, 1), "September flour")
+    main.book.add(date(2026, 12, 24), "Christmas eggs")
+    page = c.get("/setup").text
+    assert "September flour" in page and "Christmas eggs" in page
+    assert page.index("Christmas eggs") < page.index("September flour")  # newest first
+    r = c.post(f"/deliveries/{old.id}/remove")
+    assert "Removed September flour (2026-09-01)." in r.text and "September flour</td>" not in r.text
+
+
+def test_setup_inputs_are_16px(c):
+    css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
+    assert "input, select, textarea { font: inherit; font-size: 16px;" in css
+    assert "color-scheme: light dark" in css
+
+
+# ---- the dispute pack --------------------------------------------------------------------------
+
+def test_dispute_page_leads_with_a_verdict_and_hides_the_jargon(c):
+    e = main.book.add(SUNDAY, "Sunday bread", order_ref="PO-7")
+    main.book.mark_received(e.id, "damaged", "", datetime(2026, 10, 11, 9, 0, tzinfo=TZ))
+    page = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
+    assert '<a class="primary" href="/dispute.zip?' in page and "Back to the dashboard" in page
+    assert "Back to the briefing" not in page
+    visible = re.sub(r"<details.*?</details>", "", page, flags=re.S)
+    for jargon in ("SHA-256", "X-Request-ID", "sub_type", "WHEP", "by rules:"):
+        assert jargon not in visible, jargon
+    scan = c.get(f"/dispute?date={WEDNESDAY}&at=03:17&claim=attempted").text
+    assert '<p class="first">The doorbell recorded nothing near that time.</p>' in scan
+    assert '<p class="reason">The doorbell recorded nothing within 10 minutes of 03:17.' in scan
+
+
+def test_made_time_is_shop_local():
+    assert pages.local_stamp("2026-10-21T07:30:00+00:00", TZ) == "2026-10-21 at 00:30"
+    assert pages.local_time("2026-10-11T09:12-07:00", TZ, "2026-10-11") == "09:12"
+    assert pages.local_time("2026-10-12T09:12-07:00", TZ, "2026-10-11") == "2026-10-12 09:12"
+
+
+# ---- labels ------------------------------------------------------------------------------------
+
+def test_a_replayed_webhook_without_a_frame_says_replayed_not_synthetic(tmp_path):
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("must not call Bedrock without a frame")
+
+    log = WebhookLog(tmp_path / "w.jsonl")
+    at = datetime(2026, 10, 7, 13, 2, tzinfo=TZ)
+    replayed_courier(log, at)
+    rows = [json.loads(x) for x in log.path.read_text().splitlines()]
+    rows[0]["sub_type"] = "human"  # goes on to the classifier instead of being labelled by Ring
+    log.path.write_text(json.dumps(rows[0]) + "\n")
+    ring = SyntheticRingClient(TZ, parse_hours(""))
+    clf = BedrockClassifier(region="us-east-1", model_id="m", client=NoCall())
+    vs = classify_day(ring, clf, WEDNESDAY, parse_hours(""), webhooks=log)
+    replay = next(v for v in vs if v.event.source == "ring-webhook-replay")
+    assert "replayed Ring event, no frame" in replay.reason and "synthetic" not in replay.reason

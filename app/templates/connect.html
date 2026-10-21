@@ -1,30 +1,22 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · Connect Ring</title>
-{% include "_style.html" %}
-</head>
-<body>
-<main>
-  <div class="eyebrow">Shopfront · {{ shop }}</div>
+{% extends "_base.html" %}
+{% block title %}Connect Ring{% endblock %}
+{% block main %}
+  <div class="eyebrow">Ring doorbell</div>
   <h1>Connect Ring</h1>
   <ol class="steps">
     <li>Open the <a href="https://developer.amazon.com/ring/console/playground" target="_blank" rel="noopener">Ring Developer Playground</a> and click <strong>Generate Token</strong>.</li>
-    <li>Paste the access token below. It lasts about 30 minutes; paste a fresh one when the briefing says <code>TOKEN_REJECTED</code>.</li>
+    <li>Paste the access token below. It lasts about 30 minutes; paste a fresh one when Shopfront says the Ring sign-in expired.</li>
   </ol>
-  <form method="post" action="/connect" class="connect">
-    <label for="token">Playground access token</label>
-    <textarea id="token" name="token" rows="4" required autocomplete="off" spellcheck="false" placeholder="eyJ…"></textarea>
-    <button type="submit">Use this token</button>
+  <form method="post" action="/connect" style="display:grid;gap:8px;margin-top:16px;max-width:560px">
+    <label class="field" for="token">Playground access token</label>
+    <textarea id="token" name="token" rows="4" required autocomplete="off" spellcheck="false" placeholder="eyJ…" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px"></textarea>
+    <div><button type="submit">Use this token</button></div>
   </form>
   {% if connected %}
-  <form method="post" action="/connect/forget" class="connect">
+  <form method="post" action="/connect/forget" style="margin-top:16px">
     <button type="submit" class="secondary">Disconnect and go back to {{ 'synthetic demo data' if env_mode == 'synthetic' else 'the .env settings' }}</button>
   </form>
   {% endif %}
-  <p class="proof">The token is saved to <code>.data/ring-access-token</code> on this machine (git-ignored, owner-only) and is never shown again. This page only answers requests from this computer.</p>
-</main>
-</body>
-</html>
+  <p style="margin-top:24px"><a href="/">Back to the receiving desk</a></p>
+  <p class="proof">The token is saved on this computer (git-ignored, readable only by you) and is never shown again.</p>
+{% endblock %}

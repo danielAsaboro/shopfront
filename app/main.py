@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import agent as shop_agent
 from app.briefing import _is_open, build_briefing, classify_day
@@ -15,7 +19,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
-from app import dispute
+from app import dispute, pages
 from app.orders import parse_orders
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
@@ -23,6 +27,7 @@ from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, fra
 from app.hours import posted_hours
 from app.live import LiveError, LiveLog
 from app.ring import RingSource
+from app.ring.base import RingClient
 from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.webhooks import WebhookLog, WebhookStatus
@@ -30,6 +35,10 @@ from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 
 app = FastAPI(title="Shopfront")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+templates.env.filters.update(
+    local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
+    local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
+    long_date=pages.long_date, how=pages.how)
 
 DATA = Path(settings.data_dir)
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
@@ -46,13 +55,33 @@ def _parse_day(value: str | None) -> date:
     if not value:  # a morning briefing is about yesterday
         return datetime.now(settings.tz).date() - timedelta(days=1)
     try:
-        return date.fromisoformat(value)
+        day = date.fromisoformat(value)
     except ValueError:
         raise HTTPException(400, "date must be YYYY-MM-DD")
+    # A briefing reaches a week back and a scan check a day either side; year 1 or 9999 would overflow
+    if not date(2000, 1, 1) <= day <= datetime.now(settings.tz).date() + timedelta(days=366):
+        raise HTTPException(400, "pick a date between 2000 and a year from today")
+    return day
+
+
+_ring_override: ContextVar[RingClient | None] = ContextVar("ring_override", default=None)
+
+
+class _NoHistory(RingClient):
+    """Ring's Event History is unreachable (expired sign-in, outage): the dashboard is built from
+    the webhooks Ring already pushed and the owner's orders. Never synthetic data."""
+
+    name = "ring"
+
+    def __init__(self, tz):
+        self.tz = tz
+
+    def events_for_day(self, day: date) -> list:
+        return []
 
 
 def _ring():
-    ring = source.get()
+    ring = _ring_override.get() or source.get()
     if isinstance(ring, SyntheticRingClient):
         ring.hours = profile.hours()  # demo days follow the hours the owner set
     return ring
@@ -104,10 +133,79 @@ def ring_error(request: Request, exc: RingError):
     code = 401 if exc.status in (RingStatus.TOKEN_REJECTED, RingStatus.REFRESH_FAILED) else 502
     if exc.status == RingStatus.NOT_CONFIGURED:
         code = 503
+    _ring_seen(exc)
     if request.url.path.startswith("/api/"):
         return JSONResponse(_ring_error_body(exc), status_code=code)
-    return templates.TemplateResponse(request, "ring_error.html", {"e": exc, "shop": settings.shop_name},
-                                      status_code=code)
+    return _page(request, "ring_error.html", {"e": exc}, code)
+
+
+# --- What every HTML page shares: the header, the data-source banner and Ring's last known state ---
+
+_ring_problems: dict[tuple, str] = {}  # (source, token key) -> last RingStatus a page hit; a new token starts clean
+
+
+def _ring_key() -> tuple:
+    return id(source), getattr(source, "_key", None)
+
+
+def _ring_seen(exc: RingError | None) -> None:
+    key = _ring_key()
+    if exc is None:
+        _ring_problems.pop(key, None)
+    else:
+        _ring_problems[key] = exc.status.value
+
+
+def _replayed_anywhere() -> bool:
+    try:
+        return any(r.get("replayed") for r in webhook_log.recent(1_000_000))
+    except ValueError:  # a damaged log line; the pages still render
+        return False
+
+
+def _chrome(request: Request) -> dict:
+    try:
+        shop = profile.get().name
+    except (OSError, ValueError, TypeError):
+        shop = settings.shop_name
+    try:
+        mode, problem = source.get().name, _ring_problems.get(_ring_key())
+    except RingError as exc:
+        mode, problem = "error", exc.status.value
+    return {"shop": shop, "ring_mode": mode, "ring_problem": None if mode == "synthetic" else problem,
+            "replayed": _replayed_anywhere(), "nav_here": request.url.path}
+
+
+def _page(request: Request, name: str, ctx: dict | None = None, status_code: int = 200) -> HTMLResponse:
+    return templates.TemplateResponse(request, name, {**_chrome(request), **(ctx or {})}, status_code=status_code)
+
+
+def _wants_html(request: Request) -> bool:
+    path = request.url.path
+    return not (path.startswith(("/api/", "/webhooks/")) or path == "/healthz")
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    if not _wants_html(request) or exc.status_code < 400:
+        return await http_exception_handler(request, exc)
+    return _page(request, "error.html", {"err": pages.plain_error(exc.status_code, str(exc.detail), request.url.path)},
+                 exc.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    if not _wants_html(request):
+        return await request_validation_exception_handler(request, exc)
+    detail = "; ".join(f"{'.'.join(str(x) for x in e.get('loc', [])[1:])}: {e.get('msg', '')}" for e in exc.errors())
+    return _page(request, "error.html", {"err": pages.plain_error(422, detail, request.url.path)}, 422)
+
+
+@app.exception_handler(Exception)
+def server_error(request: Request, exc: Exception):
+    if not _wants_html(request):
+        return JSONResponse({"error": "INTERNAL_ERROR", "detail": type(exc).__name__}, status_code=500)
+    return _page(request, "error.html", {"err": pages.plain_error(500, type(exc).__name__, request.url.path)}, 500)
 
 
 def _claim(value: str | None) -> str:
@@ -122,37 +220,64 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
               claim: str | None = Query(None), carrier: str = Query(""), tracking: str = Query("")):
     day = _parse_day(date)
     claim = _claim(claim)
-    checked = None
+    when = None
     if attempt:
         try:
             when = datetime.combine(day, datetime.strptime(attempt, "%H:%M").time())
         except ValueError:
             raise HTTPException(400, "attempt must be HH:MM")
-        checked = _check_attempt(when, claim)
+    ring_down = None
+    try:
+        desk = _desk(day, when, claim)
+        _ring_seen(None)
+    except RingError as exc:
+        if exc.status == RingStatus.NOT_CONFIGURED:
+            raise
+        # Degrade, don't die: the orders and what Ring pushed by webhook still make a receiving desk.
+        # No scan check without the door history: "nothing recorded" would be a guess.
+        _ring_seen(exc)
+        ring_down, token = exc, _ring_override.set(_NoHistory(settings.tz))
+        try:
+            desk = _desk(day, None, claim)
+        finally:
+            _ring_override.reset(token)
+        r = desk["r"]  # "no courier seen" would be a guess without the history
+        desk["lead"] = [f"{r['seen']} of {r['total']} expected deliveries confirmed by Ring's webhooks. "
+                        "The rest can't be checked until Ring is reconnected."] if r["total"] else []
+    return _page(request, "dashboard.html", {
+        **desk, "ring_down": ring_down, "asked_time": attempt or "",
+        **({"ring_problem": None} if ring_down else {}),  # the page's own notice says it, with what still works
+        "status_text": STATUS_TEXT,
+        "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
+        "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE,
+        "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
+
+
+def _desk(day: date, when: datetime | None, claim: str) -> dict:
+    """The dashboard's data. Receiving lines lead; the rest of the briefing goes below them."""
+    checked = _check_attempt(when, claim) if when else None
     stats: dict = {}
     b = _briefing(day, stats)
-    peak = max(b.hourly_customers + b.hourly_customers_last_week) or 1
-    ring = source.get()
+    ring = _ring()
     r = _receipts(day)
     matched = {x["visit"]["time"] for x in r["expected"] if x["status"].startswith("seen_while_closed")}
-    if b.deliveries_while_closed and {m["time"] for m in b.deliveries_while_closed} <= matched:
-        b.headline = [ln for ln in b.headline if "while the shop was closed" not in ln]  # receipts already say it
-    b.headline = headline(r) + b.headline  # what the owner was waiting for comes first
-    return templates.TemplateResponse(request, "dashboard.html", {
-        "b": b, "peak": peak, "device": getattr(ring, "_device_id", "") or "",
-        "request_id": getattr(ring, "last_request_id", None), "r": r, "status_text": STATUS_TEXT,
-        "money": _week_money(day), "profile": profile.get(), "frames": frames, "attempt": checked,
-        "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40], "tracking": tracking.strip()[:60], "received": RECEIVED, "funnel": stats,
-        "disputable": dispute.DISPUTE,
-        "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
+    # briefing._headline puts "N delivery attempts while the shop was closed" first when there are any
+    closed = b.headline[:1] if b.deliveries_while_closed else []
+    rest = b.headline[len(closed):]
+    if {m["time"] for m in b.deliveries_while_closed} <= matched:
+        closed = []  # the receipts already say it
+    return {"b": b, "lead": headline(r) + closed, "rest": rest, "r": r, "rows": pages.desk_rows(r),
+            "peak": max(b.hourly_customers + b.hourly_customers_last_week) or 1,
+            "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
+            "money": _week_money(day), "attempt": checked, "funnel": stats,
+            "labels": pages.labelled_by_text(stats, b.classifier), "first_run": not book._all(),
+            "replayed": bool(stats.get("replayed"))}
 
 
 @app.get("/connect", response_class=HTMLResponse)
 def connect_page(request: Request):
     _local_only(request)
-    return templates.TemplateResponse(request, "connect.html", {
-        "shop": settings.shop_name, "connected": bool(source.pasted_token()),
-        "env_mode": settings.ring_mode})
+    return _page(request, "connect.html", {"connected": bool(source.pasted_token()), "env_mode": settings.ring_mode})
 
 
 @app.post("/connect")
@@ -200,9 +325,8 @@ def live_error(request: Request, exc: LiveError):
 @app.get("/live", response_class=HTMLResponse)
 def live_page(request: Request):
     ring = source.get()
-    return templates.TemplateResponse(request, "live.html", {
-        "shop": settings.shop_name, "connected": isinstance(ring, RingApiClient),
-        "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
+    return _page(request, "live.html", {"connected": isinstance(ring, RingApiClient),
+                                        "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
 
 
 @app.post("/api/live/start")
@@ -264,19 +388,42 @@ def healthz():
 
 
 @app.get("/setup", response_class=HTMLResponse)
-def setup_page(request: Request, error: str | None = None, imported: str | None = None):
+def setup_page(request: Request, error: str | None = None, imported: str | None = None,
+               notice: str | None = None, s: str = "shop"):
     _local_only(request)
+    return _setup(request, s, error=error, notice=imported or notice)
+
+
+ORDERS_SHOWN = 60
+
+
+def _setup(request: Request, section: str, error: str | None = None, notice: str | None = None,
+           form: dict | None = None, status_code: int = 200) -> HTMLResponse:
+    """/setup with any message shown inside the section it is about, next to where the owner lands."""
     p = profile.get()
     try:
         ring, ring_error = source.get(), None
+        if isinstance(ring, RingApiClient):  # the client loads lazily: ask Ring now, or "connected" is a guess
+            ring.list_devices()
+            _ring_seen(None)
     except RingError as exc:
         ring, ring_error = None, exc.status.value
+        if _ring_key()[1]:  # a built client that Ring refused, not a missing configuration
+            _ring_seen(exc)
     today = datetime.now(settings.tz).date()
-    return templates.TemplateResponse(request, "setup.html", {
-        "p": p, "days": list(zip(DAYS, hours_for_form(p.hours))), "error": error, "imported": imported,
+    orders = sorted(book._all(), key=lambda e: (e.window_start or "99", e.supplier.lower()))
+    orders.sort(key=lambda e: e.day, reverse=True)  # newest day first, each day in time order
+    hours = hours_for_form(p.hours)
+    if form:  # a refused save: show what the owner typed, not what was saved before
+        p = Profile(name=form.get("name", p.name), hours=p.hours, redelivery_cost=p.redelivery_cost,
+                    currency=form.get("currency", p.currency))
+        hours = [form.get(f"h{i}", "") or "closed" for i in range(7)]
+    return _page(request, "setup.html", {
+        "p": p, "days": list(zip(DAYS, hours)), "error": error, "notice": notice, "section": section,
+        "cost_typed": (form or {}).get("redelivery_cost"),
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
-        "expected": [e for i in (-1, 0, 1) for e in book.for_day(today + timedelta(days=i))],
-        "shop": p.name})
+        "orders": orders[:ORDERS_SHOWN], "orders_more": max(0, len(orders) - ORDERS_SHOWN),
+        "order_days": len({e.day for e in orders})}, status_code)
 
 
 @app.post("/setup")
@@ -293,30 +440,35 @@ async def setup_save(request: Request):
             raise ValueError("redelivery cost looks wrong")
         profile.save(p)
     except ValueError as exc:
-        return RedirectResponse(f"/setup?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse("/setup#deliveries", status_code=303)
+        return _setup(request, "shop", error=str(exc), status_code=400,
+                      form={k: str(v) for k, v in form.items()})
+    return RedirectResponse(f"/setup?s=shop&notice={quote('Saved. Shopfront uses these hours from now on.')}#shop",
+                            status_code=303)
 
 
 @app.post("/deliveries")
 async def delivery_add(request: Request):
     _local_only(request)
     form = await request.form()
-    back = str(form.get("back", "/setup#deliveries"))
-    back = back if back.startswith("/") and not back.startswith("//") else "/"
+    back = str(form.get("back", ""))
+    back = back if back.startswith("/") and not back.startswith("//") else ""
     try:
-        book.add(date.fromisoformat(str(form.get("day", ""))), str(form.get("supplier", "")),
-                 str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")),
-                 order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
+        e = book.add(date.fromisoformat(str(form.get("day", ""))), str(form.get("supplier", "")),
+                     str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")),
+                     order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
     except ValueError as exc:
-        return RedirectResponse(f"/setup?error={quote(str(exc))}#deliveries", status_code=303)
-    return RedirectResponse(back, status_code=303)
+        return RedirectResponse(f"/setup?s=orders&error={quote(str(exc))}#orders", status_code=303)
+    return RedirectResponse(back or f"/setup?s=orders&notice={quote(f'Added {e.supplier} for {e.day}.')}#orders",
+                            status_code=303)
 
 
 @app.post("/deliveries/{expected_id}/remove")
 def delivery_remove(request: Request, expected_id: str):
     _local_only(request)
+    e = book.get(expected_id)
     book.remove(expected_id)
-    return RedirectResponse("/setup#deliveries", status_code=303)
+    msg = f"Removed {e.supplier} ({e.day})." if e else "That order was already gone."
+    return RedirectResponse(f"/setup?s=orders&notice={quote(msg)}#orders", status_code=303)
 
 
 @app.get("/api/deliveries")
@@ -395,7 +547,8 @@ def dispute_page(request: Request, date: str | None = Query(None), at: str | Non
     day = _parse_day(date)
     p = _pack(day, at, claim, order, carrier, tracking)
     query = request.url.query
-    return templates.TemplateResponse(request, "dispute.html", {"p": p, "query": query, "status_text": STATUS_TEXT})
+    return _page(request, "dispute.html", {"p": p, "query": query, "status_text": STATUS_TEXT,
+                                           "replayed": "ring-webhook-replay" in p["event_sources"]})
 
 
 @app.get("/api/dispute")
@@ -429,11 +582,11 @@ async def orders_import(request: Request):
             raise ValueError("that file is too big for one import")
         parsed = parse_orders(text, day_first=form.get("day_first") == "1")
     except ValueError as exc:
-        return RedirectResponse(f"/setup?error={quote(str(exc))}#orders", status_code=303)
+        return RedirectResponse(f"/setup?s=orders&error={quote(str(exc))}#orders", status_code=303)
     counts = book.import_rows(parsed["rows"])
     msg = (f"Imported {counts['added']} new and updated {counts['updated']} orders ({parsed['format']} format)"
            + (f". Skipped {len(parsed['errors'])}: " + "; ".join(parsed["errors"][:5]) if parsed["errors"] else "."))
-    return RedirectResponse(f"/setup?imported={quote(msg)}#orders", status_code=303)
+    return RedirectResponse(f"/setup?s=orders&imported={quote(msg)}#orders", status_code=303)
 
 
 @app.post("/deliveries/{expected_id}/received")

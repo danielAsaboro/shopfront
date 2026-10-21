@@ -1,69 +1,78 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · Dispute pack</title>
-{% include "_style.html" %}
+{% extends "_base.html" %}
+{% block title %}Dispute pack, {{ p.day }}{% endblock %}
+{% block head %}
 <style>
-  .facts { display:grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 12px; font-size: 14px; }
+  .facts { display:grid; grid-template-columns: 140px 1fr; gap: 6px 12px; margin-top: 16px; font-size: 14px; }
   .facts dt { color: var(--muted); font-size: 12px; padding-top: 2px; }
   .facts dd { margin: 0; }
   .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; color: var(--muted); }
   .frame-big { display:block; width: 100%; max-width: 480px; border-radius: 6px; margin-top: 8px; }
   .draft { white-space: pre-wrap; border-left: 2px solid var(--line); padding: 4px 0 4px 14px; margin-top: 8px; }
-  .actions { display:flex; flex-wrap:wrap; gap: 10px; align-items:center; margin-top: 12px; }
-  .actions button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line);
-                    background: transparent; color: var(--ink); cursor: pointer; }
+  .actions { display:flex; flex-wrap:wrap; gap: 10px; align-items:center; margin-top: 14px; }
+  .actions .primary { margin-top: 0; }
   .limits { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-  @media print { nav, .actions { display:none; } body { background: #fff; color: #000; } td.why { display: table-cell; } }
-  @media (max-width: 560px) { .facts { grid-template-columns: 1fr; } .facts dt { padding-top: 8px; } }
+  @media print { .actions { display:none; } .tech > summary { display: none; } }
+  @media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 2px; } .facts dt { padding-top: 8px; } }
 </style>
-</head>
-<body>
-<main>
-  <header>
-    <div>
-      <div class="eyebrow">Shopfront · dispute pack · {{ p.day }}</div>
-      <h1>{{ p.shop }}</h1>
-    </div>
-    <nav><a href="/?date={{ p.day }}">Back to the briefing</a></nav>
-  </header>
+{% endblock %}
+{% block main %}
+  <div class="eyebrow">Dispute pack · {{ p.day|long_date }}</div>
+  <h1>{% if p.claim %}{{ p.claim.label }} scan at {{ p.claim.time|local_time(p.day) }}{% elif p.order %}{{ p.order.supplier }}{% if p.order.order_ref %} · {{ p.order.order_ref }}{% endif %}{% else %}{{ p.shop }}{% endif %}</h1>
 
   <section class="lead">
-    {% if p.finding %}<p class="first">{{ p.finding.text }}</p>
-    {% elif p.order %}<p class="first">{{ p.order.supplier }}{% if p.order.order_ref %} · {{ p.order.order_ref }}{% endif %}: {{ p.order.door_status_text }}{% if p.order.received %}, staff marked {{ p.order.received.status }}{% endif %}.</p>{% endif %}
+    {% if p.finding %}
+    <p class="first">{{ p.finding|verdict }}</p>
+    <p class="reason">{{ p.finding.text }}</p>
+    {% elif p.order %}
+    <p class="first">{{ p.order.door_status_text }}{% if p.order.received %}; staff marked it {{ p.order.received.status }}{% endif %}.</p>
+    {% endif %}
   </section>
 
+  <div class="actions">
+    <a class="primary" href="/dispute.zip?{{ query }}" download>Download the pack (.zip)</a>
+    <button type="button" class="secondary" onclick="window.print()">Print</button>
+    <a href="/?date={{ p.day }}">Back to the dashboard</a>
+  </div>
+
   <dl class="facts">
-    {% if p.claim %}<dt>Carrier's scan</dt><dd>{{ p.claim.label }} at {{ p.claim.time }}{% if p.claim.carrier %} · {{ p.claim.carrier }}{% endif %}{% if p.claim.tracking %} · {{ p.claim.tracking }}{% endif %}</dd>{% endif %}
+    {% if p.claim %}<dt>Carrier's scan</dt><dd>{{ p.claim.label }} at {{ p.claim.time|local_time(p.day) }}{% if p.claim.carrier %} · {{ p.claim.carrier }}{% endif %}{% if p.claim.tracking %} · tracking {{ p.claim.tracking }}{% endif %}</dd>{% endif %}
     {% if p.order %}<dt>Order</dt><dd>{{ p.order.order_ref or 'no reference' }} · {{ p.order.supplier }} · due {{ p.order.day }}, {{ p.order.window }}{% if p.order['items'] %}<br><span class="why">{{ p.order['items'] }}{% if p.order.amount %} · {{ p.order.amount }}{% endif %}</span>{% endif %}</dd>
-    <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.at[-5:] }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
+    <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.at|local_time(p.order.day) }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
     <dt>Posted hours</dt><dd>{{ p.posted_hours }}</dd>
-    {% if p.finding and p.finding.activity %}<dt>Door around the scan</dt><dd>{{ p.finding.activity.events }} events {{ p.finding.activity.from }}–{{ p.finding.activity.to }} · {{ p.finding.activity.customers }} customers · {{ p.finding.activity.seen }} labelled by Ring or Bedrock</dd>{% endif %}
-    <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} labelled from a frame or Ring's own alert · source {{ p.event_sources|join(', ') or 'none' }}</dd>
+    {% if p.finding and p.finding.activity %}<dt>Door around the scan</dt><dd>{{ p.finding.activity.events }} events {{ p.finding.activity.from }}–{{ p.finding.activity.to }}{% if p.finding.activity.customers %} · {{ p.finding.activity.customers }} labelled customers{% endif %} · {{ p.finding.activity.seen }} confirmed by Ring or Bedrock</dd>{% endif %}
+    <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
   </dl>
 
   {% if p.frame %}
-  <section class="block">
-    <h2>Ring frame, {{ p.frame.time }}</h2>
+  <section class="block" aria-labelledby="frameh">
+    <h2 id="frameh">Ring frame, {{ p.frame.time }}</h2>
     <a href="{{ p.frame.url }}"><img class="frame-big" src="{{ p.frame.url }}" alt="Ring frame at {{ p.frame.time }}"></a>
-    <p class="hash">SHA-256 {{ p.frame.sha256 }} · event {{ p.frame.event_id }}{% if p.frame.bedrock_request_id %} · Bedrock RequestId {{ p.frame.bedrock_request_id }}{% endif %}</p>
+    <details class="tech">
+      <summary>Details</summary>
+      <p class="hash" style="margin:0">SHA-256 {{ p.frame.sha256 }} · event {{ p.frame.event_id }}{% if p.frame.bedrock_request_id %} · Bedrock RequestId {{ p.frame.bedrock_request_id }}{% endif %}</p>
+    </details>
   </section>
   {% endif %}
 
   {% if p.timeline %}
-  <section class="block">
-    <h2>Door log, {{ p.timeline_window_min }} min either side</h2>
+  <section class="block" aria-labelledby="logh">
+    <h2 id="logh">Door log, {{ p.timeline_window_min }} min either side</h2>
     <table>
-      <tr><th>Time</th><th>Ring event</th><th>Label</th><th>By</th><th>Why</th></tr>
-      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}{% if t.ring_subtype %} · {{ t.ring_subtype }}{% endif %}</td><td>{{ t.type|replace('_', ' ') }}</td><td>{{ t.labelled_by }}</td><td class="why">{{ t.reason }}</td></tr>{% endfor %}
+      <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
+      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td>{{ t.type|replace('_', ' ') }}</td><td class="why">{{ t.labelled_by|how(t.reason) }}</td></tr>{% endfor %}
     </table>
+    <details class="tech">
+      <summary>Details</summary>
+      <table>
+        <tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Ring sub_type</th><th scope="col">Source</th><th scope="col">Labelled by</th></tr>
+        {% for t in p.timeline %}<tr class="hash"><td>{{ t.time }}</td><td>{{ t.event_id }}</td><td>{{ t.ring_subtype or '—' }}</td><td>{{ t.event_source }}</td><td>{{ t.labelled_by }}{% if t.bedrock_request_id %} · {{ t.bedrock_request_id }}{% endif %}</td></tr>{% endfor %}
+      </table>
+    </details>
   </section>
   {% endif %}
 
-  <section class="block">
-    <h2>What this does not show</h2>
+  <section class="block" aria-labelledby="limitsh">
+    <h2 id="limitsh">What this does not show</h2>
     <ul class="limits">{% for x in p.limits %}<li>{{ x }}</li>{% endfor %}</ul>
   </section>
 
@@ -73,27 +82,27 @@
     <p class="why" style="margin:6px 0 0">Shopfront doesn't send this. Read it, change anything, and send it yourself with the zip attached.</p>
     <dl class="facts"><dt>To</dt><dd>{{ p.draft.to }}</dd><dt>Subject</dt><dd id="subject">{{ p.draft.subject }}</dd></dl>
     <div class="draft" id="draft">{{ p.draft.body }}</div>
+    <div class="actions"><button type="button" id="copy" class="secondary">Copy message</button></div>
     {% else %}
     <p style="margin-top:6px">No draft. {{ p.no_draft_reason }}</p>
     {% endif %}
-    <div class="actions">
-      {% if p.draft %}<button type="button" id="copy">Copy message</button>{% endif %}
-      <a href="/dispute.zip?{{ query }}">Download pack (.zip)</a>
-      <button type="button" onclick="window.print()">Print</button>
-      <a href="/api/dispute?{{ query }}">JSON</a>
-    </div>
   </section>
 
-  <footer class="proof">Made {{ p.made_at }} from the door data on this machine. Ring has no "door answered" signal; see what this does not show, above.</footer>
-</main>
-{% if p.draft %}
+  <footer class="proof">
+    Made {{ p.made_at|local_stamp }} (shop time) from the door data on this computer. Ring has no "door answered" signal; see what this does not show, above.
+    <details class="tech no-print"><summary>Details</summary>Door event sources: {{ p.event_sources|join(', ') or 'none' }} · <a href="/api/dispute?{{ query }}">pack JSON</a></details>
+  </footer>
+{% endblock %}
+{% block scripts %}
 <script>
+// Printed packs carry everything: open the Details sections first
+addEventListener("beforeprint", () => document.querySelectorAll("details").forEach(d => d.open = true));
+{% if p.draft %}
 document.getElementById("copy").addEventListener("click", async e => {
   const text = "Subject: " + document.getElementById("subject").innerText + "\n\n" + document.getElementById("draft").innerText;
   try { await navigator.clipboard.writeText(text); e.target.textContent = "Copied"; }
   catch { e.target.textContent = "Select the text to copy"; }
 });
-</script>
 {% endif %}
-</body>
-</html>
+</script>
+{% endblock %}
