@@ -228,13 +228,16 @@ def test_landing_leads_with_three_steps_and_the_check_then_the_deliveries(client
     assert page.index('class="steps3"') < page.index('<section class="lead">')  # the summary comes after
 
 
-def test_on_a_phone_the_verdict_comes_before_the_date_picker(client):
+def test_the_date_picker_sits_under_the_title_at_every_width(client):
+    """Round 7: on a phone the date picker fell between the carrier record and the headline. It sits beside the
+    title on a desktop and right under it on a phone, labelled as an action next to the readable date."""
     page = client.get(f"/?date={DAY}&attempt=14:30&claim=business_closed").text
     top = page.split('<div class="desk-top">')[1]
-    assert top.index('class="no-print day-pick"') < top.index('<section class="verdict')  # side by side on desktop
+    assert top.index("<h1>") < top.index('class="no-print day-pick"') < top.index('<section class="verdict')
+    assert '<label class="field">Change day<input type="date"' in top
     css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
     phone = css.split("@media (max-width: 560px) {")[1].split("@media print")[0]
-    assert ".desk-top > .day-pick { order: 3;" in phone and ".value-quiet { display: none; }" in phone
+    assert "order: 3" not in phone and ".value-quiet { display: none; }" in phone
     assert ".banner .b-long { display: none; }" in phone  # the banner is one line
     # round 6: with a verdict up, the desk's tagline gives way to it on every screen
     assert 'class="value' not in page.split("</style>")[-1] and 'class="steps3"' not in page

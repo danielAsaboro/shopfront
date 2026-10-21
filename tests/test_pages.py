@@ -158,8 +158,10 @@ def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
     page = c.get(f"/?date={WEDNESDAY}").text
     assert page.index('class="lead"') < page.index('id="atth"') < page.index('id="dlv"') \
         < page.index('class="figures"') < page.index('class="receipts"') < page.index("Customers by hour")
-    assert re.search(r'<details class="block fold" id="deliveries">\s*<summary><h2 id="dlv">Deliveries', page)
-    assert re.search(r"<details class=\"block fold\">\s*<summary><h2>The rest of the day", page)
+    # round 7: the deliveries fold is open on every visit; the rest of the day and every door event are one fold
+    assert re.search(r'<details class="block fold" id="deliveries" open>\s*<summary><h2 id="dlv">Deliveries', page)
+    assert re.search(r'<details class="block fold" id="events">\s*<summary><h2>The rest of the day', page)
+    assert page.index("Customers by hour") < page.index("Every door event") and page.count('id="events"') == 1
 
 
 def test_staff_tap_undo_label_and_shop_local_time(c):
@@ -170,7 +172,8 @@ def test_staff_tap_undo_label_and_shop_local_time(c):
     assert "Staff marked short at 09:12: 2 crates" in page
     assert ">Undo</button>" in page and "built-in method" not in page
     pack = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
-    assert "staff marked short at 09:12" in pack and "at 07:00" not in pack and "16:12" not in pack
+    # "short at 07:00", not "at 07:00": the pack's "Made <today> at HH:MM" line said 07:00 for a minute each day
+    assert "staff marked short at 09:12" in pack and "short at 07:00" not in pack and "16:12" not in pack
     assert "unpacked it at 09:12" in c.get(f"/api/dispute?date={SUNDAY}&order={e.id}").json()["draft"]["body"]
 
 
@@ -232,7 +235,7 @@ def test_inputs_are_labelled(c):
     ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))  # the note input needs a courier
     main.book.add(SUNDAY, "Sunday bread")
     page = c.get(f"/?date={SUNDAY}").text
-    assert re.search(r'<label class="field">Day<input type="date"', page)
+    assert re.search(r'<label class="field">Change day<input type="date"', page)
     note = re.search(r'<input id="(note-[^"]+)" name="note"', page).group(1)
     assert f'<label class="sr" for="{note}">' in page
 

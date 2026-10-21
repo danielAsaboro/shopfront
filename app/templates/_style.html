@@ -89,11 +89,13 @@
   .verdict .thumb img { width: 160px; }
   .verdict form.keep { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
   /* The desk's top: title and date picker side by side; the verdict or the three steps under both.
-     On a phone the date picker drops below them, so the answer is in the first screen. */
+     On a phone the date picker sits right under the title, on one line (round 7: it fell between the carrier
+     record and the headline). */
   .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: end; }
   .desk-top > .head-text { grid-column: 1; grid-row: 1; }
   .desk-top > .day-pick { grid-column: 2; grid-row: 1; }
-  .desk-top > section { grid-column: 1 / -1; }
+  .desk-top > section, .desk-top > .value { grid-column: 1 / -1; }
+  .day-pick .field { white-space: nowrap; }
   .steps3 { margin: 20px 0 4px; }
   .steps3 ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
                border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); counter-reset: step; }
@@ -107,8 +109,10 @@
   .try-check .primary { margin: 0; }
   .try-demo { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 14px 0 0; }
   .try-demo button { margin: 0; }
-  .record .report-link { font-size: 13px; margin-left: 10px; }
   .record .carrier-line { margin-top: 8px; }
+  .record .kept-checks { margin-top: 0; }
+  .record .report-row { margin: 12px 0 0; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 14px; }
+  .record .report-row .secondary { margin: 0; }
   .record .pattern { font-size: 17px; line-height: 1.35; font-weight: 600; margin: 0; }
   .record ul.kept { margin: 4px 0 0; padding-left: 18px; }
   .record ul.kept li { margin: 2px 0; }
@@ -205,11 +209,12 @@
   .facts1 > span + span::before { content: "·"; color: var(--muted); margin: 0 8px; }
   .facts1 .mk { font-weight: 700; } .facts1 .no .mk { color: var(--muted); }
   .facts1 .na, .facts3 .na { color: var(--muted); }  /* a neutral note, after the ticks: not a pass or a fail */
-  /* The carrier record's one line, second after the verdict */
+  /* The carrier record, second after the verdict: the block a shop takes to the carrier's account manager */
   .record-line { margin: 22px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
-  .record-line h2 { display: block; margin: 0 0 2px; }
-  .record-line p { margin: 0; font-size: 16px; line-height: 1.4; }
-  .record-line .report-link { white-space: nowrap; margin-left: 4px; }
+  .record-line h2 { margin: 0 0 2px; }
+  .record-line h2 + .badge { margin-left: 6px; vertical-align: 1px; }
+  .record-line .pattern { font-size: 16px; line-height: 1.4; }
+  .record-line .money { margin: 10px 0 0; }
   /* Everything below the verdict: named folds, one rule each */
   details.fold { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 14px; }
   details.fold > summary { padding: 4px 0; }
@@ -220,7 +225,8 @@
   .verdict-src { margin: 8px 0 0; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   @media (max-width: 560px) {
     .desk-top { display: flex; flex-direction: column; align-items: stretch; }
-    .desk-top > .day-pick { order: 3; margin-top: 16px; align-self: flex-start; }
+    .desk-top > .day-pick { margin-top: 8px; align-self: flex-start; }
+    .day-pick .field { display: flex; align-items: center; gap: 8px; }
     .value-quiet { display: none; }
     .steps3 li { padding: 10px 8px 10px 0; } .steps3 li + li { padding-left: 8px; }
     .steps3 li strong { font-size: 14px; } .steps3 li .why { display: none; }
