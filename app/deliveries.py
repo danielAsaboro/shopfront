@@ -306,6 +306,22 @@ def _due_by(e: Expected, tz) -> datetime:
     return datetime.combine(d + timedelta(days=1), time(0), tzinfo=tz)
 
 
+def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit]) -> dict[str, Expected]:
+    """Each unidentified door event goes to at most one unmatched order: the best fit among those it fits.
+    An order with a window beats one without, a narrower window beats a wider one, then the order listed
+    first. The same doorbell press is never offered as the possible courier of two orders at once."""
+    def fit(e: Expected) -> tuple:
+        w = e.window()
+        width = (w[1].hour * 60 + w[1].minute) - (w[0].hour * 60 + w[0].minute) if w else 24 * 60 + 1
+        return (width, orders.index(e))
+    out = {}
+    for v in guessed:
+        fits = [o for o in orders if _distance(v, o) == timedelta(0)]
+        if fits:
+            out[v.event.id] = min(fits, key=fit)
+    return out
+
+
 def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours,
              frames: FrameStore, now: datetime | None = None) -> dict:
     """Match expected deliveries to couriers Ring or Bedrock saw, one visit per delivery at most.
@@ -318,18 +334,33 @@ def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours
     couriers = [v for v in visits if is_seen_courier(v)]
     guessed = [v for v in visits if is_possible_courier(v)]
     pick = _assign(_costs(expected, couriers)) if expected else []
+    unmatched = [e for e, j in zip(expected, pick) if j >= len(couriers)]
+    owner = _possible_owners(unmatched, guessed)
     used: set[str] = set()
     rows = []
     for e, j in zip(expected, pick):
         if j >= len(couriers):
-            possible = [_visit_row(v, frames, open_hours, visits) for v in guessed if _distance(v, e) == timedelta(0)]
+            possible, elsewhere = [], []
+            for v in guessed:
+                fits = [o for o in unmatched if _distance(v, o) == timedelta(0)]
+                if e not in fits:
+                    continue
+                best = owner[v.event.id]
+                if best is e:  # listed here only; the other orders it fits are named, not offered it too
+                    possible.append({**_visit_row(v, frames, open_hours, visits),
+                                     "also_fits": [o.supplier for o in fits if o is not e]})
+                else:
+                    elsewhere.append({"time": v.event.timestamp.strftime("%H:%M"), "ring_event": v.event.kind,
+                                      "supplier": best.supplier})
             if possible:
                 status = "possible"
             elif now is not None and _utc(now) < _utc(_due_by(e, now.tzinfo)):
                 status = "expected"
             else:
                 status = "not_seen"
-            rows.append({**asdict(e), "status": status, "also_fits": [], "visit": None, "possible": possible})
+            row = {**asdict(e), "status": status, "also_fits": [], "visit": None, "possible": possible,
+                   "possible_elsewhere": elsewhere}
+            rows.append({**row, "elsewhere_text": elsewhere_text(row) + "." if elsewhere and not possible else ""})
             continue
         best = couriers[j]
         used.add(best.event.id)
@@ -341,7 +372,8 @@ def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours
         # Ring frames don't say whose courier it was; name the other suppliers this visit also fits
         also = [o.supplier for o in expected if o is not e and _distance(best, o) == timedelta(0)]
         rows.append({**asdict(e), "status": status, "also_fits": also,
-                     "visit": _visit_row(best, frames, open_hours, visits), "possible": []})
+                     "visit": _visit_row(best, frames, open_hours, visits), "possible": [], "possible_elsewhere": [],
+                     "elsewhere_text": ""})
     unexpected = [_visit_row(v, frames, open_hours, visits) for v in couriers if v.event.id not in used]
     closed = sum(1 for v in couriers if not _is_open(v.event.timestamp, open_hours)
                  and not staff_in(v.event.timestamp, visits, open_hours))
@@ -410,7 +442,7 @@ def headline(r: dict, scan: str | None = None, scan_first: bool = False) -> list
     confirmed = [_seen_line(x) for x in seen]
     if r["total"] > 1 and len(seen) == r["total"] and not closed:
         confirmed.insert(0, f"All {r['total']} expected deliveries reached the door.")
-    missing = [x["supplier"] for x in rows if x["status"] == "not_seen"]
+    missing = [x["supplier"] for x in rows if x["status"] == "not_seen" and not x.get("possible_elsewhere")]
     lines = ([scan] if scan and scan_first else []) + confirmed + ([scan] if scan and not scan_first else [])
     if missing:
         lines.append(f"No courier seen for {_and(missing)}.")
@@ -419,7 +451,20 @@ def headline(r: dict, scan: str | None = None, scan_first: bool = False) -> list
     if due:
         lines.append(f"Still to come: {_and(due)}.")
     lines += [_possible_line(x) for x in rows if x["status"] == "possible" and x["possible"]]
+    lines += [elsewhere_text(x) + "." for x in rows if x["status"] == "not_seen" and x.get("possible_elsewhere")]
     return lines
+
+
+def elsewhere_text(x: dict) -> str:
+    """"No courier confirmed for Pinecrest Paper Goods; the doorbell press at 14:36 that fits it is listed under
+    Valley Creamery, the closer fit": an order whose only candidate went to another order."""
+    ps = x["possible_elsewhere"]
+    what = "the doorbell press" if all(p["ring_event"] == "ding" for p in ps) and len(ps) == 1 else \
+        ("the door event" if len(ps) == 1 else "the door events")
+    under = _and(sorted({p["supplier"] for p in ps}))
+    return (f"No courier confirmed for {x['supplier']}; {what} at {_and([p['time'] for p in ps])} that "
+            f"{'fits' if len(ps) == 1 else 'fit'} it {'is' if len(ps) == 1 else 'are'} listed under {under}, "
+            f"the closer fit")
 
 
 def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str) -> str | None:

@@ -62,6 +62,17 @@
 
   .value { margin: 6px 0 0; font-size: 17px; line-height: 1.35; }
   .tap a.claim-link { color: var(--muted); }
+  /* Source badge: one word for what a label rests on; the sentence opens under it */
+  details.src { display: inline-block; vertical-align: baseline; }
+  details.src > summary { list-style: none; display: inline; }
+  details.src > summary::-webkit-details-marker { display: none; }
+  details.src[open] { display: block; }
+  details.src > .why { display: block; margin-top: 4px; }
+  .badge { display: inline-block; font-size: 11px; line-height: 1.5; letter-spacing: .04em; text-transform: uppercase;
+           padding: 0 6px; border: 1px solid var(--edge); border-radius: 999px; color: var(--muted); }
+  .badge.b-demo, .badge.b-replay { border-style: dashed; }
+  .receipts td.src-cell { width: 76px; white-space: nowrap; }
+  .receipts td.src-cell details[open] { white-space: normal; width: 220px; }
   .lead { margin: 20px 0 8px; }
   .lead .first { font-size: 22px; line-height: 1.35; margin: 0 0 8px; font-weight: 600; }
   .lead .reason { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
@@ -105,7 +116,7 @@
   .first-run .next .why { display: inline-block; }
   .receipts td.thumb { width: 88px; padding-right: 0; }
   .receipts td.thumb:empty { width: 0; padding: 0; }
-  .receipts td.why { width: 30%; }
+  .receipts td.why:not(.src-cell) { width: 30%; }
   .receipts img, .ask img.frame { display:block; width: 72px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   .ask img.frame { width: 240px; max-width: 100%; margin: 8px 0; }
   /* Drawn stills for demo events: same slot as a frame, always captioned as a drawing */
@@ -141,6 +152,7 @@
     .receipts td.thumb { grid-column: 3; grid-row: 1; width: auto; }
     .receipts td.why, .log td.why { display: block; grid-column: 1 / -1; grid-row: 2; padding-top: 4px; width: auto; }
     .receipts td.why { grid-column: 2 / -1; }
+    .receipts td.src-cell details[open] { width: auto; }
     .receipts td.why:empty { display: none; }
     .log tr:first-child { display: none; }
     figure.still img { width: 64px; }

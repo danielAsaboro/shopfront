@@ -63,9 +63,10 @@ def test_dashboard_never_says_the_frame_shows_for_a_ring_alert_without_one(monke
     main.book.add(DAY, "Hillside Mill", "10:00", "11:00")
     main.book.add(DAY, "Pinecrest Paper Goods")
     html = TestClient(main.app).get("/", params={"date": DAY.isoformat()}).text
-    assert "Could also be Pinecrest Paper Goods's courier: Ring&#39;s package_delivery alert says a courier " \
+    assert "Could also be the courier for Pinecrest Paper Goods: Ring&#39;s package_delivery alert says a courier " \
            "came, not whose order it was." in html
     assert "the frame shows" not in html and "Ring&#39;s package_delivery alert, no frame" in html
+    assert "Goods&#39;s" not in html and "Goods's" not in html
 
 
 def test_late_note_and_finding_say_what_the_label_rests_on(tmp_path):

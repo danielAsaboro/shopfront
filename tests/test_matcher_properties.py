@@ -74,13 +74,18 @@ def test_matcher_invariants(expected, visits):
     assert len(used) == len(set(used))
     # a rules guess is never a receipt, never "seen": at most a possible courier for an unmatched supplier
     assert r["seen"] == len(used) and not set(used) & {v.event.id for v in guesses}
+    # round 2: each guess is offered to at most one unmatched order, one it fits; the others it fits name it
+    offered = [p["event_id"] for x in r["expected"] for p in x["possible"]]
+    assert len(offered) == len(set(offered))
     for x, e in zip(r["expected"], expected):
         fits = [v.event.id for v in guesses if in_window(v, e)]
         if x["visit"]:
             assert x["possible"] == []
         else:
-            assert x["status"] == ("possible" if fits else "not_seen")
-            assert [p["event_id"] for p in x["possible"]] == fits
+            mine = [p["event_id"] for p in x["possible"]]
+            assert set(mine) <= set(fits)
+            assert x["status"] == ("possible" if mine else "not_seen")
+            assert len(mine) + len(x["possible_elsewhere"]) == len(fits)  # every guess that fits is accounted for
     # only Ring- or Bedrock-confirmed couriers become receipts, and every one is accounted for exactly once
     assert set(used) <= {v.event.id for v in couriers}
     assert sorted(used + [u["event_id"] for u in r["unexpected"]]) == sorted(v.event.id for v in couriers)

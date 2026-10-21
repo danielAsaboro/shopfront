@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% from "_frame_delete.html" import delete_frame %}
 {% from "_still.html" import still %}
+{% from "_source.html" import source %}
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
@@ -74,7 +75,7 @@
       <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
     </div>
     {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
-    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</p>{% endif %}
+    {% if attempt.visit %}<div class="why" style="margin:6px 0 0">{{ attempt.visit.time }} event: {{ source(attempt.visit.labelled_by, attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</div>{% endif %}
     {% if pack_href %}<p><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
     {% endif %}
     {% endif %}
@@ -105,7 +106,7 @@
       <tr>
         <td class="t {{ 'warn' if late }}{{ 'muted' if quiet }}">{{ x.visit.time if x.visit else (maybe.time if maybe else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—')) }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}</span>{% endif %}
-          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ 'fit' if many else 'fits' }} the window; no camera frame confirmed a courier.</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: {{ x.visit|not_whose }}.</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ 'fit' if many else 'fits' }} the window; no camera frame confirmed a courier.{% set shared = x.possible|selectattr('also_fits')|list %}{% if shared %} {{ 'It also fits' if not many else 'They also fit' }} {{ shared|map(attribute='also_fits')|sum(start=[])|unique|join(' and ') }}; listed here only, the closer fit.{% endif %}</span>{% endif %}{% if x.elsewhere_text %}<br><span class="why">{{ x.elsewhere_text }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be the courier for {{ x.also_fits|join(" or ") }}: {{ x.visit|not_whose }}.</span>{% endif %}
           {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if (x.visit or maybe) and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
@@ -116,7 +117,7 @@
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
             {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}">Carrier says closed?</a>{% endif %}
           </div></td>
-        <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason, x.visit.event_source, x.visit.frame_url) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason, maybe.event_source, maybe.frame_url) }}{% endif %}</td>
+        <td class="why src-cell">{% if x.visit %}{{ source(x.visit.labelled_by, x.visit.reason, x.visit.event_source, x.visit.frame_url) }}{% elif maybe %}{{ source(maybe.labelled_by, maybe.reason, maybe.event_source, maybe.frame_url) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% elif x.visit %}{{ still(x.visit, 'delivery') }}{% elif maybe %}{{ still(maybe, 'doorbell_press') }}{% endif %}</td>
       </tr>
       {% else %}
@@ -124,7 +125,7 @@
       <tr>
         <td class="t">{{ u.time }}</td>
         <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
-        <td class="why">{{ u.labelled_by|how(u.reason, u.event_source, u.frame_url) }}</td>
+        <td class="why src-cell">{{ source(u.labelled_by, u.reason, u.event_source, u.frame_url) }}</td>
         <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="{{ u|frame_label }} at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% else %}{{ still(u, 'delivery') }}{% endif %}</td>
       </tr>
       {% endif %}

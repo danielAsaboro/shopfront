@@ -83,6 +83,19 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     return f"{known}: {reason}" if reason else known
 
 
+# One short word for what a label rests on (app/provenance.py), for the badge on a desk row; the full sentence
+# from how() sits behind it
+BADGE = {provenance.RING_ALERT: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
+         provenance.BEDROCK_LIVE: "bedrock", provenance.RULES: "guess", provenance.SYNTHETIC: "demo"}
+
+
+def badge(source: str | None, event_source: str | None = None) -> str:
+    """'ring' / 'bedrock' / 'guess' / 'replay' / 'demo'."""
+    if source not in ("ring", "bedrock", "rules") and event_source not in ("synthetic", "ring-webhook-replay"):
+        return "guess"
+    return BADGE[provenance.kind(source, event_source)]
+
+
 # A visit type in the owner's words, where the raw value isn't already one
 TYPE_LABEL = {"doorbell_press": "doorbell press", "after_hours": "after hours"}
 

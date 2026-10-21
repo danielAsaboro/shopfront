@@ -187,3 +187,39 @@ def test_real_strands_agent_builds_with_its_tools(isolated):
     a = shop_agent.build_agent(main._agent_tools(DAY), trace, "Test Shop", "us-east-1",
                                "us.anthropic.claude-haiku-4-5-20251001-v1:0")
     assert sorted(a.tool_names) == ["check_attempt", "deliveries", "dispute_pack", "door_visits", "week"]
+
+
+def test_one_unidentified_press_is_offered_to_one_order_and_says_so(tmp_path):
+    """Round 2: the 14:36 press was the possible courier for both the dairy order (13:00-16:00) and the
+    windowless paper invoice. It goes to the best fit, the windowed order; the other names where it went."""
+    from datetime import time as dtime
+
+    from app import deliveries
+    from app.deliveries import Expected, FrameStore
+    from app.models import ClassifiedVisit, DoorEvent, VisitType
+
+    day = "2026-10-20"
+    tz = ZoneInfo("America/Los_Angeles")
+
+    def press(hh, mm):
+        e = DoorEvent(f"d{hh}{mm}", "d", datetime(2026, 10, 20, hh, mm, tzinfo=tz), "ding", "ring")
+        return ClassifiedVisit(e, VisitType.DOORBELL_PRESS, 0.5, "doorbell press during open hours", "rules")
+
+    dairy = Expected("exp-d", day, "Valley Creamery", "13:00", "16:00")
+    paper = Expected("exp-p", day, "Pinecrest Paper Goods")
+    hours = (dtime(8), dtime(18))
+    r = deliveries.receipts([paper, dairy], [press(14, 36)], hours, FrameStore(tmp_path))
+    by = {x["supplier"]: x for x in r["expected"]}
+    assert by["Valley Creamery"]["status"] == "possible"
+    assert by["Valley Creamery"]["possible"][0]["also_fits"] == ["Pinecrest Paper Goods"]
+    assert by["Pinecrest Paper Goods"]["possible"] == [] and by["Pinecrest Paper Goods"]["status"] == "not_seen"
+    assert by["Pinecrest Paper Goods"]["elsewhere_text"] == ("No courier confirmed for Pinecrest Paper Goods; the "
+                                                             "doorbell press at 14:36 that fits it is listed under "
+                                                             "Valley Creamery, the closer fit.")
+    lines = deliveries.headline(r)
+    assert sum("14:36" in ln for ln in lines) == 2 and not any("No courier seen for Pinecrest" in ln for ln in lines)
+    # a press outside the dairy window still goes to the windowless invoice
+    r = deliveries.receipts([paper, dairy], [press(10, 9), press(14, 36)], hours, FrameStore(tmp_path))
+    by = {x["supplier"]: x for x in r["expected"]}
+    assert [p["time"] for p in by["Pinecrest Paper Goods"]["possible"]] == ["10:09"]
+    assert [p["time"] for p in by["Valley Creamery"]["possible"]] == ["14:36"]

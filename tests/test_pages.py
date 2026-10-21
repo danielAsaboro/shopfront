@@ -407,3 +407,18 @@ def test_the_story_is_on_screen_first(c):
     form = pre.split('id="atth"')[1].split("</form>")[0]
     assert '<option value="business_closed" selected>' in form and 'value="Northline Parcel"' in form
     assert 'value="NP4471"' in form and "required autofocus" in form
+
+
+def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
+    """Round 2: "Replayed Ring package_delivery alert from Shopfront's feeder…" was the third column of every
+    row. Now a one-word badge, the full sentence in a tap-to-open details and its title."""
+    assert [pages.badge(*a) for a in (("ring", "ring"), ("ring", "ring-webhook-replay"), ("bedrock", "ring"),
+                                      ("bedrock", "ring-live-browser"), ("rules", "ring"), ("rules", "synthetic"),
+                                      ("none", "ring-live"))] == ["ring", "replay", "bedrock", "bedrock", "guess",
+                                                                  "demo", "guess"]
+    e = main.book.add(SUNDAY, "Sunday bread", "11:00", "12:00")  # the synthetic 11:28 press fits the window
+    page = c.get(f"/?date={SUNDAY}").text
+    row = page.split(f'action="/deliveries/{e.id}/received"')[0].rsplit("<tr>", 1)[1] + \
+        page.split(f'action="/deliveries/{e.id}/received"')[1].split("</tr>")[0]
+    assert '<span class="badge b-demo">demo</span>' in row
+    assert '<details class="src"><summary title="Synthetic demo event' in row

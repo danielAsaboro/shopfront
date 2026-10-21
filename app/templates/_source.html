@@ -1,0 +1,3 @@
+{# What a door label rests on, as a small badge (ring / bedrock / guess / replay / demo); the full sentence opens
+   under it on a tap, and is the badge's title on hover (pages.badge, pages.how). #}
+{% macro source(labelled_by, reason, event_source, frame_url=none) %}{% set full = labelled_by|how(reason, event_source, frame_url) %}<details class="src"><summary title="{{ full }}"><span class="badge b-{{ labelled_by|badge(event_source) }}">{{ labelled_by|badge(event_source) }}</span><span class="sr"> How we know</span></summary><span class="why">{{ full }}</span></details>{% endmacro %}
