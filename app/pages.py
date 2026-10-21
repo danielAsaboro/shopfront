@@ -19,6 +19,7 @@ BY = {"bedrock": "Bedrock looked at the Ring frame", "ring": "Ring's package ale
 # (reconcile's text) is shown under it; an outcome this map doesn't know falls back to its first sentence.
 VERDICT = {
     "open_no_courier": "You were open, and the doorbell saw no courier near the scan.",
+    "open_door_busy": "You were open: your posted hours and a busy door say so.",
     "open_courier_came": "You were open, and a courier was at the door near the scan.",
     "open_by_hours_only": "Your hours say you were open, but the door recorded nothing to back that up.",
     "posted_closed": "Your posted hours say you were closed then, so the scan matches.",

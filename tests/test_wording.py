@@ -47,7 +47,13 @@ SCANS = [
     ("unverified closed scan", rc.BUSINESS_CLOSED, (12, 40),
      lambda: [visit(12, 41, "delivery", "rules", ring_event="ding")], rc.UNVERIFIED),
     ("no door data, closed scan", rc.BUSINESS_CLOSED, (12, 40), lambda: [], rc.NO_DOOR_DATA),
-    ("courier later, closed scan", rc.BUSINESS_CLOSED, (12, 40), pitch_day, rc.COURIER_LATER),
+    # the pitch day: busy lunch, rule-guessed motion near 12:40, Ring's courier at 13:02. The claim is "closed",
+    # so a busy door answers it; the order's own courier later makes it a late-delivery note
+    ("busy door, courier later, closed scan", rc.BUSINESS_CLOSED, (12, 40), pitch_day, rc.OPEN_DOOR_BUSY),
+    ("busy door, unidentified press, closed scan", rc.BUSINESS_CLOSED, (12, 40),
+     lambda: [visit(12, 20), visit(12, 41, "delivery", "rules", ring_event="ding"), visit(13, 5)], rc.OPEN_DOOR_BUSY),
+    ("quiet door, courier later, closed scan", rc.BUSINESS_CLOSED, (12, 40),
+     lambda: [visit(9, 0), visit(15, 2, "delivery", "ring", src="ring-webhook", eid="pkg")], rc.COURIER_LATER),
 ]
 
 
@@ -82,9 +88,10 @@ def _pack(visits, check=None, order=None, carrier="", others=(), frames=None):
 
 
 def _texts(p):
-    d = p["draft"] or {}
-    return [d.get("subject", ""), d.get("body", ""), p.get("no_draft_reason") or "",
-            (p.get("finding") or {}).get("text", ""), dispute.as_text(p)]
+    out = [p.get("no_draft_reason") or "", (p.get("finding") or {}).get("text", ""), dispute.as_text(p)]
+    for d in p["drafts"]:  # the supplier's and the carrier's: the owner may send either
+        out += [d["subject"], d["body"]]
+    return out
 
 
 def scan_cases():
@@ -174,3 +181,4 @@ def test_lookalikes_are_caught(text):
 ])
 def test_ordinary_words_pass(text):
     assert wording.accusing(text) == [], text
+

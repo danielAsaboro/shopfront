@@ -10,9 +10,10 @@ to a field in the pack, and only camera-confirmed facts (Ring's package_delivery
 frame, or Ring recording an event at all) are stated as facts. A label the time-of-day rules guessed
 is never written as a fact: when one sits where the dispute needs certainty, there is no draft.
 
-It goes to whoever the shop can actually ask: the supplier when the pack is about one of the shop's
-orders (the shipper is the carrier's customer, not the shop), the carrier, by the name the owner
-typed, only when there is no order. When any event that day is Shopfront's demo data or a replayed
+A scan pack offers two drafts and the owner picks: one to the supplier, as a receiving issue (the
+shipper is the carrier's customer, so it is who can make the carrier act), and one to the carrier about
+its own scan, by the name the owner typed. With no order there is only the carrier's; a pack about an
+order with no scan (missing, short, damaged) only has the supplier's. When any event that day is Shopfront's demo data or a replayed
 webhook, the pack, the draft and the zip README say so in their first line.
 
 Shopfront never sends it: the owner reads it, edits it and sends it from their own email. When the
@@ -74,7 +75,9 @@ PROVENANCE = {
 DELIVERED_AFTER_SCAN = "delivered_after_scan"
 
 # Outcomes where the door disagrees with the carrier, so a pack (and maybe a draft) is worth making
-DISPUTE = {rc.OPEN_NO_COURIER, rc.OPEN_COURIER_CAME, rc.NOTHING_RECORDED, rc.SOMEONE_NOT_COURIER, rc.COURIER_LATER}
+DISPUTE = {rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY, rc.OPEN_COURIER_CAME, rc.NOTHING_RECORDED, rc.SOMEONE_NOT_COURIER,
+           rc.COURIER_LATER}
+OPEN_FINDINGS = {rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY, rc.OPEN_COURIER_CAME}  # "business closed", but you were open
 
 NO_DRAFT = {
     rc.COURIER_AT_DOOR: "The door agrees with the carrier: a courier was there near that time.",
@@ -156,7 +159,8 @@ def _in_order_window(v: ClassifiedVisit, o: dict) -> bool:
 def _late(check: dict, order: dict | None, visits: list[ClassifiedVisit]) -> dict | None:
     """The order's own courier (matched by the receipts), seen by Ring or Bedrock after the carrier's time."""
     v = (order or {}).get("courier_visit")
-    if not check or not order or not v or check["outcome"] != rc.COURIER_LATER:
+    if not check or not order or not v or check["outcome"] not in (rc.COURIER_LATER, rc.OPEN_NO_COURIER,
+                                                                    rc.OPEN_DOOR_BUSY):
         return None
     when = next((x.event.timestamp for x in visits if x.event.id == v["event_id"]), None)
     scan = datetime.fromisoformat(check["attempt_at"])
@@ -168,13 +172,13 @@ def _late(check: dict, order: dict | None, visits: list[ClassifiedVisit]) -> dic
 
 def _finding(check: dict, late: dict | None, order: dict | None) -> dict:
     f = {"outcome": check["outcome"], "text": check["text"], "activity": check.get("activity"),
-         "visit": check.get("visit")}
+         "visit": check.get("visit"), "unidentified": check.get("unidentified") or [], "later": check.get("later")}
     if not late or not order:
         return f
     what = "scanned \"business closed\"" if check["claim"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
     hours = f" Your posted hours had you open ({check['posted_hours']}), so the scan doesn't match them." \
         if check["claim"] == rc.BUSINESS_CLOSED else ""
-    whose = f" It could also have been {' or '.join(order['also_fits'])}'s courier: " \
+    whose = f" It could also have been the courier for {' or '.join(order['also_fits'])}: " \
             f"{provenance.not_whose(late)}." if order["also_fits"] else ""
     text = (f"The carrier {what} at {check['attempt'][-5:]}, then the courier was at the door at {late['time']}, "
             f"{late['minutes_after']} min later ({provenance.said_by(late)}). Shopfront "
@@ -239,11 +243,12 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
         "seen_by_vision_that_day": sum(1 for v in visits if v.source in SEEN_SOURCES),
         "event_sources": sources, "cited_sources": cited_sources, "limits": limits,
     }
-    d, pack["no_draft_reason"] = draft(pack, visits)
-    if d and marks:
+    ds, pack["no_draft_reason"] = drafts(pack, visits)
+    for d in ds if marks else []:
         d["subject"] = SUBJECT_TAG + d["subject"]
         d["body"] = draft_warning(demo, replayed) + "\n\n" + d["body"]
-    pack["draft"] = d
+    pack["drafts"] = ds
+    pack["draft"] = ds[0] if ds else None  # the one shown first: the supplier's when there is an order
     return pack
 
 
@@ -260,7 +265,7 @@ def _supported(p: dict) -> bool:
     f = p["finding"]
     if f["outcome"] in (rc.OPEN_COURIER_CAME, rc.SOMEONE_NOT_COURIER):
         return True
-    return f["outcome"] == rc.OPEN_NO_COURIER and bool((f.get("activity") or {}).get("seen"))
+    return f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY) and bool((f.get("activity") or {}).get("seen"))
 
 
 def _facts(p: dict) -> str:
@@ -268,7 +273,7 @@ def _facts(p: dict) -> str:
     f = p["finding"]
     a, v = f.get("activity") or {}, (f.get("visit") or {})
     tol = p.get("tolerance_min", 10)
-    if f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_COURIER_CAME):
+    if f["outcome"] in OPEN_FINDINGS:
         kinds = _kinds_text(a)
         conf = (f", {a['customers']} of them confirmed from the camera frame as "
                 f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else ""
@@ -277,6 +282,8 @@ def _facts(p: dict) -> str:
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
+        if f["outcome"] == rc.OPEN_DOOR_BUSY:  # what backs "open"; the door log names every event near the scan
+            return line + " We were open, and our door was in use around the time of the scan."
         if not a.get("near"):
             return line + f" It recorded nothing at our door within {tol} minutes of the scan."
         return line + (f" {'The visit' if a['near'] == 1 else 'Every visit'} it recorded within {tol} minutes of "
@@ -306,6 +313,25 @@ def _evidence(p: dict) -> str:
         "I've attached the door log for that time."
 
 
+def _greeting(c: dict) -> str:
+    return f"Hello {c['carrier']}," if c["carrier"] else "Hello,"
+
+
+def _ref(p: dict) -> str:
+    return p["claim"]["tracking"] or (p["order"] or {}).get("order_ref") or ""
+
+
+def _labelled(d: dict, key: str) -> dict:
+    """A draft with who it is for, in the owner's words, for the picker on the pack page."""
+    if key == SUPPLIER:
+        label, why = f"To {d['to']}, the supplier", "a receiving issue: the supplier is the carrier's customer, " \
+                                                    "so it can make the carrier act"
+    else:
+        label = f"To {d['to']}, the carrier" if d["to"] else "To the carrier"
+        why = "about the carrier's own scan, for its tracking record"
+    return {"key": key, "label": label, "why": why, **d}
+
+
 def _late_note(p: dict, sign: str) -> dict:
     c, f, o = p["claim"], p["finding"], p["order"]
     v = f["visit"]
@@ -324,37 +350,76 @@ def _late_note(p: dict, sign: str) -> dict:
         so = (f"So the order reached us {v['minutes_after']} minutes after the recorded attempt. Please note the "
               f"late delivery, and ask {ask} to review the attempt scan if it affects anything on your side.")
         subject = f"Late delivery after an attempted-delivery scan, {o['order_ref'] or o['day']}"
+    body = "\n\n".join([f"Hello {o['supplier']},", _order_line(o), scan + " " + _late_seen(p), so + " " + _evidence(p)])
+    return {"to": o["supplier"], "subject": subject, "body": body + sign}
+
+
+def _late_seen(p: dict) -> str:
+    v, o = p["finding"]["visit"], p["order"]
     seen = (f"Our doorbell camera then recorded the courier at our door at {v['time']} "
             f"({provenance.said_by(v)}), {v['minutes_after']} minutes after that scan.")
     if o["also_fits"]:
         seen += f" ({provenance.not_whose(v)[:1].upper()}{provenance.not_whose(v)[1:]}: it could also have been " \
                 f"for {' or '.join(o['also_fits'])}.)"
-    body = "\n\n".join([f"Hello {o['supplier']},", _order_line(o), scan + " " + seen, so + " " + _evidence(p)]) + sign
-    return {"to": o["supplier"], "subject": subject, "body": body}
+    return seen
+
+
+def _late_to_carrier(p: dict, sign: str) -> dict:
+    c = p["claim"]
+    ref = _ref(p)
+    if c["kind"] == rc.BUSINESS_CLOSED:
+        scan = f"Your tracking{f' for {ref}' if ref else ''} marked our delivery \"business closed\" at " \
+               f"{c['time'][-5:]} on {p['day']}, during our posted hours ({p['posted_hours']})."
+        ask = "Please correct the \"business closed\" scan on the shipment's record, so it isn't counted against us."
+        subject = f"\"Business closed\" scan during our open hours, {p['day']} {c['time'][-5:]}"
+    else:
+        scan = f"Your tracking{f' for {ref}' if ref else ''} recorded a delivery attempt at {c['time'][-5:]} on {p['day']}."
+        ask = "Please review the attempt scan on the shipment's record."
+        subject = f"Attempted-delivery scan, {p['day']} {c['time'][-5:]}"
+    body = "\n\n".join([_greeting(c), scan + " " + _late_seen(p), ask + " " + _evidence(p)])
+    return {"to": c["carrier"], "subject": subject + (f", {ref}" if ref else ""), "body": body + sign}
+
+
+def _redeliver(p: dict, carrier: bool) -> str:
+    """The ask. No redelivery request when a courier was seen later that day: that may have been this parcel."""
+    if (p["finding"] or {}).get("later"):
+        return "Please correct the scan, or tell us what happened." if carrier else "correct the scan, or tell us " \
+                                                                                    "what happened."
+    return "Please correct the scan and redeliver, or tell us what happened." if carrier else \
+        "correct the scan and arrange redelivery, or tell us what happened."
+
+
+def _scan_subject(p: dict) -> str:
+    c, ref = p["claim"], _ref(p)
+    return f"{'Business closed' if c['kind'] == rc.BUSINESS_CLOSED else 'Missed delivery'} scan, " \
+           f"{p['day']} {c['time'][-5:]}" + (f", {ref}" if ref else "")
 
 
 def _scan_dispute(p: dict, sign: str) -> dict:
+    """To the supplier: the shop's order, so a receiving issue the supplier can take up with its carrier."""
     c, o = p["claim"], p["order"]
-    ref = c["tracking"] or (o or {}).get("order_ref") or ""
     otherwise = " Our front-door camera shows otherwise." if _supported(p) else ""
-    if o:  # the shop's order: the supplier shipped it, so the supplier is who can take it up with the carrier
-        who, ask = c["carrier"] or "Your carrier", c["carrier"] or "your carrier"
-        what = "scanned it \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
-        track = f" (tracking {c['tracking']})" if c["tracking"] else ""
-        parts = [f"Hello {o['supplier']},", _order_line(o),
-                 f"{who} {what} at {c['time'][-5:]} on {p['day']}{track}.{otherwise}", _facts(p) + _also_recorded(o),
-                 f"{_evidence(p)} Please ask {ask} to correct the scan and arrange redelivery, or tell us what happened."]
-        to = o["supplier"]
-    else:  # no order: the carrier's own scan, to the carrier by the name the owner typed
-        what = "marked our delivery \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else \
-            "recorded a delivery attempt"
-        parts = [f"Hello {c['carrier']}," if c["carrier"] else "Hello,",
-                 f"Your tracking{f' for {ref}' if ref else ''} {what} at {c['time'][-5:]} on {p['day']}.{otherwise}",
-                 _facts(p), f"{_evidence(p)} Please correct the scan and redeliver, or tell us what happened."]
-        to = c["carrier"]
-    subject = f"{'Business closed' if c['kind'] == rc.BUSINESS_CLOSED else 'Missed delivery'} scan, " \
-              f"{p['day']} {c['time'][-5:]}" + (f", {ref}" if ref else "")
-    return {"to": to, "subject": subject, "body": "\n\n".join(x for x in parts if x) + sign}
+    who, ask = c["carrier"] or "Your carrier", c["carrier"] or "your carrier"
+    what = "scanned it \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
+    track = f" (tracking {c['tracking']})" if c["tracking"] else ""
+    # A "business closed" dispute is about being open: the letter says what backs that, and the attached door
+    # log names every event near the scan. An attempt dispute is about whether anyone came, so it says more.
+    also = "" if c["kind"] == rc.BUSINESS_CLOSED else _also_recorded(o)
+    parts = [f"Hello {o['supplier']},", _order_line(o),
+             f"{who} {what} at {c['time'][-5:]} on {p['day']}{track}.{otherwise}", _facts(p) + also,
+             f"{_evidence(p)} Please ask {ask} to {_redeliver(p, carrier=False)}"]
+    return {"to": o["supplier"], "subject": _scan_subject(p), "body": "\n\n".join(x for x in parts if x) + sign}
+
+
+def _scan_to_carrier(p: dict, sign: str) -> dict:
+    """To the carrier, about its own scan, by the name the owner typed."""
+    c, ref = p["claim"], _ref(p)
+    otherwise = " Our front-door camera shows otherwise." if _supported(p) else ""
+    what = "marked our delivery \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else \
+        "recorded a delivery attempt"
+    parts = [_greeting(c), f"Your tracking{f' for {ref}' if ref else ''} {what} at {c['time'][-5:]} on {p['day']}."
+             f"{otherwise}", _facts(p), f"{_evidence(p)} {_redeliver(p, carrier=True)}"]
+    return {"to": c["carrier"], "subject": _scan_subject(p), "body": "\n\n".join(x for x in parts if x) + sign}
 
 
 def _note_for_draft(note: str) -> str:
@@ -379,16 +444,32 @@ def _unlooked_in_window(o: dict, visits: list[ClassifiedVisit]) -> list[Classifi
     return [v for v in visits if _in_order_window(v, o) and not rc.confirmed(v)]
 
 
-def draft(p: dict, visits: list[ClassifiedVisit] | None = None) -> tuple[dict | None, str | None]:
-    """A message for the owner to edit and send, or (None, why there isn't one)."""
+SUPPLIER, CARRIER = "supplier", "carrier"
+
+
+def drafts(p: dict, visits: list[ClassifiedVisit] | None = None) -> tuple[list[dict], str | None]:
+    """Every message the owner could send from this pack, the default first, or ([], why there is none)."""
     c, f, o = p["claim"], p["finding"], p["order"]
     sign = f"\n\n{p['shop']}"
     if c and f:
         if f["outcome"] == DELIVERED_AFTER_SCAN:
-            return _late_note(p, sign), None
+            return [_labelled(_late_note(p, sign), SUPPLIER)], None
         if f["outcome"] not in DISPUTE or f["outcome"] == rc.COURIER_LATER:
-            return None, NO_DRAFT.get(f["outcome"], "")
-        return _scan_dispute(p, sign), None
+            return [], NO_DRAFT.get(f["outcome"], "")
+        return [_labelled(_scan_dispute(p, sign) if o else _scan_to_carrier(p, sign), SUPPLIER if o else CARRIER)], None
+    d, why = _order_draft(p, visits)
+    return ([_labelled(d, SUPPLIER)] if d else []), why
+
+
+def draft(p: dict, visits: list[ClassifiedVisit] | None = None) -> tuple[dict | None, str | None]:
+    """The default message (the supplier's when there is an order), or (None, why there isn't one)."""
+    ds, why = drafts(p, visits)
+    return (ds[0] if ds else None), why
+
+
+def _order_draft(p: dict, visits: list[ClassifiedVisit] | None) -> tuple[dict | None, str | None]:
+    o = p["order"]
+    sign = f"\n\n{p['shop']}"
     if o:
         rec = o.get("received")
         if rec and rec["status"] in ("short", "damaged"):
@@ -459,11 +540,13 @@ def as_text(p: dict) -> str:
         lines += [f"  {t['time']}  {t['ring_event']:<9} {t['type']:<12} by {t['labelled_by']:<8} "
                   f"{t['event_source']:<20} {t['reason']}" for t in p["timeline"]]
     lines += ["", "What this does not show:"] + [f"  - {x}" for x in p["limits"]]
-    if p["draft"]:
-        d = p["draft"]
-        lines += ["", "Draft message (not sent; edit before sending)", f"To: {d['to']}", f"Subject: {d['subject']}",
-                  "", d["body"]]
-    elif p["no_draft_reason"]:
+    ds = p.get("drafts") or ([p["draft"]] if p.get("draft") else [])
+    for i, d in enumerate(ds):
+        head = "Draft message (not sent; edit before sending)" if len(ds) == 1 else \
+            f"Draft {i + 1} of {len(ds)}, {d.get('label', '')[:1].lower()}{d.get('label', '')[1:]} (not sent; pick one, " \
+            f"edit it, send it yourself)"
+        lines += ["", head, f"To: {d['to']}", f"Subject: {d['subject']}", "", d["body"]]
+    if not ds and p["no_draft_reason"]:
         lines += ["", f"No draft: {p['no_draft_reason']}"]
     return "\n".join(lines) + "\n"
 

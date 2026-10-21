@@ -48,8 +48,9 @@ WORKED_DAY = [
     ((19, 0), rc.POSTED_CLOSED),        # after closing
     ((11, 5), rc.OPEN_COURIER_CAME),    # Ring's courier 5 min before the scan
     ((10, 0), rc.COURIER_LATER),        # no courier near 10:00, Ring's courier came at 11:00
-    ((12, 35), rc.UNVERIFIED),          # a rules-guessed "customer" at 12:30 could have been the courier
-    ((14, 5), rc.UNVERIFIED),           # a doorbell press 1 min later, no frame: can't say no courier came
+    ((12, 35), rc.OPEN_DOOR_BUSY),      # a rules-guessed "customer" at 12:30 is unidentified, but the 13:00
+                                        # customer shows the door in use: open, and nobody claimed to be the courier
+    ((14, 5), rc.UNVERIFIED),           # a doorbell press 1 min later and nothing else around: can't say
     ((13, 2), rc.OPEN_NO_COURIER),      # only a Bedrock-confirmed customer within 10 min, busy around it
     ((15, 0), rc.NO_COVERAGE),          # open, nothing within 30 min, no Ring status: can't tell
 ])
@@ -76,13 +77,26 @@ def test_no_door_data_for_either_claim():
 
 # ---- rule guesses are not couriers, and not "no courier" either ----------------------------------
 
-def test_rules_doorbell_press_after_a_closed_scan_is_unverified_not_no_courier():
+def test_rules_doorbell_press_after_a_closed_scan_is_named_not_offered_as_the_courier():
+    """Round 2 changed this from "unverified, no pack": the claim is "business closed", and posted hours plus
+    motion at 13:50 answer it. The press a minute after the scan is named as unidentified, never as the
+    courier, and nothing says nobody came."""
     rules = RulesClassifier()
     press = rules.classify(DoorEvent("p", "d", at(14, 6), "ding", "ring"), OPEN)
     motion = rules.classify(DoorEvent("m", "d", at(13, 50), "motion", "ring"), OPEN)
     r = check_closed_scan(at(14, 5), [press, motion], OPEN, now=NOW)
-    assert r["outcome"] == rc.UNVERIFIED and r["visit"]["event_id"] == "p"
-    assert "no courier" not in r["text"].lower() and "can't say" in r["text"]
+    assert r["outcome"] == rc.OPEN_DOOR_BUSY and r["visit"]["event_id"] == "p"
+    assert "an unidentified doorbell press at 14:06 (no camera frame confirms who)" in r["text"]
+    assert "no courier" not in r["text"].lower() and "can't say whether a courier came" in r["text"]
+    assert [u["event_id"] for u in r["unidentified"]] == ["p"]
+
+
+def test_a_lone_press_at_the_scan_is_still_unverified():
+    """With nothing else around the scan, the press could be the courier finding the door shut: no "open"."""
+    rules = RulesClassifier()
+    press = rules.classify(DoorEvent("p", "d", at(14, 6), "ding", "ring"), OPEN)
+    r = check_closed_scan(at(14, 5), [press], OPEN, now=NOW)
+    assert r["outcome"] == rc.UNVERIFIED and "can't say whether a courier came" in r["text"]
 
 
 def test_closed_scan_counts_only_confirmed_customers():
@@ -97,11 +111,16 @@ def test_closed_scan_counts_only_confirmed_customers():
 # ---- the pitch case: scanned "business closed", the courier came later -------------------------
 
 def test_courier_later_the_same_day_is_not_no_courier():
+    """A busy lunch: open. Ring's courier at 13:02 is said too, without saying whose it was."""
     vs = [visit(12, 13), visit(12, 39), visit(12, 50, VisitType.CUSTOMER, "bedrock"),
           visit(13, 2, VisitType.DELIVERY, "ring", eid="pkg")]
     r = check_closed_scan(at(12, 40), vs, OPEN, now=NOW)
-    assert r["outcome"] == rc.COURIER_LATER and r["visit"]["event_id"] == "pkg" and r["visit"]["time"] == "13:02"
-    assert "13:02" in r["text"] and "22 min after" in r["text"] and "can't tell whose" in r["text"]
+    assert r["outcome"] == rc.OPEN_DOOR_BUSY and r["later"]["event_id"] == "pkg" and r["later"]["time"] == "13:02"
+    assert "13:02" in r["text"] and "22 min after" in r["text"] and "doesn't say whose" in r["text"]
+    quiet = [visit(9, 0), visit(13, 30, VisitType.DELIVERY, "ring", eid="pkg")]  # nothing within 30 min of 12:40
+    r = check_closed_scan(at(12, 40), quiet, OPEN, now=NOW)
+    assert r["outcome"] == rc.COURIER_LATER and r["visit"]["event_id"] == "pkg" and r["visit"]["time"] == "13:30"
+    assert "13:30" in r["text"] and "50 min after" in r["text"] and "can't tell whose" in r["text"]
 
 
 def test_a_courier_the_next_day_is_not_later_that_day():

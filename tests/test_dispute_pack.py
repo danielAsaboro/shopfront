@@ -57,7 +57,7 @@ def pack(vs, check=None, order=None, carrier="", tracking="", tmp=None, frames=N
 def test_scanned_closed_then_delivered_later_is_a_late_delivery_note_to_the_supplier(tmp_path):
     vs = pitch_day()
     check = rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW)
-    assert check["outcome"] == rc.COURIER_LATER
+    assert check["outcome"] == rc.OPEN_DOOR_BUSY  # round 2: open by the hours and the busy door
     p = pack(vs, check, FLOUR, "Swift Parcel", "SP123", tmp_path)
     assert p["finding"]["outcome"] == dispute.DELIVERED_AFTER_SCAN
     assert "scanned \"business closed\" at 12:40, then the courier was at the door at 13:02" in p["finding"]["text"]
@@ -72,9 +72,17 @@ def test_scanned_closed_then_delivered_later_is_a_late_delivery_note_to_the_supp
 
 
 def test_late_delivery_needs_the_orders_own_courier(tmp_path):
-    """A courier later that day with no order linked: Shopfront can't say whose it was, so no draft."""
+    """A courier later that day with no order linked: Shopfront can't say whose it was. On a busy door the
+    shop was still open, so there is a draft to the carrier, but it doesn't ask for a redelivery (the 13:02
+    courier may have brought it) or say nobody came. On a quiet door there's nothing to send."""
     vs = pitch_day()
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
+    assert p["finding"]["outcome"] == rc.OPEN_DOOR_BUSY and [d["key"] for d in p["drafts"]] == ["carrier"]
+    body = p["draft"]["body"]
+    assert "redeliver" not in body.lower() and "no courier" not in body.lower() and "nobody" not in body.lower()
+    assert "13:02" in p["finding"]["text"] and "doesn't say whose" in p["finding"]["text"]
+    quiet = [visit(9, 0), visit(13, 30, "delivery", "ring", src="ring-webhook", eid="pkg")]
+    p = pack(quiet, rc.check_closed_scan(at(12, 40), quiet, OPEN, now=NOW), tmp=tmp_path)
     assert p["draft"] is None and "can't tell whose" in p["no_draft_reason"]
 
 
@@ -106,17 +114,43 @@ def test_an_order_linked_scan_dispute_goes_to_the_supplier(tmp_path):
 
 
 def test_scan_pack_and_draft_name_the_orders_unidentified_presses(tmp_path):
-    """The desk says "Possible courier" for the order; the pack and the draft must say what that was, a
-    press no frame identified, instead of leaving it out and reading as if the door was silent."""
+    """The desk says "Possible courier" for the order; the pack must say what that was, a press no frame
+    identified, instead of leaving it out and reading as if the door was silent. An attempted-delivery
+    draft says it too. A "business closed" draft is about being open: it states the hours and the
+    activity only, and the attached door log names the press (round 2: no press offered as maybe the
+    courier in the letter)."""
     vs = confirmed_lunch() + [visit(15, 36, "delivery", "rules", ring_event="ding")]
     order = Expected("exp-9", DAY.isoformat(), "Bay Mills", "15:00", "17:00", order_ref="PO-9", carrier="Swift Parcel")
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), order, tmp=tmp_path)
     assert p["order"]["door_status"] == "possible" and p["order"]["unidentified"] == "a doorbell press at 15:36"
+    assert "(a doorbell press at 15:36, not identified)" in dispute.as_text(p)
+    assert all("15:36" not in d["body"] for d in p["drafts"])
+    p = pack(vs, rc.check_attempt(at(12, 40), vs, now=NOW), order, tmp=tmp_path)
+    assert p["finding"]["outcome"] == rc.SOMEONE_NOT_COURIER
     assert "Our doorbell also recorded a doorbell press at 15:36 during the delivery window, which no camera " \
            "frame identified." in p["draft"]["body"]
-    assert "(a doorbell press at 15:36, not identified)" in dispute.as_text(p)
     assert dispute.possible_text([{"time": "10:09", "ring_event": "ding"}, {"time": "10:53", "ring_event": "ding"}]) \
         == "doorbell presses at 10:09 and 10:53"
+
+
+def test_busy_door_with_a_press_at_the_scan_is_open_and_names_the_press(tmp_path):
+    """The judges' sweep: on a busy door any unidentified press near the scan used to make the answer "can't
+    say", with no pack. The claim is "closed", so the hours and the busy door answer it."""
+    vs = [visit(14, m) for m in (2, 11, 25, 51)] + [visit(14, 36, "doorbell_press", "rules", ring_event="ding")]
+    order = Expected("exp-9", DAY.isoformat(), "Bay Mills", "13:00", "16:00", order_ref="PO-9", carrier="Swift Parcel")
+    p = pack(vs, rc.check_closed_scan(at(14, 30), vs, OPEN, now=NOW), order, "Swift Parcel", tmp=tmp_path)
+    f = p["finding"]
+    assert f["outcome"] == rc.OPEN_DOOR_BUSY
+    assert "an unidentified motion" not in f["text"]
+    assert "unidentified motion at 14:25 and an unidentified doorbell press at 14:36 (no camera frame confirms " \
+           "who)" in f["text"]
+    for d in p["drafts"]:
+        body = d["body"].lower()
+        assert "4 motion events and 1 doorbell press between 14:00 and 15:00" in body
+        assert "we were open" in body
+        assert "14:36" not in body and "might have been" not in body and "possible courier" not in body
+        assert "nobody" not in body and "no courier" not in body and "nothing at our door" not in body
+    assert any(t["time"].startswith("14:36") for t in p["timeline"])  # the attached log names the press
 
 
 def test_carrier_facts_name_kinds_and_only_confirmed_customers(tmp_path):

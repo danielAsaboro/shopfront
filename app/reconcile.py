@@ -4,9 +4,11 @@ Two claims a carrier makes about a shop, each answered in words the evidence act
 
 - "attempted 19:32": the owner says nobody came. Outcomes from a courier in the Ring frame to no door
   data at all.
-- "business closed 14:05": the scan behind a missed Black Friday delivery. Here the shop's posted
-  hours and the door's own activity around the scan say whether the shop was open and operating,
-  and whether a courier came to the door at all.
+- "business closed 14:05": the scan behind a missed Black Friday delivery. The claim is "closed", not
+  "nobody came": the shop's posted hours and the door's own activity around the scan are the evidence
+  it was open. When people other than whoever might have been the courier used the door around the
+  scan, the answer is "You were open", even if an unidentified press sits near the scan; that press
+  is named as unidentified, never offered as the courier and never ignored.
 
 Only a label from something that looked at the door (Ring's package_delivery alert, or Bedrock on the
 Ring frame) can say "courier" or "not a courier". A time-of-day guess near the scan makes the answer
@@ -40,6 +42,7 @@ NO_DOOR_DATA = "no_door_data"  # nothing recorded all day: can't judge either wa
 COURIER_LATER = "courier_came_later"  # no courier near the scan, but Ring/Bedrock saw one later that day
 # "business closed" scans
 OPEN_NO_COURIER = "open_no_courier"  # posted open, door busy around the scan, nothing near it could be a courier
+OPEN_DOOR_BUSY = "open_door_busy"  # posted open, door in use around the scan beyond an unidentified event near it
 OPEN_COURIER_CAME = "open_courier_came"  # posted open and a courier was at the door near the scan
 OPEN_BY_HOURS_ONLY = "open_by_hours_only"  # posted open, but nothing at the door around the scan
 POSTED_CLOSED = "posted_closed"  # the shop's own hours say closed: the scan agrees with them
@@ -69,6 +72,10 @@ TEXT = {
     OPEN_COURIER_CAME: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open "
                        "({hours}) and a courier was at the door at {time}, {gap} the scan ({by}). The doorbell "
                        "recorded {activity} between {lo} and {hi}{cust}.",
+    OPEN_DOOR_BUSY: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open ({hours}) "
+                    "and the doorbell recorded {activity} between {lo} and {hi}{cust}: the shop was open and its "
+                    "door in use. Within {tol} minutes of the scan it recorded {unidentified} (no camera frame "
+                    "confirms who), so Shopfront can't say whether a courier came to the door.{later}",
     OPEN_BY_HOURS_ONLY: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
                         "{attempt}, but the doorbell recorded nothing between {lo} and {hi}. Shopfront can show your "
                         "posted hours, not that someone was there.",
@@ -87,9 +94,10 @@ CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wor
                    "that day, at {time}, {gap} the scan ({by}). If that was this delivery, it arrived late, after a "
                    "scan that doesn't match your posted hours. A courier label doesn't say whose parcel it was, so "
                    "Shopfront can't tell whose delivery it was.",
-    UNVERIFIED: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at {attempt}. "
-                "The doorbell recorded {what} at {time}, {gap} the scan, and nothing that looked at the door said "
-                "who it was, so Shopfront can't say whether a courier came.",
+    UNVERIFIED: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at {attempt}, "
+                "but the only door events between {lo} and {hi} were within {tol} minutes of the scan ({what} at "
+                "{time}, {gap} it), and nothing that looked at the door said who it was. Shopfront can't say "
+                "whether a courier came, or show anyone else using the door.",
     NO_DOOR_DATA: "Shopfront has no door events at all for that day, so it can't check this scan.",
     CAMERA_OFFLINE: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
                     "{attempt}. {coverage} Shopfront can't say whether a courier came.",
@@ -184,6 +192,17 @@ def _kinds(vs: list[ClassifiedVisit]) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+def unidentified_text(vs: list[ClassifiedVisit], scan: datetime) -> str:
+    """"an unidentified doorbell press at 14:36" / "unidentified motion at 14:25 and an unidentified doorbell
+    press at 14:36": what Ring recorded near the scan that nothing looked at. Never who it was."""
+    vs = sorted(vs, key=lambda v: utc(v.event.timestamp))[:4]
+    parts = [{"ding": "an unidentified doorbell press", "motion": "unidentified motion"}.get(
+        v.event.kind, "an unidentified live-view visit") + f" at {_hhmm(v.event.timestamp)}" for v in vs]
+    if not parts:
+        return ""
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
 def _base(claim: str, attempt: datetime, tolerance: timedelta) -> dict:
     return {"claim": claim, "attempt": attempt.strftime("%Y-%m-%d %H:%M"),
             "attempt_at": attempt.isoformat(timespec="minutes"), "tolerance_min": int(tolerance.total_seconds() // 60)}
@@ -248,6 +267,7 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
                       f"{'was' if len(near) == 1 else 'were'} labelled from the frame as not a courier")}
     couriers = [v for v in near if seen_courier(v)]
     unconfirmed = [v for v in near if not confirmed(v)]
+    others = [v for v in around if all(v is not u for u in unconfirmed)]  # door use besides any possible courier
     later = _later(visits, scan, tolerance)
 
     def nearest(vs: list[ClassifiedVisit]) -> ClassifiedVisit:
@@ -260,16 +280,22 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
         outcome = NO_DOOR_DATA
     elif couriers:
         outcome, cited = OPEN_COURIER_CAME, nearest(couriers)
+    elif unconfirmed and others:  # open and in use; the event near the scan is named, not offered as the courier
+        outcome, cited = OPEN_DOOR_BUSY, nearest(unconfirmed)
+    elif around and not unconfirmed:
+        outcome = OPEN_NO_COURIER
     elif later:
         outcome, cited = COURIER_LATER, later
-    elif unconfirmed:  # anything nothing looked at could have been the courier
+    elif unconfirmed:  # the only events around the scan are ones nothing looked at: any could be the courier
         outcome, cited = UNVERIFIED, nearest(unconfirmed)
-    elif around:
-        outcome = OPEN_NO_COURIER
     else:
         outcome = OPEN_BY_HOURS_ONLY
+    fmt["unidentified"] = unidentified_text(unconfirmed, scan)
+    fmt["later"] = (f" A courier was at the door later that day, at {_hhmm(later.event.timestamp)}, "
+                    f"{_gap(later.event.timestamp, scan)} the scan ({_by(later)}); a courier label doesn't say "
+                    f"whose parcel it was.") if later and outcome in (OPEN_DOOR_BUSY, OPEN_NO_COURIER) else ""
     cov = coverage.check(scan, visits, status, tolerance) if posted_open and visits else None
-    if cov and outcome in (OPEN_NO_COURIER, OPEN_BY_HOURS_ONLY) and cov["state"] == coverage.CAMERA_DOWN:
+    if cov and outcome in (OPEN_NO_COURIER, OPEN_DOOR_BUSY, OPEN_BY_HOURS_ONLY) and cov["state"] == coverage.CAMERA_DOWN:
         outcome = CAMERA_OFFLINE
     elif outcome == OPEN_BY_HOURS_ONLY and cov and cov["state"] == coverage.UNKNOWN:
         outcome = NO_COVERAGE
@@ -278,10 +304,14 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
         fmt.update(time=_hhmm(cited.event.timestamp), gap=_gap(cited.event.timestamp, scan),
                    by=_by(cited), what=_what(cited))
     text = CLOSED_TEXT.get(outcome, TEXT[outcome]).format(**fmt) + _note(scan)
+    if outcome == OPEN_NO_COURIER:
+        text += fmt["later"]
     if cov and cov["state"] == coverage.CAMERA_DOWN and outcome != CAMERA_OFFLINE:
         text += " " + cov["text"]
     return {**base, "outcome": outcome, "text": text, "activity": activity, "coverage": cov,
             "visit": _visit(cited, frame_url) if cited else None,
+            "unidentified": [_visit(v, frame_url) for v in sorted(unconfirmed, key=lambda v: utc(v.event.timestamp))],
+            "later": _visit(later, frame_url) if later else None,
             "event_source": sorted({v.event.source for v in around + ([cited] if cited else [])}) or None}
 
 

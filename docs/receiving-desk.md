@@ -78,9 +78,10 @@ First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse 
 | `posted_closed` | The shop's own hours say closed | The scan agrees with the hours; no draft |
 | `no_door_data` | No door events at all that day | Can't check |
 | `open_courier_came` | Posted open and a Ring/Bedrock courier within 10 min | A courier came to an open shop |
-| `courier_came_later` | Posted open, no such courier near the scan, one later the same day | It may have arrived late after a scan that doesn't match the hours; whose it was is unknown |
-| `door_activity_unverified` | Posted open, and a press or motion within 10 min that nothing looked at | Can't say whether a courier came; no draft |
+| `open_door_busy` | Posted open, something nothing looked at within 10 min of the scan, and other door events within 30 min | "You were open": the posted hours and a door in use say so. The event near the scan is named as unidentified ("an unidentified doorbell press at 14:36, no camera frame confirms who"), never offered as the courier; the draft states the hours and the activity only, and never says nobody came |
 | `open_no_courier` | Posted open, door events within 30 min, and everything within 10 min was looked at and wasn't a courier (or there was nothing that close) | Open and operating; supports, doesn't prove, that nobody came |
+| `courier_came_later` | Posted open, nothing at the door within 30 min of the scan, a Ring/Bedrock courier later the same day | It may have arrived late after a scan that doesn't match the hours; whose it was is unknown; no draft until the order is named |
+| `door_activity_unverified` | Posted open, and the only door events within 30 min are within 10 min of the scan and nothing looked at them | Can't say whether a courier came, or show anyone else using the door; no draft |
 | `camera_offline` | Posted open, no courier near the scan, and Ring's `device_offline` notice covers it | The camera may not have been watching; no draft |
 | `open_by_hours_only` | Posted open, nothing at the door within 30 min, Ring's last status notice said online | Only the posted hours back the owner; no draft |
 | `door_silent` | Posted open, nothing at the door within 30 min, no Ring status notice saying online | "Can't tell: the door recorded nothing around the scan"; no draft |
@@ -89,8 +90,11 @@ Both checks ask whether the camera was watching (`app/coverage.py`, see
 [receipts.md](receipts.md#checking-a-carriers-attempt-time)): Ring's `device_online` / `device_offline`
 webhooks, then the door's own events within 30 minutes.
 
-A label from the time-of-day rules is never a sighting and never "not a courier" either: one near the
-scan makes the answer unverified. The activity counts give Ring's event kinds ("11 motion events") and
+A label from the time-of-day rules is never a sighting and never "not a courier" either. For an
+attempted-delivery scan, one near the scan makes the answer unverified. A "business closed" scan claims
+the shop was closed, not that nobody came, so posted hours plus other people using the door answer it
+even with an unidentified event near the scan; only when that event is all the door recorded is the
+answer unverified. When the order's own courier came later, either way, the pack is a late-delivery note. The activity counts give Ring's event kinds ("11 motion events") and
 only camera-confirmed customers; rule-guessed customers are kept apart. A hand-worked day in
 `tests/test_scan_checks.py` pins every outcome, and a property test checks them against the evidence.
 

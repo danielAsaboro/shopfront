@@ -5,7 +5,7 @@
 What it does, in order:
 
 1. Picks the demo day: the most recent day before today when the demo shop is open and its synthetic
-   door leaves a scan time the door can answer, so nothing it shows is in the future.
+   door was in use around the scan time, so nothing it shows is in the future.
 2. Copies samples/orders.csv with its dates moved to that day and imports it into a fresh data
    folder (.data/demo, git-ignored), the same way the CSV upload on /setup does.
 3. Starts Shopfront on that folder with synthetic door events (no Ring account needed; every page
@@ -15,10 +15,11 @@ What it does, in order:
    logged as a replay, never as Ring's own. The receiving desk must then show that alert as the flour
    order's courier (PO-1041); if it doesn't, the demo stops and says so instead of telling a story the
    page contradicts.
-5. Picks a time when the door was busy but no one was at it, treats it as the carrier's
-   "business closed" scan for the dairy order, asks the running app what the door shows and builds the
-   dispute pack, and prints the links to both. The pack must have a draft; if the door doesn't support
-   one, the demo stops and says why.
+5. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
+   It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
+   same answer (tests/test_demo.py sweeps the whole day). Asks the running app what the door shows,
+   builds the dispute pack, and prints the links to both. The pack must have a draft; if the door
+   doesn't support one, the demo stops and says why.
 
 The server keeps running until Ctrl-C. Nothing is sent to any carrier or supplier.
 """
@@ -52,6 +53,7 @@ PACKAGE_AT = "10:12"          # Ring's package_delivery alert for the flour orde
 FLOUR_ORDER = "PO-1041"       # Hillside Mill, due 10:00-11:00
 SCAN_ORDER = "PO-1042"        # the dairy order the carrier scanned "business closed"
 SCAN_WINDOW = ("13:00", "16:00")  # its delivery window in samples/orders.csv
+SCAN_AT = "14:30"  # the "business closed" scan: an ordinary afternoon minute in that window, not a chosen one
 DEMO_HMAC_KEY = "demo-key"
 
 
@@ -84,48 +86,30 @@ def dated_orders(text: str, day: date) -> str:
     return out.getvalue()
 
 
-def pick_scan_time(day: date, events: list[datetime], hours: tuple[int, int], couriers: list[datetime],
-                   tz: ZoneInfo, prefer: tuple[str, str] | None = None) -> str | None:
-    """A "business closed" scan time the door can honestly answer, or None: inside posted hours, with door
-    activity within 30 minutes (so the door was recording) but nothing within 12 (more than the scan
-    check's 10-minute tolerance, so nothing near it could have been the courier), and well after every
-    courier Ring confirmed that day (a scan before one reads "a courier came later"). Prefers the scanned
-    order's window `prefer` ("13:00", "16:00"), then a busier door."""
-    open_h, close_h = hours
-
-    def score(t: datetime) -> tuple | None:
-        gaps = [abs((e - t).total_seconds()) / 60 for e in events]
-        nearby = sum(g <= 30 for g in gaps)
-        if not nearby or any(g <= 12 for g in gaps) or any((t - c).total_seconds() / 60 <= 40 for c in couriers):
-            return None
-        in_window = prefer is not None and prefer[0] <= t.strftime("%H:%M") < prefer[1]
-        return (in_window, min(nearby, 2))
-
-    best = None
-    for m in range((open_h + 1) * 60, (close_h - 1) * 60):
-        t = datetime(day.year, day.month, day.day, m // 60, m % 60, tzinfo=tz)
-        s = score(t)
-        if s is not None and (best is None or s > best[0]):
-            best = (s, t)
-    return best[1].strftime("%H:%M") if best else None
+def door_in_use(events: list[datetime], t: datetime) -> bool:
+    """Whether the door recorded something 10 to 30 minutes either side of `t`: use of the door beyond
+    anything near enough to the scan to have been the courier (app/reconcile.py, check_closed_scan)."""
+    return any(10 < abs((e - t).total_seconds()) / 60 <= 30 for e in events)
 
 
 def _package_at(day: date, tz: ZoneInfo) -> datetime:
     return datetime.combine(day, datetime.strptime(PACKAGE_AT, "%H:%M").time(), tzinfo=tz)
 
 
-def has_scan_slot(day: date, tz: ZoneInfo, window: tuple[str, str] = SCAN_WINDOW) -> bool:
-    """Whether the demo's synthetic door that day leaves a scan time the door can answer (some days are
-    too busy). The same generator, hours and time zone the demo server uses."""
+def _scan_at(day: date, tz: ZoneInfo) -> datetime:
+    return datetime.combine(day, datetime.strptime(SCAN_AT, "%H:%M").time(), tzinfo=tz)
+
+
+def has_scan_slot(day: date, tz: ZoneInfo) -> bool:
+    """Whether the demo's synthetic door that day was in use around SCAN_AT. The same generator, hours and
+    time zone the demo server uses."""
     from app.hours import parse_hours
     from app.ring.synthetic import SyntheticRingClient
 
-    hours = open_hours(SHOP_HOURS, day)
-    if not hours:
+    if not open_hours(SHOP_HOURS, day):
         return False
     events = [e.timestamp for e in SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)]
-    return pick_scan_time(day, events + [_package_at(day, tz)], hours, [_package_at(day, tz)],
-                                          tz, window) is not None
+    return door_in_use(events, _scan_at(day, tz))
 
 
 def _port_busy(port: int) -> bool:
@@ -200,11 +184,7 @@ def walk(client, day: date, tz: ZoneInfo, orders_text: str) -> dict:
     if flour["status"] != "seen" or v.get("time") != PACKAGE_AT or v.get("labelled_by") != "ring":
         raise DemoMismatch(f"The receiving desk doesn't show Ring's {PACKAGE_AT} alert as {FLOUR_ORDER}'s courier "
                            f"(it shows {flour['status']} {v.get('time', '')}), so the demo won't claim it.")
-    events = [datetime.fromisoformat(e["time"]) for e in
-              client.get("/api/events", params={"date": day.isoformat()}).json()]
-    scan = pick_scan_time(day, events, hours, [_package_at(day, tz)], tz, SCAN_WINDOW)
-    if scan is None:
-        raise DemoMismatch(f"The synthetic door on {day} is too busy to leave a scan time the door can answer.")
+    scan = SCAN_AT
     order = next(r for r in csv.DictReader(io.StringIO(orders_text)) if r["order_ref"] == SCAN_ORDER)
     check = client.get("/api/attempt", params={"at": f"{day.isoformat()}T{scan}", "claim": "business_closed"}).json()
     q = {"date": day.isoformat(), "carrier": CARRIER, "tracking": order["tracking"]}
@@ -249,7 +229,7 @@ def main() -> None:
             story = walk(client, day, tz, orders_csv.read_text())
         hours, scan, order, check, q = (story[k] for k in ("hours", "scan", "order", "check", "query"))
         desk = f"{base}/?{urlencode({'date': day.isoformat()})}"
-        check_url = f"{base}/?{urlencode({**q, 'attempt': scan, 'claim': 'business_closed'})}#atth"
+        check_url = f"{base}/?{urlencode({**q, 'attempt': scan, 'claim': 'business_closed'})}"
         pack_url = f"{base}/dispute?{urlencode({**q, 'at': scan, 'claim': 'business_closed'})}"
         print(f"""
 Shopfront demo is running at {base}

@@ -241,23 +241,28 @@ def test_closed_scan_outcome_matches_the_evidence(scan_min, raw, has_hours):
     scan = at(scan_min // 60, scan_min % 60)
     r = check_closed_scan(scan, vs, OPEN if has_hours else None)
     posted_open = has_hours and OPEN[0] <= scan.time() < OPEN[1]
-    mins = [(m, k, s) for m, k, s in raw]
-    around = [x for x in mins if abs(x[0] - scan_min) <= 30]
-    near = [x for x in mins if abs(x[0] - scan_min) <= 10]
-    couriers = [x for x in near if x[1] == VisitType.DELIVERY and x[2] != "rules"]
-    later = [x for x in mins if x[0] - scan_min > 10 and x[1] == VisitType.DELIVERY and x[2] != "rules"]
+    mins = [(i, m, k, s) for i, (m, k, s) in enumerate(raw)]
+    around = [x for x in mins if abs(x[1] - scan_min) <= 30]
+    near = [x for x in mins if abs(x[1] - scan_min) <= 10]
+    couriers = [x for x in near if x[2] == VisitType.DELIVERY and x[3] != "rules"]
+    later = [x for x in mins if x[1] - scan_min > 10 and x[2] == VisitType.DELIVERY and x[3] != "rules"]
+    guessed = [x for x in near if x[3] == "rules" or x[2] == VisitType.UNKNOWN]
+    others = [x for x in around if x not in guessed]
     if not posted_open:
         assert r["outcome"] == POSTED_CLOSED  # never claim "open" against the shop's own hours
     elif not vs:
         assert r["outcome"] == NO_DOOR_DATA
     elif couriers:
         assert r["outcome"] == OPEN_COURIER_CAME and r["visit"]["confirmed"]
-    elif later:
-        assert r["outcome"] == COURIER_LATER and r["visit"]["time"] == "{:02d}:{:02d}".format(*divmod(min(later)[0], 60))
-    elif any(s == "rules" or k == VisitType.UNKNOWN for _, k, s in near):
-        assert r["outcome"] == UNVERIFIED  # a guess near the scan is never "no courier"
-    elif around:
+    elif guessed and others:  # open and in use; the guess near the scan is named, never "no courier"
+        assert r["outcome"] == rc.OPEN_DOOR_BUSY and not r["visit"]["confirmed"]
+        assert "no courier" not in r["text"].lower()
+    elif around and not guessed:
         assert r["outcome"] == OPEN_NO_COURIER and r["activity"]["events"] == len(around)
+    elif later:
+        assert r["outcome"] == COURIER_LATER and r["visit"]["time"] == "{:02d}:{:02d}".format(*divmod(min(later)[1], 60))
+    elif guessed:
+        assert r["outcome"] == UNVERIFIED  # only a guess near the scan: never "no courier", never "open"
     else:  # nothing within 30 minutes and no Ring status notice: the camera may not have been watching
         assert r["outcome"] == rc.NO_COVERAGE
 
