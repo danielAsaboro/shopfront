@@ -39,9 +39,13 @@ class Settings:
     # The shop owner's Ring Account ID (GET /v1/users/me data.id); empty = learned from the live token.
     # Webhooks from any other account are ignored.
     ring_account_id: str = _env("RING_ACCOUNT_ID")
-    # API reference, Event History > Event types. on_demand (a live view) is kept, never counted as a visitor:
+    # API reference, Event History > Event types. on_demand (a live view) is kept, never counted as a visitor
+    # outside Playground mode (below):
     # it is the only event a Developer Playground scene files, and the moment a Playground frame exists.
     ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion,on_demand")
+    # Ring Developer Playground mode (docs/ring.md, section 11): 1 = on, 0 = off, empty = on when the
+    # token is a fixed access token (what the Playground hands out). Each scene (on_demand) is then a door visit.
+    ring_playground: str = _env("RING_PLAYGROUND")
     ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
     # The HTTPS address Ring reaches this app at (a tunnel or a host of your own), e.g. https://shop.example.com.
     # Only used to show the four URLs to register in the Ring Developer Portal for account linking (docs/ring.md).

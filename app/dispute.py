@@ -49,14 +49,20 @@ DEMO_LIMIT = ("Some events are synthetic: Shopfront's demo generator made them (
 NO_STATUS_LIMIT = ("Shopfront has no Ring device_online/device_offline notices for this doorbell around the scan, "
                    "so it can show the camera was recording when it recorded events, not that it never went offline "
                    "between them.")
+PLAYGROUND_LIMIT = ("Some events are Ring Developer Playground scenes (marked ring-playground): Ring's simulator "
+                    "filed them as on_demand events. They are not the shop's door, and only Bedrock reading a scene's "
+                    "Ring frame says who was in one.")
 DEMO = "DEMO DATA, not from a camera"
 REPLAYED = "REPLAYED RING EVENTS, not live Ring notifications"
+PLAYGROUND_MARK = "RING DEVELOPER PLAYGROUND SCENES, not the shop's door"
 SUBJECT_TAG = "[DEMO] "  # one short tag on the draft's subject; the body's first line says what it means
 
 
-def draft_warning(demo: bool, replayed: bool) -> str:
-    """The one line at the top of a draft built on demo or replayed data. The pack page's watermark and the
-    zip README carry the full explanation; the draft only has to stop it being sent."""
+def draft_warning(demo: bool, replayed: bool, playground: bool = False) -> str:
+    """The one line at the top of a draft built on demo, replayed or Playground data. The pack page's watermark
+    and the zip README carry the full explanation; the draft only has to stop it being sent."""
+    if playground and not demo:
+        return f"{PLAYGROUND_MARK}{', with replayed Ring events' if replayed else ''}: don't send this as evidence."
     if demo and replayed:
         return f"{DEMO}, with replayed Ring events: don't send this."
     if demo:
@@ -69,6 +75,8 @@ PROVENANCE = {
     "ring": "downloaded from Ring (image download for this event)",
     "ring-webhook": "downloaded from Ring (image download for this event)",
     "ring-webhook-replay": "downloaded from Ring for a replayed webhook event",
+    "ring-playground": "downloaded from Ring for a Ring Developer Playground scene (Ring simulator), "
+                       "not the shop's door",
 }  # live-view frames: app.live.frame_provenance(), never "downloaded from Ring"
 
 # The finding when the order's own courier came after the carrier's scan
@@ -225,15 +233,17 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
                                                                      cited.get("event_source") else set()))
     demo = "synthetic" in sources or "synthetic" in cited_sources
     replayed = any("replay" in s for s in sources + cited_sources)
-    marks = [m for m, on in ((DEMO, demo), (REPLAYED, replayed)) if on]
+    playground = provenance.PLAYGROUND_SOURCE in sources or provenance.PLAYGROUND_SOURCE in cited_sources
+    marks = [m for m, on in ((DEMO, demo), (REPLAYED, replayed), (PLAYGROUND_MARK, playground)) if on]
     cov = (check or {}).get("coverage")
     guessed = any(t["labelled_by"] == "rules" for t in timeline)
     limits = LIMITS + ([RULES_LIMIT] if guessed else []) + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else []) + (
+        [PLAYGROUND_LIMIT] if playground else []) + (
         [NO_STATUS_LIMIT] if cov and not cov.get("status_notices") and not cov.get("status_covered") else [])
     pack = {
         "shop": shop, "day": day.isoformat(), "posted_hours": posted_hours,
         "made_at": (made_at or datetime.now(tz)).astimezone(tz).isoformat(timespec="seconds"),
-        "watermark": " · ".join(marks) or None, "demo_data": demo, "replayed": replayed,
+        "watermark": " · ".join(marks) or None, "demo_data": demo, "replayed": replayed, "playground": playground,
         "claim": {"kind": check["claim"], "label": rc.CLAIMS[check["claim"]], "time": check["attempt"],
                   "at": check["attempt_at"], "carrier": carrier, "tracking": tracking} if check else None,
         "finding": finding, "coverage": cov,
@@ -247,7 +257,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     ds, pack["no_draft_reason"] = drafts(pack, visits)
     for d in ds if marks else []:
         d["subject"] = SUBJECT_TAG + d["subject"]
-        d["body"] = draft_warning(demo, replayed) + "\n\n" + d["body"]
+        d["body"] = draft_warning(demo, replayed, playground) + "\n\n" + d["body"]
     pack["drafts"] = ds
     pack["draft"] = ds[0] if ds else None  # the one shown first: the supplier's when there is an order
     return pack
@@ -644,9 +654,13 @@ def _readme(p: dict, frame_name: str | None) -> str:
         lines.append("synthetic = Shopfront's demo generator. No camera recorded these events.")
     if p["replayed"]:
         lines.append("ring-webhook-replay = Shopfront's webhook replay feeder, not a live Ring notification.")
-    if p["demo_data"] or p["replayed"]:
+    if p.get("playground"):
+        lines.append(f"ring-playground = a Ring Developer Playground scene, labelled \"{provenance.PLAYGROUND}\": "
+                     "Ring's simulator, not the shop's door.")
+    if p["demo_data"] or p["replayed"] or p.get("playground"):
         lines += ["", "Why this pack says DEMO: " + " ".join(
-            ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])),
+            ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])
+            + ([PLAYGROUND_LIMIT] if p.get("playground") else [])),
             "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
             "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]

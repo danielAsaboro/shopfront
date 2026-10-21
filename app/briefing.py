@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, time, timedelta
 
 from app.bedrock_budget import HELD_REASON
@@ -10,6 +11,7 @@ from app.classify.base import Classifier
 from app.classify.bedrock import BedrockClassifier
 from app.deliveries import is_possible_courier, is_seen_courier, staff_in
 from app.hours import posted_hours
+from app.provenance import PLAYGROUND_SOURCE
 from app.models import Briefing, ClassifiedVisit, DoorEvent, VisitType
 from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.base import RingClient
@@ -30,15 +32,38 @@ def _door_events(ring: RingClient, day: date, stage0: dict | None) -> list:
     return [e for e in history if not dup(e)] + stage0["events"]  # the webhook copy carries the sub_type
 
 
+def playground_mode(ring: RingClient, setting: str = "") -> bool:
+    """Is this Ring source the Developer Playground? RING_PLAYGROUND=1 says yes and =0 says no. Otherwise a
+    fixed access token (RingAuth mode "playground": pasted, never refreshed) is what the Playground hands out;
+    the API reference has no field that marks a Playground account or device, so nothing else is read."""
+    if setting in ("0", "1"):
+        return setting == "1" and isinstance(ring, RingApiClient)
+    auth = getattr(ring, "auth", None) if isinstance(ring, RingApiClient) else None
+    return getattr(auth, "mode", "") == "playground"
+
+
+def playground_visit(e: DoorEvent, note: str = "") -> ClassifiedVisit:
+    """A Playground scene nothing looked at: a door visit, labelled exactly as one, never anyone in particular."""
+    return ClassifiedVisit(replace(e, source=PLAYGROUND_SOURCE), VisitType.UNKNOWN, 0.5,
+                           f"Ring on_demand event{'; ' + note if note else ''}", PLAYGROUND_SOURCE)
+
+
 def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
                  cache: ClassificationCache | None = None, live=None, frames=None,
-                 webhooks=None, stats: dict | None = None, focus=None) -> list[ClassifiedVisit]:
+                 webhooks=None, stats: dict | None = None, focus=None,
+                 playground: bool = False) -> list[ClassifiedVisit]:
     """Every door visit that day, labelled. Stages follow Ring's CV guidelines: Ring's motion sub_type
     first (free; from a webhook or from the Event History composite filter), then the rules or Bedrock. Pass `stats` to get the funnel counts back.
 
     `focus(event)` (app/bedrock_budget.py) says why Bedrock may look at an event, or None: then no frame is
-    downloaded and the rules label it, saying it was held back. Without `focus`, every event may go."""
+    downloaded and the rules label it, saying it was held back. Without `focus`, every event may go.
+
+    `playground` (`playground_mode`): the Ring Developer Playground files a scene as an on_demand event and
+    nothing else (app/ring/api.py, KINDS). Each one is then a door visit with event source `ring-playground`,
+    labelled "Playground scene (Ring simulator)" (app/provenance.py), never a customer or a courier unless
+    Bedrock read its Ring frame and said so. The time-of-day rules never label one: a guess about a simulator
+    would be worse than none."""
     open_hours = posted_hours(hours, day)
     tz = getattr(ring, "tz", None)
     stage0 = webhooks.day(day, tz) if webhooks is not None and tz is not None else None
@@ -49,10 +74,13 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
     skipped: list[DoorEvent] = []
     ring_labelled: list[ClassifiedVisit] = list((stage0 or {}).get("ring_labelled", []))
     live_views: list[DoorEvent] = []
+    scenes: list[DoorEvent] = []
     held = 0
     for e in _door_events(ring, day, stage0):  # Event History events get the same stage 0 as webhooks
         route = stage0_route(e)
-        if e.kind == "on_demand":
+        if e.kind == "on_demand" and playground:
+            scenes.append(replace(e, source=PLAYGROUND_SOURCE))
+        elif e.kind == "on_demand":
             # API reference, Event History > Event types: on_demand is "User or partner initiated a live view
             # session". Someone opened the camera; it says nothing about who was at the door, so it is counted
             # as a live view and never becomes a visitor (or reaches a classifier).
@@ -70,6 +98,8 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             except RingError as exc:
                 v.reason += f" ({no_ring_frame(exc)})"
         visits.append(v)
+    for e in scenes:
+        visits.append(_scene(ring, classifier, e, open_hours, cache, frames, focus))
     for e in events:
         if not isinstance(classifier, BedrockClassifier):
             visits.append(ring_person(classifier.classify(e, open_hours)))
@@ -99,8 +129,40 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
         visits.append(ring_person(v, no_frame))  # Bedrock's label stands; a rules fallback defers to Ring's alert
     if stats is not None:
         stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped,
-                                     "live_views": live_views}), held_from_bedrock=held)
+                                     "live_views": live_views}),
+                     held_from_bedrock=held + sum(1 for v in visits if v.source == PLAYGROUND_SOURCE
+                                                  and HELD_REASON in v.reason))
     return sorted(visits, key=lambda v: v.event.timestamp)
+
+
+def _scene(ring: RingClient, classifier: Classifier, e: DoorEvent, open_hours, cache, frames,
+           focus) -> ClassifiedVisit:
+    """One Playground scene: Bedrock's label when it read the scene's Ring frame (focus permitting, cached like
+    any other), else a Playground visit saying why nothing labelled it."""
+    if not isinstance(classifier, BedrockClassifier):
+        return playground_visit(e)
+    hit = cache.get(e.id, classifier.model_id) if cache else None
+    if hit:
+        return ClassifiedVisit(e, VisitType(hit["type"]), hit["confidence"], hit["reason"], "bedrock",
+                               hit.get("request_id"))
+    if focus is not None and not focus(e):
+        return playground_visit(e, HELD_REASON)
+    note = "no Ring frame downloaded"
+    if isinstance(ring, RingApiClient):
+        try:
+            e.snapshot = ring.snapshot(e)
+        except RingError as exc:
+            note = no_ring_frame(exc)
+    v = classifier.classify(e, open_hours, no_frame_reason=note) if e.snapshot else None
+    snapshot, e.snapshot = e.snapshot, None
+    if v is None or v.source != "bedrock":  # no frame, or Bedrock didn't answer: never the rules' guess
+        return playground_visit(e, note if v is None else "Bedrock didn't label its frame")
+    if frames is not None:
+        frames.save(e.id, snapshot)
+    if cache:
+        cache.put(e.id, {"type": v.visit_type.value, "confidence": v.confidence, "reason": v.reason,
+                         "model": classifier.model_id, "request_id": v.request_id})
+    return v
 
 
 def no_ring_frame(exc: RingError) -> str:
@@ -130,6 +192,7 @@ def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
             "replayed_alerts": sum(1 for v in visits if v.source == "ring" and v.visit_type != VisitType.PERSON
                                    and v.event.source == "ring-webhook-replay"),
             "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
+            "playground_scenes": sum(1 for v in visits if v.source == PLAYGROUND_SOURCE),
             "bedrock_live": sum(1 for v in visits if v.source == "bedrock" and v.event.source.startswith("ring-live")),
             "labelled_by_rules": sum(1 for v in visits if v.source == "rules"),
             "webhook_events": sum(1 for v in visits if v.event.source.startswith("ring-webhook")) + skipped,
@@ -162,10 +225,10 @@ def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
                    hours: dict[int, tuple[int, int] | None],
                    cache: ClassificationCache | None = None, live=None, frames=None, webhooks=None,
-                   stats: dict | None = None, focus=None) -> Briefing:
-    today = classify_day(ring, classifier, day, hours, cache, live, frames, webhooks, stats, focus)
+                   stats: dict | None = None, focus=None, playground: bool = False) -> Briefing:
+    today = classify_day(ring, classifier, day, hours, cache, live, frames, webhooks, stats, focus, playground)
     last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames, webhooks,
-                             focus=focus)
+                             focus=focus, playground=playground)
     open_hours = posted_hours(hours, day)
 
     hourly, hourly_lw = _hourly(today), _hourly(last_week)

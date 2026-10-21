@@ -200,6 +200,8 @@ def _plural(n: int, word: str) -> str:
 
 
 def _what(v: ClassifiedVisit) -> str:
+    if v.event.source == provenance.PLAYGROUND_SOURCE:
+        return f"a {provenance.PLAYGROUND}"
     return {"ding": "a doorbell press", "motion": "motion"}.get(v.event.kind, "live view")
 
 
@@ -207,9 +209,11 @@ def _kinds(vs: list[ClassifiedVisit]) -> str:
     """"11 motion events and 1 doorbell press": what Ring recorded, with no guess about who."""
     motion = sum(1 for v in vs if v.event.kind == "motion")
     presses = sum(1 for v in vs if v.event.kind == "ding")
-    other = len(vs) - motion - presses
+    scenes = sum(1 for v in vs if v.event.source == provenance.PLAYGROUND_SOURCE and v.event.kind == "on_demand")
+    other = len(vs) - motion - presses - scenes
     parts = [f"{motion} motion event{'' if motion == 1 else 's'}" if motion else "",
              f"{presses} doorbell press{'' if presses == 1 else 'es'}" if presses else "",
+             f"{scenes} Playground scene{'' if scenes == 1 else 's'} (Ring simulator)" if scenes else "",
              f"{other} live-view visit{'' if other == 1 else 's'}" if other else ""]
     parts = [p for p in parts if p]
     if not parts:
@@ -227,7 +231,8 @@ def unidentified_text(vs: list[ClassifiedVisit], scan: datetime) -> str:
     """"an unidentified doorbell press at 14:36" / "unidentified motion at 14:25 and an unidentified doorbell
     press at 14:36": what Ring recorded near the scan that nothing looked at. Never who it was."""
     vs = sorted(vs, key=lambda v: utc(v.event.timestamp))[:4]
-    parts = [(_person_at(v) if person(v) else {"ding": "an unidentified doorbell press",
+    parts = [(_person_at(v) if person(v) else f"a {provenance.PLAYGROUND}"
+              if v.event.source == provenance.PLAYGROUND_SOURCE else {"ding": "an unidentified doorbell press",
                                                          "motion": "unidentified motion"}.get(
         v.event.kind, "an unidentified live-view visit")) + f" at {_hhmm(v.event.timestamp)}" for v in vs]
     if not parts:

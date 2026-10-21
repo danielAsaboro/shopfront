@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import agent as shop_agent
 from app.ask_probe import AskProbe
-from app.briefing import _is_open, build_briefing, classify_day
+from app.briefing import _is_open, build_briefing, classify_day, playground_mode
 from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
@@ -195,8 +195,9 @@ def _ring():
 
 
 def _briefing(day: date, stats: dict | None = None):
-    return build_briefing(_ring(), classifier, day, profile.get().name, profile.hours(), cache, live, frames,
-                          webhook_log, stats, _focus())
+    ring = _ring()
+    return build_briefing(ring, classifier, day, profile.get().name, profile.hours(), cache, live, frames,
+                          webhook_log, stats, _focus(), playground_mode(ring, settings.ring_playground))
 
 
 _request_visits: ContextVar[dict | None] = ContextVar("request_visits", default=None)
@@ -241,7 +242,9 @@ def _visits(day: date):
     memo = _request_visits.get()
     if memo is not None and day in memo:
         return list(memo[day])
-    vs = classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log, focus=_focus())
+    ring = _ring()
+    vs = classify_day(ring, classifier, day, profile.hours(), cache, live, frames, webhook_log, focus=_focus(),
+                      playground=playground_mode(ring, settings.ring_playground))
     if memo is not None:
         memo[day] = vs
     return list(vs)

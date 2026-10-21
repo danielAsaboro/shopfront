@@ -27,8 +27,10 @@ You answer the owner's questions about what happened at the shop's door, using o
 - Call tools for every fact. Never guess times, counts or suppliers.
 - Every visit has a provenance. Only "ring" (Ring's own package_delivery alert) and "bedrock" (Amazon Bedrock
   looked at the frame) are things something saw. "rules" is a guess from time of day and event kind, "replay"
-  is Shopfront's replayed webhook (not a Ring notification) and "synthetic" is made-up demo data: never state
-  those as facts; say "a guess", "a replayed event" or "demo data" whenever an answer rests on one. "owner"
+  is Shopfront's replayed webhook (not a Ring notification), "synthetic" is made-up demo data and
+  "ring-playground" is a Ring Developer Playground scene (Ring's simulator, not the shop's door): never state
+  those as facts; say "a guess", "a replayed event", "demo data" or "a Playground scene (Ring simulator)"
+  whenever an answer rests on one. "owner"
   is what the owner entered (orders, posted hours, staff taps).
 - Ring has no "door answered" signal. Say a courier was at the door, never that a parcel was received.
 - When the owner quotes a carrier's scan ("attempted delivery" or "business closed"), call check_attempt with
@@ -107,13 +109,15 @@ class Trace:
     bedrock_request_ids: list[str] = field(default_factory=list)
 
 
-PROVENANCE = ("ring", "bedrock", "rules", "replay", "synthetic", "owner")
+PROVENANCE = ("ring", "bedrock", "rules", "replay", "synthetic", "ring-playground", "owner")
 _FROM_KIND = {prov.RING_ALERT: "ring", prov.BEDROCK_RING: "bedrock", prov.BEDROCK_LIVE: "bedrock",
-              prov.RULES: "rules", prov.REPLAY: "replay", prov.SYNTHETIC: "synthetic"}
+              prov.RULES: "rules", prov.REPLAY: "replay", prov.SYNTHETIC: "synthetic",
+              prov.PLAYGROUND_KIND: "ring-playground", prov.BEDROCK_PLAYGROUND: "ring-playground"}
 
 
 def visit_provenance(row: dict) -> str:
-    """ring | bedrock | rules | replay | synthetic for a visit row; anything unrecognised is 'rules'."""
+    """ring | bedrock | rules | replay | synthetic | ring-playground for a visit row; anything unrecognised is
+    'rules'. A scene Bedrock labelled is still ring-playground: whatever Bedrock saw, it wasn't the shop's door."""
     return _FROM_KIND.get(prov.of(row), "rules")
 
 

@@ -84,7 +84,7 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     person = source == "ring" and reason.startswith("Ring Smart Alert: human")
     if source == "ring" and reason.lower().startswith("ring smart alert"):
         reason = reason.split(":", 1)[1].strip().removeprefix("human").removeprefix("package_delivery").strip(" ;:")
-    if source not in ("ring", "bedrock", "rules"):  # e.g. a live session nothing labelled ("none")
+    if source not in ("ring", "bedrock", "rules", provenance.PLAYGROUND_SOURCE):  # e.g. a live session nothing labelled
         return f"{by(source)}: {reason}" if reason else by(source)
     known = provenance.how_known(source, event_source, bool(frame_url), "person" if person else None)
     return f"{known}: {reason}" if reason else known
@@ -93,12 +93,14 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
 # One short word for what a label rests on (app/provenance.py), for the badge on a desk row; the full sentence
 # from how() sits behind it
 BADGE = {provenance.RING_ALERT: "ring", provenance.RING_PERSON: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
-         provenance.BEDROCK_LIVE: "bedrock", provenance.RULES: "guess", provenance.SYNTHETIC: "demo"}
+         provenance.BEDROCK_LIVE: "bedrock", provenance.RULES: "guess", provenance.SYNTHETIC: "demo",
+         provenance.PLAYGROUND_KIND: "playground", provenance.BEDROCK_PLAYGROUND: "playground"}
 
 
 def badge(source: str | None, event_source: str | None = None) -> str:
-    """'ring' / 'bedrock' / 'guess' / 'replay' / 'demo'."""
-    if source not in ("ring", "bedrock", "rules") and event_source not in ("synthetic", "ring-webhook-replay"):
+    """'ring' / 'bedrock' / 'guess' / 'replay' / 'demo' / 'playground'."""
+    if source not in ("ring", "bedrock", "rules", provenance.PLAYGROUND_SOURCE) and \
+            event_source not in ("synthetic", "ring-webhook-replay"):
         return "guess"
     return BADGE[provenance.kind(source, event_source)]
 
@@ -127,8 +129,12 @@ TYPE_LABEL = {"doorbell_press": "doorbell press", "after_hours": "after hours"}
 def visit_label(visit_type: str | None, confirmed: bool = True, event_source: str | None = None) -> str:
     """'customer', or 'doorbell press (guess)' when nothing looked at the door to say it, or 'person (Ring)' when
     Ring's own Smart Alert said a person ('person' on demo or replayed events, whose row says where they came from:
-    never Ring's)."""
+    never Ring's). A Ring Developer Playground scene nothing labelled is exactly "Playground scene (Ring
+    simulator)"; one Bedrock labelled says what Bedrock saw, then that it was a Playground scene."""
     t = str(visit_type or "")
+    if event_source == provenance.PLAYGROUND_SOURCE:
+        return f"{TYPE_LABEL.get(t, t.replace('_', ' '))} ({provenance.PLAYGROUND})" if confirmed \
+            else provenance.PLAYGROUND
     if t == "person":
         return "person" if event_source in ("synthetic", "ring-webhook-replay") else "person (Ring)"
     return TYPE_LABEL.get(t, t.replace("_", " ")) + ("" if confirmed else " (guess)")
@@ -225,6 +231,10 @@ def labelled_by_text(funnel: dict, classifier: str) -> str:
         parts.append(f"{funnel['labelled_by_rules']} by time-of-day rules")
     if funnel.get("skipped_stage0"):
         parts.append(f"{funnel['skipped_stage0']} skipped (Ring said not a person)")
+    if funnel.get("playground_scenes"):
+        n = funnel["playground_scenes"]
+        parts.append(f"{n} as \"{provenance.PLAYGROUND}\" (Ring Developer Playground on_demand "
+                     f"event{'' if n == 1 else 's'}, not the shop's door)")
     if funnel.get("ring_live_views"):
         n = funnel["ring_live_views"]
         parts.append(f"{n} Ring live view{'' if n == 1 else 's'} (on_demand: the camera was opened), not visitors")
@@ -288,7 +298,8 @@ def plain_error(status: int, detail: str, path: str) -> dict:
 SHORT_BY = {provenance.RING_ALERT: "Ring alert", provenance.RING_PERSON: "Ring person alert",
             provenance.REPLAY: "replayed alert", provenance.BEDROCK_RING: "Bedrock, Ring frame",
             provenance.BEDROCK_LIVE: "Bedrock, live-view frame", provenance.RULES: "guess",
-            provenance.SYNTHETIC: "demo"}
+            provenance.SYNTHETIC: "demo", provenance.PLAYGROUND_KIND: "Playground scene",
+            provenance.BEDROCK_PLAYGROUND: "Bedrock, Playground frame"}
 
 
 def _mins(hhmm: str) -> int | None:
@@ -411,10 +422,12 @@ def pack_check(p: dict) -> dict | None:
 
 
 def chip(sources) -> str:
-    """One word for where a check's door data came from: 'demo', 'replay' or 'ring'."""
+    """One word for where a check's door data came from: 'demo', 'replay', 'playground' or 'ring'."""
     s = set(sources or [])
     if "synthetic" in s:
         return "demo"
+    if provenance.PLAYGROUND_SOURCE in s:
+        return "playground"
     if any("replay" in x for x in s):
         return "replay"
     return "ring"
@@ -442,6 +455,8 @@ def _strip_label(r: dict) -> str:
                              else "Ring alert") + ")"
     elif kind == "seen":
         what = f"{visit_label(r.get('type'))} (seen in a frame)"
+    elif src == provenance.PLAYGROUND_SOURCE:
+        what = provenance.PLAYGROUND
     else:
         what = {"ding": "doorbell press", "motion": "motion"}.get(r.get("ring_event"), "door event") + ", not identified"
     return f"{str(r.get('time', ''))[:5]} {what}"
