@@ -17,8 +17,9 @@ Every failure raises RingError with a named RingStatus. Nothing here falls back 
 Calls are kept down (API reference, Rate Limiting: limits are per partner client_id; "Cache device
 information when appropriate"): a past day's Event History doesn't change, so it is fetched once per
 client; today's is reused for `TODAY_TTL`. A frame Ring said is corrupt (422), doesn't exist (416, once the
-event is older than Ring's 2-minute media window) or is forbidden for this token (403) isn't asked for
-again. A 429 is RATE_LIMITED with Ring's
+event is older than Ring's 2-minute media window) or is forbidden (403) isn't asked for again: a 403 for
+that one time only, unless Ring's error code says the client isn't authorised for the device at all
+(`REQUEST_FORBIDDEN`), and then for every frame of that device. A 429 is RATE_LIMITED with Ring's
 Retry-After; when that is a second or two, the call waits and tries once more ("respect the Retry-After
 header").
 """
@@ -62,6 +63,10 @@ KINDS = ("ding", "motion", "on_demand")
 MEDIA_RETRY_STATUS = (416, 425)
 MEDIA_RETRY_SCHEDULE = (5, 10, 20, 30)
 MEDIA_WINDOW = 120.0  # seconds after the requested time that a 416 can still turn into a frame
+# API reference, Image Snapshots > Error Codes: the one documented 403 code, "Client is not authorized for the
+# device" (No access to device). Any other 403 (no code, or one the reference doesn't list, such as the
+# TIME_RANGE_NOT_AUTHORIZED other Playground integrations logged) refuses that request, not the token.
+DEVICE_FORBIDDEN_CODE = "REQUEST_FORBIDDEN"
 ON_DEMAND_OFFSET_MS = 5_000  # a live view's frame is asked for this far into the session
 
 
@@ -213,7 +218,7 @@ class RingApiClient(RingClient):
         self._account_id: str | None = None
         self._account_asked = False
         self._history: dict[tuple, tuple[float, list[DoorEvent]]] = {}  # (day, event_types) -> (fetched, events)
-        self._no_frame: dict[tuple, RingError] = {}  # (device, ms) -> the error Ring gave for that frame
+        self._no_frame: dict[tuple, RingError] = {}  # (device, ms or "*") -> the error Ring gave for that frame
         self._refused_filters: set[str] = set()  # composite subtypes Ring answered 400 to
         self._lock = threading.Lock()
         self.sleep = _time.sleep  # tests swap these three for a fake clock
@@ -438,11 +443,9 @@ class RingApiClient(RingClient):
         comes first. A page load passes 0 and never waits; a recent miss isn't remembered, so the next load
         asks again."""
         ms = self.frame_ms(event) if at_ms is None else at_ms
-        forbidden = self._no_frame.get(("*", 403))
-        if forbidden:  # this token may not download images at all
-            raise forbidden
-        if (event.device_id, ms) in self._no_frame:
-            raise self._no_frame[(event.device_id, ms)]
+        known = self._no_frame.get((event.device_id, "*")) or self._no_frame.get((event.device_id, ms))
+        if known:  # the token may not download this device's images at all, or Ring said no for this time
+            raise known
         started, attempts = self.clock(), 0
         while True:
             attempts += 1
@@ -463,7 +466,11 @@ class RingApiClient(RingClient):
                         continue
                     raise  # not ready yet; not remembered, so a later call asks again
                 if exc.http_status in REMEMBERED_FRAME_ERRORS:
-                    self._no_frame[("*", 403) if exc.http_status == 403 else (event.device_id, ms)] = exc
+                    whole_device = exc.http_status == 403 and exc.code == DEVICE_FORBIDDEN_CODE
+                    if whole_device:
+                        log.warning("Ring: this token isn't authorised for device frames (%s); not asking again",
+                                    exc.code)
+                    self._no_frame[(event.device_id, "*" if whole_device else ms)] = exc
                 raise
         ctype = resp.headers.get("content-type", "")
         if not ctype.startswith("image/"):

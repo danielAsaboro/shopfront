@@ -184,3 +184,48 @@ def test_device_status_reads_online_and_refuses_to_guess():
     with pytest.raises(RingError) as err:
         bad.online()
     assert err.value.status == RingStatus.MALFORMED_RESPONSE
+
+
+# ---- a 403 refuses one request unless Ring's code says the token can't see the device -----------------
+def forbid_first(code: str | None):
+    """403 on the first image request (with Ring's error `code`), frames after that."""
+    asks: list = []
+
+    def handler(req: httpx.Request):
+        if req.url.host != "api.amazonvision.com":
+            return httpx.Response(200, content=b"\xff\xd8ok", headers={"content-type": "image/jpeg"})
+        asks.append((req.url.path, json.loads(req.content)["timestamp"]))
+        if len(asks) == 1:
+            err = {"status": "403", **({"code": code} if code else {})}
+            return httpx.Response(403, json={"errors": [err]})
+        return httpx.Response(303, headers={"Location": "https://download-us.example.test/v1/download?security_token=s"})
+    return handler, asks
+
+
+@pytest.mark.parametrize("code", [None, "TIME_RANGE_NOT_AUTHORIZED"])
+def test_one_refused_frame_doesnt_stop_every_other_frame(code):
+    handler, asks = forbid_first(code)
+    ring = make(handler)
+    first = event(datetime(2026, 10, 7, 9, 0, tzinfo=TZ))
+    with pytest.raises(RingError) as err:
+        ring.snapshot(first)
+    assert err.value.status == RingStatus.FORBIDDEN and err.value.code == code
+    with pytest.raises(RingError):
+        ring.snapshot(first)  # that one time is remembered ...
+    assert len(asks) == 1
+    assert ring.snapshot(event(datetime(2026, 10, 7, 9, 5, tzinfo=TZ))) == b"\xff\xd8ok"  # ... no other
+    assert len(asks) == 2
+
+
+def test_request_forbidden_stops_that_devices_frames_only():
+    # API reference, Image Snapshots > Error Codes: 403 REQUEST_FORBIDDEN, "Client is not authorized for the device"
+    handler, asks = forbid_first("REQUEST_FORBIDDEN")
+    ring = make(handler)
+    with pytest.raises(RingError):
+        ring.snapshot(event(datetime(2026, 10, 7, 9, 0, tzinfo=TZ)))
+    with pytest.raises(RingError) as err:
+        ring.snapshot(event(datetime(2026, 10, 7, 9, 5, tzinfo=TZ)))  # no second request for this device
+    assert err.value.code == "REQUEST_FORBIDDEN" and len(asks) == 1
+    other = DoorEvent(id="e2", device_id="ava1.ring.device.OTHER", timestamp=datetime(2026, 10, 7, 9, 5, tzinfo=TZ),
+                      kind="ding", source="ring")
+    assert ring.snapshot(other) == b"\xff\xd8ok" and len(asks) == 2
