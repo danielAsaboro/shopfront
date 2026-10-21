@@ -29,6 +29,7 @@ from datetime import UTC, date, datetime, timedelta, tzinfo
 
 from app import reconcile as rc
 from app.deliveries import STATUS_TEXT, Expected, FrameStore
+from app.live import frame_provenance
 from app.models import SEEN_SOURCES, ClassifiedVisit
 
 WINDOW = timedelta(minutes=30)  # timeline shown either side of the time in question
@@ -56,8 +57,7 @@ PROVENANCE = {
     "ring": "downloaded from Ring (image download for this event)",
     "ring-webhook": "downloaded from Ring (image download for this event)",
     "ring-webhook-replay": "downloaded from Ring for a replayed webhook event",
-    "ring-live": "captured in the owner's browser from a Ring live-view session",
-}
+}  # live-view frames: app.live.frame_provenance(), never "downloaded from Ring"
 
 # The finding when the order's own courier came after the carrier's scan
 DELIVERED_AFTER_SCAN = "delivered_after_scan"
@@ -179,11 +179,13 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     if cited:
         path = frames.path(cited["event_id"])
         src = cited.get("event_source", "")
+        live = frame_provenance(cited["event_id"]) or (
+            frame_provenance("live-") if src.startswith("ring-live") else None)  # bytes from the owner's browser
         frame = {"url": frames.url(cited["event_id"]), "sha256": _sha256(path), "event_id": cited["event_id"],
                  "bedrock_request_id": cited.get("bedrock_request_id"), "labelled_by": cited.get("labelled_by"),
                  "time": cited["time"], "event_source": src,
-                 "provenance": PROVENANCE.get(src, f"from a {src} event"),
-                 "label": "Live-view frame" if src == "ring-live" else "Ring frame"} if path else None
+                 "provenance": live or PROVENANCE.get(src, f"from a {src} event"),
+                 "label": "Live-view frame" if live else "Ring frame", "live_view": bool(live)} if path else None
     sources = sorted({v.event.source for v in visits})
     cited_sources = sorted({t["event_source"] for t in timeline} | ({cited["event_source"]} if cited and
                                                                      cited.get("event_source") else set()))
@@ -266,6 +268,8 @@ def _kinds_text(a: dict) -> str:
 
 
 def _evidence(p: dict) -> str:
+    if p["frame"] and p["frame"].get("live_view"):
+        return (f"I've attached a frame {p['frame']['provenance']}, and the door log for that time.")
     return "I've attached the doorbell frame and the door log for that time." if p["frame"] else \
         "I've attached the door log for that time."
 
@@ -432,7 +436,7 @@ def as_zip(p: dict, frames: FrameStore) -> bytes:
     buf = io.BytesIO()
     name = None
     if p["frame"]:
-        prefix = "live-view-frame" if p["frame"].get("event_source") == "ring-live" else "ring-frame"
+        prefix = "live-view-frame" if p["frame"].get("live_view") else "ring-frame"
         name = f"{prefix}-{p['frame']['time'].replace(':', '')}.jpg"
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("README.txt", _readme(p, name))

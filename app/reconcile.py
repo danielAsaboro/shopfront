@@ -88,6 +88,13 @@ CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wor
 }
 
 BY = {"bedrock": "Bedrock saw them in the Ring frame", "ring": "Ring's package_delivery alert"}
+LIVE_BY = "Bedrock saw them in a frame captured in the owner's browser from a Ring live-view session"
+
+
+def _by(v: ClassifiedVisit) -> str:
+    if v.source == "bedrock" and v.event.source.startswith("ring-live"):  # app/live.py: not a Ring download
+        return LIVE_BY
+    return BY.get(v.source, "")
 AMBIGUOUS = " {attempt} happened twice that night (the clocks went back an hour); Shopfront read it as the first."
 
 
@@ -254,7 +261,7 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
         outcome = OPEN_BY_HOURS_ONLY
     if cited:
         fmt.update(time=_hhmm(cited.event.timestamp), gap=_gap(cited.event.timestamp, scan),
-                   by=BY.get(cited.source, ""), what=_what(cited))
+                   by=_by(cited), what=_what(cited))
     text = CLOSED_TEXT.get(outcome, TEXT[outcome]).format(**fmt) + _note(scan)
     return {**base, "outcome": outcome, "text": text, "activity": activity,
             "visit": _visit(cited, frame_url) if cited else None,
@@ -293,7 +300,7 @@ def check_attempt(attempt: datetime, visits: list[ClassifiedVisit], frame_url=la
     if v:
         t = v.event.timestamp
         fmt.update(time=_hhmm(t), gap=_gap(t, attempt), what=_what(v), label=v.visit_type.value.replace("_", " "),
-                   by=BY.get(v.source, ""))
+                   by=_by(v))
     text = TEXT[outcome].format(**fmt) + _note(attempt)
     sources = [v.event.source] if v else sorted({x.event.source for x in visits})
     return {**base, "outcome": outcome, "text": text, "visit": _visit(v, frame_url) if v else None,

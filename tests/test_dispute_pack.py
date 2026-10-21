@@ -204,3 +204,19 @@ def test_future_time_through_the_app_is_refused(monkeypatch):
     assert r.status_code == 400 and "hasn't happened yet" in r.text
     page = c.get("/", params={"date": tomorrow, "attempt": "09:00"}).text
     assert "hasn&#39;t happened yet" in page or "hasn't happened yet" in page
+
+
+def test_live_frames_are_never_called_ring_frames(tmp_path):
+    # app/live.py names live-view events ring-live-browser: the bytes came from the owner's browser
+    f = FrameStore(tmp_path)
+    f.save("live-abc", b"\xff\xd8live")
+    vs = [visit(17, 31, "delivery", "bedrock", src="ring-live-browser", eid="live-abc")]
+    p = pack(vs, rc.check_attempt(at(17, 30), vs, f.url, now=NOW), frames=f)
+    assert p["frame"]["label"] == "Live-view frame"
+    assert p["frame"]["provenance"] == "captured in the owner's browser from a Ring live-view session"
+    text = dispute.as_text(p)
+    assert "Ring frame" not in text and "captured in the owner's browser from a Ring live-view session" in text
+    if p["draft"]:
+        assert "captured in the owner's browser from a Ring live-view session" in p["draft"]["body"]
+        assert "doorbell frame" not in p["draft"]["body"]
+    assert any(n.startswith("live-view-frame-") for n in zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, f))).namelist())
