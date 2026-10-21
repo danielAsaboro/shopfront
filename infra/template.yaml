@@ -1,0 +1,225 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Shopfront: a public HTTPS endpoint for Ring's signed webhooks (Lambda Function URL), a DynamoDB log the
+  app reads, a private S3 bucket for door frames, and the HMAC key in Secrets Manager. See docs/aws.md.
+
+Parameters:
+  ShopId:
+    Type: String
+    Default: shop
+    AllowedPattern: "^[a-z0-9-]{1,40}$"
+    Description: Partition prefix for this shop's events. Set SHOPFRONT_SHOP_ID to the same value in the app.
+  RingDeviceId:
+    Type: String
+    Default: ""
+    Description: The shop doorbell's Ring device ID (webhook data.attributes.source). Empty accepts any device.
+  RingAccountId:
+    Type: String
+    Default: ""
+    Description: The owner's Ring Account ID (webhook meta.account_id). Empty accepts any account.
+  EventDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    MaxValue: 3650
+    Description: Days a webhook event is kept in DynamoDB before the TTL removes it.
+  FrameDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 3650
+    Description: Days a door frame (a picture of people) is kept in S3 before the lifecycle rule deletes it.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+    Description: Days CloudWatch keeps the webhook function's logs.
+
+Resources:
+  # The key Ring signs webhooks with (partner onboarding). The template only creates the empty slot; the
+  # value is set once after deploy with `aws secretsmanager put-secret-value` (docs/aws.md) and never
+  # appears in the template, the parameters or the function's environment. Until then the function
+  # answers 503, which Ring retries.
+  RingHmacSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Shopfront RING_HMAC_KEY for verifying Ring webhook signatures. Set the value after deploy.
+      GenerateSecretString:
+        SecretStringTemplate: '{"RING_HMAC_KEY": ""}'
+        GenerateStringKey: unused
+        PasswordLength: 16
+
+  WebhookTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: false # false = encrypted at rest with a DynamoDB-owned key, at no cost
+
+  FramesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-frames
+            Status: Enabled
+            ExpirationInDays: !Ref FrameDays
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+
+  FramesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FramesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt FramesBucket.Arn
+              - !Sub "${FramesBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  WebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/shopfront/${AWS::StackName}/ring-webhook"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Only what the function does: write its own log group, store events in the table, read the HMAC key.
+  WebhookFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ring-webhook
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: OwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt WebhookLogGroup.Arn
+              - Sid: StoreEvents # TransactWriteItems of two conditional Puts (dedupe on meta.request_id)
+                Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt WebhookTable.Arn
+              - Sid: ReadHmacKey
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref RingHmacSecret
+
+  RingWebhookFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile # infra/Makefile packages the app's own webhook code (infra/package_lambda.py)
+      ContextPath: .
+      ProjectRootDirectory: ..
+    Properties:
+      Description: Verifies Ring webhook signatures and stores the shop's door events (app/store/lambda_webhook.py)
+      CodeUri: ..
+      Handler: app.store.lambda_webhook.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 4 # Ring expects an answer within 5 seconds
+      Role: !GetAtt WebhookFunctionRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref WebhookLogGroup
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref WebhookTable
+          SHOP_ID: !Ref ShopId
+          EVENT_DAYS: !Ref EventDays
+          HMAC_SECRET_ARN: !Ref RingHmacSecret
+          RING_DEVICE_ID: !Ref RingDeviceId
+          RING_ACCOUNT_ID: !Ref RingAccountId
+      FunctionUrlConfig:
+        AuthType: NONE # Ring can't sign AWS requests; the HMAC over the body is the authentication
+
+  # For the machine that runs the Shopfront app (attach to its IAM user or role): read and replay webhooks
+  # in the table, and keep door frames in the bucket. Nothing else.
+  ShopfrontAppPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Shopfront app access to its webhook table and frames bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: WebhookTable
+            Effect: Allow
+            Action:
+              - dynamodb:Query
+              - dynamodb:Scan
+              - dynamodb:PutItem
+            Resource: !GetAtt WebhookTable.Arn
+          - Sid: Frames
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: !Sub "${FramesBucket.Arn}/frames/*"
+
+Outputs:
+  WebhookUrl:
+    Description: Register this with Ring as the webhook URL (docs/aws.md)
+    Value: !Sub "${RingWebhookFunctionUrl.FunctionUrl}webhooks/ring"
+  HmacSecretArn:
+    Description: Put RING_HMAC_KEY here after deploy
+    Value: !Ref RingHmacSecret
+  WebhookTableName:
+    Description: SHOPFRONT_WEBHOOK_TABLE for the app
+    Value: !Ref WebhookTable
+  FramesBucketName:
+    Description: Private, encrypted bucket for door frames; objects expire after FrameDays
+    Value: !Ref FramesBucket
+  AppPolicyArn:
+    Description: Attach to the IAM user or role the Shopfront app runs as
+    Value: !Ref ShopfrontAppPolicy
+  LogGroupName:
+    Description: The webhook function's logs
+    Value: !Ref WebhookLogGroup

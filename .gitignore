@@ -9,3 +9,6 @@ __pycache__/
 .data/
 evidence/raw/
 .hypothesis/
+# sam build output and sam deploy --guided answers (may hold Ring device/account IDs)
+.aws-sam/
+samconfig.toml

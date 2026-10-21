@@ -36,8 +36,9 @@ from app.ring.base import RingClient
 from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.webhooks import MAX_BODY as MAX_WEBHOOK_BODY
-from app.ring.webhooks import WebhookLog, WebhookStatus
+from app.ring.webhooks import WebhookStatus
 from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
+from app.store import make_webhook_log
 
 app = FastAPI(title="Shopfront")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
@@ -52,7 +53,7 @@ book = DeliveryBook(DATA / "expected-deliveries.json")
 frames = FrameStore(DATA)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
-webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl", settings.ring_device_id, settings.ring_account_id)
+webhook_log = make_webhook_log(settings, DATA / "ring-webhooks.jsonl")  # file, or the Lambda's DynamoDB table
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
 

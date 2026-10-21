@@ -54,6 +54,13 @@ class Settings:
     # IP addresses always work; anything else is refused, which stops DNS-rebinding pages.
     allowed_hosts: str = _env("SHOPFRONT_ALLOWED_HOSTS")
 
+    # Ring webhooks: "file" (.data/ring-webhooks.jsonl, the app's own POST /webhooks/ring) or "dynamodb" (the
+    # table the webhook Lambda in infra/template.yaml writes; docs/aws.md). SHOPFRONT_SHOP_ID matches the stack's.
+    webhook_store: str = _env("SHOPFRONT_WEBHOOK_STORE") or "file"
+    webhook_table: str = _env("SHOPFRONT_WEBHOOK_TABLE")
+    webhook_region: str = _env("SHOPFRONT_WEBHOOK_REGION")  # empty = AWS_REGION
+    shop_id: str = _env("SHOPFRONT_SHOP_ID", "shop")
+
     @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)

@@ -22,6 +22,7 @@ os.environ.update({
     "RING_ACCOUNT_ID": "",
     "RING_HMAC_KEY": "",
     "SHOPFRONT_ALLOWED_HOSTS": "",
+    "SHOPFRONT_WEBHOOK_STORE": "",
     "SHOP_HOURS": "8-18,8-18,8-18,8-18,8-19,9-16,closed",
     "SHOP_NAME": "Corner Bakery",
     "SHOP_TIMEZONE": "America/Los_Angeles",
