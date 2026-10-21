@@ -43,6 +43,8 @@ class Settings:
     bedrock_model_id: str = _env("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
     data_dir: str = _env("SHOPFRONT_DATA_DIR", ".data")
+    # Door frames (pictures of people) are deleted after this many days; 0 keeps them.
+    frame_days: float = float(_env("SHOPFRONT_FRAME_DAYS", "30") or 30)
     # Extra host names this app may be reached by (e.g. "shop-mac.local"), comma-separated. localhost and
     # IP addresses always work; anything else is refused, which stops DNS-rebinding pages.
     allowed_hosts: str = _env("SHOPFRONT_ALLOWED_HOSTS")

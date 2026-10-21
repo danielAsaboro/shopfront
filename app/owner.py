@@ -21,12 +21,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import ipaddress
-import os
 import secrets
 import threading
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from app.files import write_private
 
 COOKIE = "shopfront_owner"
 COOKIE_DAYS = 180
@@ -39,20 +40,6 @@ PUBLIC_PATHS = frozenset({"/webhooks/ring", "/healthz", "/pair"})
 API_BODY_TYPES = frozenset({"application/json", "application/sdp", "image/jpeg"})
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 FORWARDED = ("forwarded", "x-forwarded-for", "x-real-ip")
-
-
-def write_private(path: Path, data: bytes) -> None:
-    """Write a file only this user can read, atomically: it is created 0600, never chmod-ed after."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
 
 
 def host_name(host_header: str | None) -> str:

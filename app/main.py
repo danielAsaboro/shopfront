@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
+import time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -18,6 +19,7 @@ from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
 from app import dispute
+from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
@@ -35,7 +37,7 @@ from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 app = FastAPI(title="Shopfront")
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
-DATA = Path(settings.data_dir)
+DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
 book = DeliveryBook(DATA / "expected-deliveries.json")
 frames = FrameStore(DATA)
@@ -87,6 +89,7 @@ async def owner_only(request: Request, call_next):
     if path not in PUBLIC_PATHS and not gate.is_owner(request.client.host if request.client else None,
                                                        headers, request.cookies):
         return _not_owner(request)
+    await run_in_threadpool(_housekeeping)
     return await call_next(request)
 
 
@@ -237,7 +240,8 @@ def _live_ring() -> RingApiClient:
 
 @app.exception_handler(LiveError)
 def live_error(request: Request, exc: LiveError):
-    return JSONResponse({"error": exc.code, "detail": str(exc)}, status_code=404 if exc.code == "UNKNOWN_SESSION" else 400)
+    code = {"UNKNOWN_SESSION": 404, "BAD_KEY": 403, "TOO_MANY_SESSIONS": 409}.get(exc.code, 400)
+    return JSONResponse({"error": exc.code, "detail": str(exc)}, status_code=code)
 
 
 @app.get("/live", response_class=HTMLResponse)
@@ -259,8 +263,13 @@ async def live_start(request: Request):
     def start():
         ring = _live_ring()
         answer, session_url = ring.whep_start(offer)
-        s = live.start(ring.device_id, session_url)
-        return {"session": s.id, "answer": answer, "ring_request_id": ring.last_request_id}
+        try:
+            s = live.start(ring.device_id, session_url)
+        except LiveError:
+            ring.whep_stop(session_url)  # don't leave a Ring session open that nothing will use
+            raise
+        # the key goes back only to the owner's page that asked; every frame must carry it
+        return {"session": s.id, "key": s.key, "answer": answer, "ring_request_id": ring.last_request_id}
     return await run_in_threadpool(start)
 
 
@@ -268,7 +277,8 @@ async def live_start(request: Request):
 async def live_frame(session_id: str, request: Request):
     day = datetime.now(settings.tz).date()
     jpeg = await request.body()
-    return await run_in_threadpool(live.frame, session_id, jpeg, classifier, posted_hours(profile.hours(), day))
+    return await run_in_threadpool(live.frame, session_id, jpeg, classifier, posted_hours(profile.hours(), day),
+                                   request.headers.get("X-Live-Key"))
 
 
 @app.post("/api/live/{session_id}/stop")
@@ -556,6 +566,34 @@ def frame(request: Request, name: str):
     if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.post("/frames/{name}/delete")
+def frame_delete(name: str):
+    """Delete a door frame now (and, for a live view, every frame kept from that session)."""
+    stem = name.removesuffix(".jpg")
+    if frame_name(stem) != name:
+        raise HTTPException(404)
+    gone = 0
+    for d in (DATA / "frames", DATA / "live-frames"):
+        for p in [d / name, *(d.glob(f"{stem}-f*.jpg") if stem.startswith("live-") else [])]:
+            if p.is_file():
+                p.unlink()
+                gone += 1
+    return {"deleted": gone}
+
+
+_last_housekeeping = 0.0
+
+
+def _housekeeping() -> None:
+    """At most hourly: drop door frames older than SHOPFRONT_FRAME_DAYS (0 keeps them)."""
+    global _last_housekeeping
+    if time.time() - _last_housekeeping < 3600:
+        return
+    _last_housekeeping = time.time()
+    for d in (DATA / "frames", DATA / "live-frames"):
+        prune_older_than(d, settings.frame_days)
 
 
 def _agent_tools(today: date) -> shop_agent.ShopTools:

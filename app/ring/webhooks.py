@@ -37,16 +37,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import logging
 import threading
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from app.files import read_jsonl
 from app.models import ClassifiedVisit, DoorEvent, VisitType
-
-log = logging.getLogger(__name__)
 
 KINDS = {"button_press": "ding", "motion_detected": "motion"}  # webhook data.type -> Event History kind
 SKIP_AT_STAGE0 = {"vehicle", "other_motion"}
@@ -73,28 +71,6 @@ def verify(raw: bytes, header: str | None, key: str) -> bool:
 def replay_key(key: str) -> str:
     """The key Shopfront's own feeder signs with. Ring never uses it, so nothing it signs passes as Ring's."""
     return hmac.new(key.encode(), b"shopfront-replay-v1", hashlib.sha256).hexdigest()
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    """Rows of a JSON-lines file, skipping (and logging) any line that isn't a JSON object."""
-    if not path.exists():
-        return []
-    rows, bad = [], 0
-    for line in path.read_text().splitlines():
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            bad += 1
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-        else:
-            bad += 1
-    if bad:
-        log.warning("%s: skipped %d unreadable line%s", path, bad, "" if bad == 1 else "s")
-    return rows
 
 
 class WebhookLog:

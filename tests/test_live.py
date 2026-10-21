@@ -79,20 +79,20 @@ def test_session_is_labelled_by_its_most_confident_frame_and_caps_bedrock_calls(
     log = LiveLog(tmp_path, TZ)
     s = log.start(DEV, SESSION_URL)
     for _ in range(MAX_FRAMES_CLASSIFIED + 3):
-        log.frame(s.id, JPEG, clf, None)
+        log.frame(s.id, JPEG, clf, None, key=s.key)
     assert fake.calls == MAX_FRAMES_CLASSIFIED
     row = log.stop(s.id)
     assert row["label"]["reason"] == "parcel 2" and row["label"]["source"] == "bedrock"
     assert row["bedrock_request_ids"][0] == "br-1" and row["frames_seen"] == MAX_FRAMES_CLASSIFIED + 3
     assert (tmp_path / "live-frames" / f"{s.id}.jpg").read_bytes() == JPEG
     [v] = log.visits_for_day(datetime.now(TZ).date())
-    assert v.event.kind == "live_view" and v.event.source == "ring-live" and v.source == "bedrock"
+    assert v.event.kind == "live_view" and v.event.source == "ring-live-browser" and v.source == "bedrock"
 
 
 def test_rules_never_pretend_to_read_a_frame(tmp_path):
     log = LiveLog(tmp_path, TZ)
     s = log.start(DEV, SESSION_URL)
-    out = log.frame(s.id, JPEG, RulesClassifier(), None)
+    out = log.frame(s.id, JPEG, RulesClassifier(), None, key=s.key)
     assert out["label"]["type"] == "unknown" and "need Bedrock" in out["label"]["reason"]
 
 
@@ -102,7 +102,7 @@ def test_bad_frames_and_unknown_sessions_are_named(tmp_path):
         log.frame("nope", JPEG, RulesClassifier(), None)
     s = log.start(DEV, SESSION_URL)
     with pytest.raises(LiveError) as e2:
-        log.frame(s.id, b"GIF89a", RulesClassifier(), None)
+        log.frame(s.id, b"GIF89a", RulesClassifier(), None, key=s.key)
     assert (e1.value.code, e2.value.code) == ("UNKNOWN_SESSION", "BAD_FRAME")
 
 
@@ -120,12 +120,14 @@ def test_live_endpoints_end_to_end(monkeypatch, tmp_path):
     assert "Start live view" in c.get("/live").text
     start = c.post("/api/live/start", content="v=0\r\no=- offer\r\n", headers={"Content-Type": "application/sdp"}).json()
     assert start["answer"].startswith("v=0") and start["ring_request_id"] == "rid-whep"
-    frame = c.post(f"/api/live/{start['session']}/frame", content=JPEG, headers=JPEG_TYPE).json()
+    frame = c.post(f"/api/live/{start['session']}/frame", content=JPEG,
+                   headers={**JPEG_TYPE, "X-Live-Key": start["key"]}).json()
     assert frame["frames_seen"] == 1
     stop = c.post(f"/api/live/{start['session']}/stop", json={}).json()
     assert stop["ring_stop_error"] is None and calls[-1].method == "DELETE"
     assert c.get("/api/live/sessions").json()[0]["id"] == start["session"]
-    assert c.post(f"/api/live/{start['session']}/frame", content=JPEG, headers=JPEG_TYPE).json()["error"] == "UNKNOWN_SESSION"
+    assert c.post(f"/api/live/{start['session']}/frame", content=JPEG,
+                  headers={**JPEG_TYPE, "X-Live-Key": start["key"]}).json()["error"] == "UNKNOWN_SESSION"
 
 
 def test_live_view_needs_ring_connected(monkeypatch, tmp_path):
@@ -142,3 +144,63 @@ def test_session_without_video_is_logged_but_not_a_visit(tmp_path):
     s = log.start(DEV, SESSION_URL)
     assert log.stop(s.id)["frames_seen"] == 0
     assert log.visits_for_day(datetime.now(TZ).date()) == []
+
+
+# ---- whose frames, how long they live -------------------------------------------------------------------
+from app.live import BROWSER_FRAME, SESSION_TTL, frame_provenance  # noqa: E402
+
+
+def test_frames_need_the_session_key_from_start(monkeypatch, tmp_path):
+    ring = ring_client(whep_handler([]))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring})())
+    monkeypatch.setattr(main, "live", LiveLog(tmp_path, TZ))
+    c = TestClient(main.app)
+    start = c.post("/api/live/start", content="v=0\r\no=- offer\r\n", headers={"Content-Type": "application/sdp"}).json()
+    sid, key = start["session"], start["key"]
+    assert len(key) >= 16
+    for headers in (JPEG_TYPE, {**JPEG_TYPE, "X-Live-Key": "guess"}):
+        r = c.post(f"/api/live/{sid}/frame", content=JPEG, headers=headers)
+        assert r.status_code == 403 and r.json()["error"] == "BAD_KEY"
+    assert c.post(f"/api/live/{sid}/frame", content=JPEG, headers={**JPEG_TYPE, "X-Live-Key": key}).json()["frames_seen"] == 1
+
+
+def test_browser_frames_say_where_they_came_from(tmp_path):
+    log = LiveLog(tmp_path, TZ)
+    s = log.start(DEV, SESSION_URL)
+    log.frame(s.id, JPEG, RulesClassifier(), None, key=s.key)
+    row = log.stop(s.id)
+    assert row["frame_provenance"] == BROWSER_FRAME == "captured in the owner's browser from a Ring live-view session"
+    [v] = log.visits_for_day(datetime.now(TZ).date())
+    assert v.event.source == "ring-live-browser"
+    assert frame_provenance(s.id) == BROWSER_FRAME and frame_provenance("evt-123") is None
+
+
+def test_frames_are_private(tmp_path):
+    log = LiveLog(tmp_path, TZ)
+    s = log.start(DEV, SESSION_URL)
+    log.frame(s.id, JPEG, RulesClassifier(), None, key=s.key)
+    files = list((tmp_path / "live-frames").glob("*.jpg"))
+    assert files and all(oct(f.stat().st_mode & 0o777) == "0o600" for f in files)
+    assert oct((tmp_path / "live-frames").stat().st_mode & 0o777) == "0o700"
+
+
+def test_abandoned_sessions_expire(tmp_path):
+    log = LiveLog(tmp_path, TZ)
+    s = log.start(DEV, SESSION_URL)
+    log.frame(s.id, JPEG, RulesClassifier(), None, key=s.key)
+    s.started = s.started - SESSION_TTL - SESSION_TTL / 10
+    with pytest.raises(LiveError) as err:
+        log.frame(s.id, JPEG, RulesClassifier(), None, key=s.key)
+    assert err.value.code == "UNKNOWN_SESSION" and s.id not in log.active
+    [row] = [r for r in log.rows() if r["id"] == s.id]
+    assert row["expired"] is True and row["frames_seen"] == 1  # still a visit; it just wasn't stopped
+
+
+def test_a_truncated_session_log_line_is_skipped(tmp_path):
+    log = LiveLog(tmp_path, TZ)
+    s = log.start(DEV, SESSION_URL)
+    log.stop(s.id)
+    with (tmp_path / "live-sessions.jsonl").open("a") as f:
+        f.write('{"id": "live-cut')
+    assert [r["id"] for r in LiveLog(tmp_path, TZ).rows()] == [s.id]
+    assert LiveLog(tmp_path, TZ).visits_for_day(datetime.now(TZ).date()) == []

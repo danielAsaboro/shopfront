@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from app.files import write_private
 from app.models import DoorEvent
 from app.ring.base import RingClient
 
@@ -122,10 +123,8 @@ class RingAuth:
             self._expiry = _time.time() + int(body.get("expires_in", 14400))
         except (ValueError, KeyError) as exc:
             raise RingError(RingStatus.MALFORMED_RESPONSE, "token response") from exc
-        if self._file:
-            self._file.parent.mkdir(parents=True, exist_ok=True)
-            self._file.write_text(json.dumps({"refresh_token": self._refresh}))
-            self._file.chmod(0o600)
+        if self._file:  # created 0600 and swapped in whole: never readable by others, never half-written
+            write_private(self._file, json.dumps({"refresh_token": self._refresh}))
 
 
 class RingApiClient(RingClient):

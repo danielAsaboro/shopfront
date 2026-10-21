@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
+from app.files import private_dir, write_private
 from app.models import ClassifiedVisit, VisitType
 
 
@@ -71,6 +73,7 @@ def make_expected(day: date, supplier: str, window_start: str = "", window_end: 
 class DeliveryBook:
     def __init__(self, path: Path):
         self.path = path
+        self._lock = threading.RLock()  # requests run in a thread pool; each change is read-modify-write
 
     def _all(self) -> list[Expected]:
         if not self.path.exists():
@@ -78,10 +81,7 @@ class DeliveryBook:
         return [Expected(**x) for x in json.loads(self.path.read_text())]
 
     def _write(self, rows: list[Expected]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps([asdict(r) for r in rows], indent=1))
-        tmp.replace(self.path)
+        write_private(self.path, json.dumps([asdict(r) for r in rows], indent=1))
 
     def for_day(self, day: date) -> list[Expected]:
         return sorted((e for e in self._all() if e.day == day.isoformat()),
@@ -90,11 +90,13 @@ class DeliveryBook:
     def add(self, day: date, supplier: str, window_start: str = "", window_end: str = "",
             note: str = "", **order) -> Expected:
         e = make_expected(day, supplier, window_start, window_end, note, **order)
-        self._write(self._all() + [e])
+        with self._lock:
+            self._write(self._all() + [e])
         return e
 
     def remove(self, expected_id: str) -> None:
-        self._write([e for e in self._all() if e.id != expected_id])
+        with self._lock:
+            self._write([e for e in self._all() if e.id != expected_id])
 
     def get(self, expected_id: str) -> Expected | None:
         return next((e for e in self._all() if e.id == expected_id), None)
@@ -102,6 +104,10 @@ class DeliveryBook:
     def import_rows(self, rows: list[Expected]) -> dict:
         """Add imported orders. Re-importing the same file updates rows instead of duplicating them:
         an order is the same one when its order_ref and day match, and a staff tap is kept."""
+        with self._lock:
+            return self._import_rows(rows)
+
+    def _import_rows(self, rows: list[Expected]) -> dict:
         current = self._all()
         by_key = {(e.order_ref, e.day): i for i, e in enumerate(current) if e.order_ref}
         added = updated = 0
@@ -122,13 +128,14 @@ class DeliveryBook:
     def mark_received(self, expected_id: str, status: str, note: str, at: datetime) -> Expected:
         if status not in RECEIVED:
             raise ValueError(f"status must be one of {', '.join(RECEIVED)}")
-        rows = self._all()
-        for e in rows:
-            if e.id == expected_id:
-                e.received = None if status == "clear" else {
-                    "status": status, "note": note.strip()[:200], "at": at.isoformat(timespec="minutes")}
-                self._write(rows)
-                return e
+        with self._lock:
+            rows = self._all()
+            for e in rows:
+                if e.id == expected_id:
+                    e.received = None if status == "clear" else {
+                        "status": status, "note": note.strip()[:200], "at": at.isoformat(timespec="minutes")}
+                    self._write(rows)
+                    return e
         raise KeyError(expected_id)
 
 
@@ -146,8 +153,7 @@ class FrameStore:
         self.dirs = [data_dir / "frames", data_dir / "live-frames"]
 
     def save(self, event_id: str, jpeg: bytes) -> None:
-        self.dirs[0].mkdir(parents=True, exist_ok=True)
-        (self.dirs[0] / frame_name(event_id)).write_bytes(jpeg)
+        write_private(private_dir(self.dirs[0]) / frame_name(event_id), jpeg)  # a picture of a person: 0600
 
     def path(self, event_id: str) -> Path | None:
         for d in self.dirs:
