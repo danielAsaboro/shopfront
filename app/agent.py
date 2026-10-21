@@ -213,7 +213,7 @@ class ShopTools:
         for i in range(6, -1, -1):
             d = end - timedelta(days=i)
             v = stamp(self._visits(d))
-            types = ("customer", "delivery", "staff", "after_hours")
+            types = ("customer", "delivery", "doorbell_press", "staff", "after_hours")
             out.append({"date": d.isoformat(), "weekday": d.strftime("%a"), "posted_hours": self._hours(d),
                         "posted_hours_provenance": "owner", **{t: sum(1 for x in v if x["type"] == t) for t in types},
                         "by_provenance": {t: {p: n for p in PROVENANCE
