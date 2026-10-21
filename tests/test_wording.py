@@ -182,3 +182,22 @@ def test_lookalikes_are_caught(text):
 def test_ordinary_words_pass(text):
     assert wording.accusing(text) == [], text
 
+
+def test_a_scan_pack_offers_the_supplier_and_the_carrier_a_draft():
+    """Round 2: the owner picks who to write to. With the shop's order, the supplier's draft (a receiving
+    issue) comes first and the carrier's (its own scan) second; with no order, only the carrier's."""
+    for _, claim, (hh, mm), make, _outcome, *status in SCANS:
+        for order in ORDERS:
+            vs = make()
+            p = _pack(vs, _check(claim, hh, mm, vs, status[0] if status else None), order, "Swift Parcel")
+            if not p["drafts"]:
+                assert p["draft"] is None
+                continue
+            keys = [d["key"] for d in p["drafts"]]
+            assert keys == (["supplier", "carrier"] if order else ["carrier"]), (claim, hh, mm, order)
+            assert p["draft"] is p["drafts"][0]
+            carrier = p["drafts"][-1]
+            assert carrier["to"] == "Swift Parcel" and carrier["body"].startswith("Hello Swift Parcel,")
+            assert carrier["label"] == "To Swift Parcel, the carrier"
+            if order:
+                assert p["drafts"][0]["to"] == order.supplier

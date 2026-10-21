@@ -453,10 +453,11 @@ def drafts(p: dict, visits: list[ClassifiedVisit] | None = None) -> tuple[list[d
     sign = f"\n\n{p['shop']}"
     if c and f:
         if f["outcome"] == DELIVERED_AFTER_SCAN:
-            return [_labelled(_late_note(p, sign), SUPPLIER)], None
+            return [_labelled(_late_note(p, sign), SUPPLIER), _labelled(_late_to_carrier(p, sign), CARRIER)], None
         if f["outcome"] not in DISPUTE or f["outcome"] == rc.COURIER_LATER:
             return [], NO_DRAFT.get(f["outcome"], "")
-        return [_labelled(_scan_dispute(p, sign) if o else _scan_to_carrier(p, sign), SUPPLIER if o else CARRIER)], None
+        ds = [_labelled(_scan_dispute(p, sign), SUPPLIER)] if o else []
+        return ds + [_labelled(_scan_to_carrier(p, sign), CARRIER)], None
     d, why = _order_draft(p, visits)
     return ([_labelled(d, SUPPLIER)] if d else []), why
 

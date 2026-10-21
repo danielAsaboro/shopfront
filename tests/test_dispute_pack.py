@@ -69,6 +69,10 @@ def test_scanned_closed_then_delivered_later_is_a_late_delivery_note_to_the_supp
     assert "redeliver" not in body.lower() and "no courier" not in body.lower()
     assert "customers" not in body  # the lunchtime "customers" are rule guesses
     assert "the carrier," not in body
+    carrier = p["drafts"][1]  # the other draft the owner can pick: to the carrier, about its scan
+    assert carrier["to"] == "Swift Parcel" and carrier["body"].startswith("Hello Swift Parcel,")
+    assert "13:02" in carrier["body"] and "correct the \"business closed\" scan" in carrier["body"]
+    assert "redeliver" not in carrier["body"].lower() and "no courier" not in carrier["body"].lower()
 
 
 def test_late_delivery_needs_the_orders_own_courier(tmp_path):
@@ -144,6 +148,7 @@ def test_busy_door_with_a_press_at_the_scan_is_open_and_names_the_press(tmp_path
     assert "an unidentified motion" not in f["text"]
     assert "unidentified motion at 14:25 and an unidentified doorbell press at 14:36 (no camera frame confirms " \
            "who)" in f["text"]
+    assert [d["key"] for d in p["drafts"]] == ["supplier", "carrier"]
     for d in p["drafts"]:
         body = d["body"].lower()
         assert "4 motion events and 1 doorbell press between 14:00 and 15:00" in body

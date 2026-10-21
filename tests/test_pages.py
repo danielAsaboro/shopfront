@@ -352,9 +352,9 @@ def test_demo_pack_says_demo_once_on_the_page(c):
     assert page.count('class="watermark"') == 1 and page.count("demo generator") == 1
     from app import dispute
     assert dispute.DEMO_LIMIT not in page
-    subject = page.split('id="subject">')[1].split("</dd>")[0]
+    subject = page.split('id="subject-supplier">')[1].split("</dd>")[0]
     assert subject.startswith("[DEMO] ") and subject.count("DEMO") == 1
-    body = page.split('id="draft">')[1].split("</div>")[0]
+    body = page.split('id="draft-supplier">')[1].split("</div>")[0]
     assert body.count("DEMO") == 1 and body.startswith("DEMO DATA, not from a camera: don&#39;t send this.")
 
 
@@ -371,3 +371,15 @@ def test_the_desk_opens_on_today_once_today_has_orders(c):
     main.book.add(today, "Hillside Mill", order_ref="PO-1")
     page = c.get("/").text
     assert "Receiving desk · today" in page and "Hillside Mill" in page
+
+
+def test_a_scan_pack_page_lets_the_owner_pick_the_supplier_or_the_carrier(c):
+    """Round 2: two drafts on the pack, to the supplier (receiving issue) and to the carrier (its scan)."""
+    day = date(2026, 10, 20)
+    main.book.add(day, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel")
+    e = main.book.for_day(day)[0]
+    page = c.get(f"/dispute?date={day}&at=14:30&claim=business_closed&order={e.id}&carrier=Northline+Parcel").text
+    assert page.count('name="to"') == 2 and "Pick a draft" in page
+    assert "To Valley Creamery, the supplier" in page and "To Northline Parcel, the carrier" in page
+    assert 'id="draft-supplier">' in page and 'id="draft-carrier">' in page
+    assert page.split('id="draft-carrier">')[1].split("</div>")[0].split("\n\n")[1].startswith("Hello Northline Parcel,")

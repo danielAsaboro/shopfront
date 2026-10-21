@@ -94,7 +94,12 @@ A label from the time-of-day rules is never a sighting and never "not a courier"
 attempted-delivery scan, one near the scan makes the answer unverified. A "business closed" scan claims
 the shop was closed, not that nobody came, so posted hours plus other people using the door answer it
 even with an unidentified event near the scan; only when that event is all the door recorded is the
-answer unverified. When the order's own courier came later, either way, the pack is a late-delivery note. The activity counts give Ring's event kinds ("11 motion events") and
+answer unverified. When the order's own courier came later, either way, the pack is a late-delivery note.
+
+**Two drafts.** A scan pack for one of the shop's orders offers a draft to the supplier (a receiving
+issue: the supplier is the carrier's customer and can make it act) and one to the carrier about its own
+scan; the owner picks one on the pack page and both are in the zip. Both pass the wording guard
+(`app/wording.py`). With no order there is only the carrier's. The activity counts give Ring's event kinds ("11 motion events") and
 only camera-confirmed customers; rule-guessed customers are kept apart. A hand-worked day in
 `tests/test_scan_checks.py` pins every outcome, and a property test checks them against the evidence.
 

@@ -247,7 +247,8 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    Shopfront's answer: {check.get('text') or check}
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,
-   and a draft to {story['pack']['draft']['to']} you copy and send yourself:
+   and two drafts, to {' and to '.join(d['to'] or 'the carrier' for d in story['pack']['drafts'])}; you pick one,
+   copy it and send it yourself:
    {pack_url}
 
 Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; nothing else in .data is touched.

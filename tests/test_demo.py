@@ -81,7 +81,7 @@ def test_demo_story_matches_the_receiving_desk_and_yields_a_pack(day, monkeypatc
     # the scan case: "You were open" by the posted hours and a busy door; drafts to the supplier and the carrier
     assert story["check"]["outcome"] in OPEN_FINDINGS and story["scan"] == demo.SCAN_AT
     pack = story["pack"]
-    assert [d["to"] for d in pack["drafts"]] == ["Valley Creamery"]
+    assert [d["to"] for d in pack["drafts"]] == ["Valley Creamery", demo.CARRIER]
     assert pack["order"]["order_ref"] == demo.SCAN_ORDER
     assert pack["demo_data"] and all(d["subject"].startswith("[DEMO] ") for d in pack["drafts"])
     if pack["order"]["possible"]:  # the desk's "Possible courier" for the dairy order is named in the pack

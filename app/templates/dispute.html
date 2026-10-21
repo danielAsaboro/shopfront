@@ -19,7 +19,12 @@
   .stills img { display:block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   .stills figcaption { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
   .limits { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
-  @media print { .actions { display:none; } .tech > summary { display: none; }
+  .pick { border: 0; padding: 0; margin: 12px 0 4px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+  .pick label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--edge);
+                border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .pick label:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .pick input { margin-top: 3px; accent-color: var(--ink); width: 16px; height: 16px; flex: none; }
+  @media print { .actions { display:none; } .tech > summary { display: none; } .one-draft[hidden] { display: block; }
                  .watermark { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   @media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 2px; } .facts dt { padding-top: 8px; } }
 </style>
@@ -101,12 +106,22 @@
   </section>
 
   <section class="block" aria-labelledby="drafth">
-    <h2 id="drafth">Draft message</h2>
-    {% if p.draft %}
-    <p class="why" style="margin:6px 0 0">Shopfront doesn't send this. Read it, change anything, and send it yourself with the zip attached.</p>
-    <dl class="facts"><dt>To</dt><dd>{{ p.draft.to }}</dd><dt>Subject</dt><dd id="subject">{{ p.draft.subject }}</dd></dl>
-    <div class="draft" id="draft">{{ p.draft.body }}</div>
-    <div class="actions"><button type="button" id="copy" class="secondary">Copy message</button></div>
+    <h2 id="drafth">{{ "Pick a draft" if p.drafts|length > 1 else "Draft message" }}</h2>
+    {% if p.drafts %}
+    <p class="why" style="margin:6px 0 0">Shopfront doesn't send this. {% if p.drafts|length > 1 %}Pick who to write to, read it{% else %}Read it{% endif %}, change anything, and send it yourself with the zip attached.</p>
+    {% if p.drafts|length > 1 %}
+    <fieldset class="pick no-print">
+      <legend class="sr">Who to write to</legend>
+      {% for d in p.drafts %}<label><input type="radio" name="to" value="{{ d.key }}"{{ ' checked' if loop.first }}><span><strong>{{ d.label }}</strong><br><span class="why">{{ d.why[:1]|upper }}{{ d.why[1:] }}</span></span></label>{% endfor %}
+    </fieldset>
+    {% endif %}
+    {% for d in p.drafts %}
+    <div class="one-draft" data-key="{{ d.key }}">
+      <dl class="facts"><dt>To</dt><dd>{{ d.to or "the carrier (type its name in the scan form to fill this in)" }}</dd><dt>Subject</dt><dd id="subject-{{ d.key }}">{{ d.subject }}</dd></dl>
+      <div class="draft" id="draft-{{ d.key }}">{{ d.body }}</div>
+      <div class="actions"><button type="button" class="secondary copy" data-key="{{ d.key }}">Copy this message</button></div>
+    </div>
+    {% endfor %}
     {% else %}
     <p style="margin-top:6px">No draft. {{ p.no_draft_reason }}</p>
     {% endif %}
@@ -122,12 +137,18 @@
 <script>
 // Printed packs carry everything: open the Details sections first
 addEventListener("beforeprint", () => document.querySelectorAll("details").forEach(d => d.open = true));
-{% if p.draft %}
-document.getElementById("copy").addEventListener("click", async e => {
-  const text = "Subject: " + document.getElementById("subject").innerText + "\n\n" + document.getElementById("draft").innerText;
-  try { await navigator.clipboard.writeText(text); e.target.textContent = "Copied"; }
-  catch { e.target.textContent = "Select the text to copy"; }
-});
+{% if p.drafts %}
+// One draft at a time; the radio picks which (without script every draft shows, one under the other)
+const showDraft = key => document.querySelectorAll(".one-draft").forEach(d => d.hidden = d.dataset.key !== key);
+const picked = document.querySelector(".pick input:checked");
+if (picked) showDraft(picked.value);
+document.querySelectorAll(".pick input").forEach(r => r.addEventListener("change", () => showDraft(r.value)));
+document.querySelectorAll("button.copy").forEach(b => b.addEventListener("click", async () => {
+  const k = b.dataset.key;
+  const text = "Subject: " + document.getElementById("subject-" + k).innerText + "\n\n" + document.getElementById("draft-" + k).innerText;
+  try { await navigator.clipboard.writeText(text); b.textContent = "Copied"; }
+  catch { b.textContent = "Select the text to copy"; }
+}));
 {% endif %}
 </script>
 {% endblock %}
