@@ -1,8 +1,12 @@
 # Amazon Bedrock in Shopfront
 
+Shopfront uses Amazon Bedrock in two places: labelling Ring frames (sections 1 to 9) and Ask
+Shopfront, a Strands agent with a Bedrock model (section 10). Both call Bedrock Runtime directly
+from this app with boto3. Amazon Bedrock AgentCore is not used.
+
 ## 1. The rule we enforce
 
-A visit gets a Bedrock label only when Bedrock looked at that visit's Ring frame. Every other label is marked `rules` and says why.
+A visit gets a Bedrock label only when Bedrock looked at that visit's Ring frame. Every other label is marked `rules` and says why. A courier announced by Ring's own `package_delivery` alert is labelled `ring` and never reaches Bedrock ([receiving-desk.md](receiving-desk.md), section 2).
 
 ## 2. Enforcement layers
 
@@ -40,7 +44,7 @@ A visit gets a Bedrock label only when Bedrock looked at that visit's Ring frame
 
 ## 6. Docs vs live differences
 
-None recorded yet, because Bedrock has not been called from this project. The earlier scaffold could never call it: it needed image bytes that nothing supplied.
+None recorded yet, because no live Bedrock call from this project has been captured (section 8). The Playground's image download returns 403, so the frame path needs live-view frames from a playing Playground clip.
 
 ## 7. Config
 
@@ -58,4 +62,16 @@ None recorded yet, because Bedrock has not been called from this project. The ea
 
 - One Bedrock call per Ring event, with no batching. That's fine for a single shop, but busy days would want a cheaper first pass, such as only classifying dings plus motion outside open hours.
 - The prompt has not been evaluated on real footage. The accuracy of the rules on synthetic data is circular, because the generator and the rules share their assumptions, and it is not reported as a result.
-- This is the only AWS service used at runtime. There is no AgentCore or Strands pipeline.
+- Bedrock Runtime is the only AWS service used at runtime: the frame classifier calls Converse directly, and the Ask agent calls it through Strands' `BedrockModel`. There is no AgentCore deployment, no Bedrock Agents resource and no Lambda; everything runs in this one process.
+
+## 10. Ask Shopfront: a Strands agent
+
+| Item | Value |
+|---|---|
+| Code | [app/agent.py](../app/agent.py), `POST /api/ask` |
+| Framework | [Strands Agents](https://strandsagents.com) (`strands-agents`), `Agent` with `strands.models.BedrockModel` (`BEDROCK_MODEL_ID`, temperature 0, at most 400 tokens out) |
+| Tools | `door_visits`, `deliveries`, `week`, `check_attempt`, `dispute_pack`: plain Python over the same data the pages use. No tool writes or sends anything. |
+| Trace | Every tool call and every Bedrock `RequestId` (from botocore's `after-call` event) is returned with the answer |
+| Failure | No credentials, no model access, throttling or network: `503 AGENT_UNAVAILABLE` with the cause. No answer is made up. |
+| Tests | [tests/test_door_desk.py](../tests/test_door_desk.py) with a fake agent; [scripts/eval_agent.py](../scripts/eval_agent.py) is the eval for a live run (ten questions from a day's data, two of them traps) |
+| Live proof | **None yet.** No agent run against Bedrock has been recorded. |

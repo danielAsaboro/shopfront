@@ -2,7 +2,7 @@
 
 ## 1. The rule we enforce
 
-Every number in the briefing comes from Ring events for the shop's doorbell, or the page says it doesn't: Shopfront never fills a Ring failure with made-up data.
+Every door event Shopfront shows, on the receiving desk, in a scan check, in a dispute pack or in the briefing, comes from Ring for the shop's doorbell, or the page says it doesn't: Shopfront never fills a Ring failure with made-up data.
 
 ## 2. Enforcement layers
 
@@ -16,7 +16,7 @@ Every number in the briefing comes from Ring events for the shop's doorbell, or 
 
 ## 3. Flow
 
-1. The owner opens the briefing for a date.
+1. The owner opens the dashboard (receiving desk and briefing) for a date, or checks a carrier's scan.
 2. Shopfront gets an access token: the Playground token as-is, or `POST https://oauth.ring.com/oauth/token` with `grant_type=refresh_token`. Ring rotates the refresh token, so the new one is saved to `.data/ring-refresh-token.json`.
 3. If `RING_DEVICE_ID` is empty, `GET /v1/devices` and take the first device.
 4. `GET /v1/history/devices/{id}/events?event_types=ding,motion`. Pages are newest first. Shopfront follows `links.next` until an event is older than the requested day, then stops.
@@ -64,7 +64,7 @@ All Ring calls go to the production base URL `https://api.amazonvision.com`. Rin
 | Webhook signed but not a v1.1 payload | same | `MALFORMED` (400) | n/a |
 | Repeated `meta.request_id` | same | `DUPLICATE` (200, not stored twice) | n/a |
 
-Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_api.py) or [tests/test_webhooks.py](../tests/test_webhooks.py), run against responses shaped like Ring's documentation. Only `TOKEN_REJECTED` has also been seen live so far (section 8).
+Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_api.py) or [tests/test_webhooks.py](../tests/test_webhooks.py), run against responses shaped like Ring's documentation. Two rows have also been seen live: `TOKEN_REJECTED` (401 on a bad token) and `FORBIDDEN` (403 on image download with a Playground token), see section 8.
 
 ## 6. Docs vs live API differences
 
@@ -100,7 +100,7 @@ To add a row, run `RING_MODE=live RING_ACCESS_TOKEN=… .venv/bin/python -m scri
 
 ## 9. Honest scope
 
-- So far, only the error path has been seen live. The success path (devices, events, frames) is tested only against documented response shapes.
+- Seen live, against the Developer Playground: `GET /v1/devices` (200), Event History (200, empty), a WHEP live-view session (201, WebRTC connected), and two error paths (401, 403). Not seen live: a non-empty Event History page, a downloaded frame, a video frame over live view, and a webhook from Ring. Those paths are tested only against Ring's documented response shapes.
 - One shop, one doorbell, the first device the token sees. Multi-camera devices (Ring Elite) would need a `components` entry on frame downloads, which Shopfront doesn't send yet.
 - Shopfront hasn't been through Ring account linking or certification. Live mode runs on a Playground token or a refresh token pasted into `.env`, which is fine for a demo but not for real customers.
 - Webhook events feed the briefing, but none has arrived from Ring itself: the Playground sends none, so the demo uses signed replays marked `ring-webhook-replay`. Whether `sub_type` arrives on a real account is unverified.
