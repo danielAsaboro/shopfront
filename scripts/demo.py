@@ -15,7 +15,9 @@ What it does, in order:
    logged as a replay, never as Ring's own. The receiving desk must then show that alert as the flour
    order's courier (PO-1041); if it doesn't, the demo stops and says so instead of telling a story the
    page contradicts.
-5. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
+5. The synthetic source makes up the doorbell's status checks ("online" every 5 minutes through the demo
+   day, marked demo), so the pack's camera line shows the coverage path; the demo stops if it doesn't.
+6. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
    It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
    same answer (tests/test_demo.py sweeps the whole day). Asks the running app what the door shows,
    builds the dispute pack, and prints the links to both. The pack must have a draft; if the door
@@ -192,6 +194,10 @@ def walk(client, day: date, tz: ZoneInfo, orders_text: str) -> dict:
     if not pack.get("draft"):
         raise DemoMismatch(f"The door doesn't support a dispute of the {scan} scan ({check.get('outcome')}): "
                            f"{pack.get('no_draft_reason') or check.get('text')}")
+    cov = pack.get("coverage") or {}
+    if cov.get("state") != "online_by_status" or not cov.get("demo"):  # app/ring/synthetic.py, status_samples
+        raise DemoMismatch(f"The pack's camera line doesn't show the demo's status checks around {scan} "
+                           f"({cov.get('state')}), so the demo won't claim the coverage path works.")
     return {"hours": hours, "flour": flour, "scan": scan, "order": order, "check": check, "pack": pack,
             "query": q}
 
@@ -248,7 +254,7 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,
    and two drafts, to {' and to '.join(d['to'] or 'the carrier' for d in story['pack']['drafts'])}; you pick one,
-   copy it and send it yourself:
+   copy it and send it yourself. Its camera line: {story['pack']['coverage']['text']}
    {pack_url}
 
 Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; nothing else in .data is touched.

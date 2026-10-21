@@ -96,7 +96,10 @@ First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse 
 Both checks ask whether the camera was watching (`app/coverage.py`, see
 [receipts.md](receipts.md#checking-a-carriers-attempt-time)): Ring's `device_offline` webhooks and
 Shopfront's own status checks (`GET /v1/devices/{id}/status` every few minutes; only the time between two
-close "online" answers counts), then the door's own events within 30 minutes.
+close "online" answers counts), then the door's own events within 30 minutes. In synthetic mode the demo
+makes up those status checks ("online" every 5 minutes through open hours, `SyntheticRingClient.status_samples`),
+so the demo's pack shows the coverage line working; that line then begins "Demo status checks, made up by
+Shopfront's demo and not asked of Ring".
 
 A label from the time-of-day rules is never a sighting and never "not a courier" either. For an
 attempted-delivery scan, one near the scan makes the answer unverified. A "business closed" scan claims

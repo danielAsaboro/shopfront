@@ -670,10 +670,18 @@ def _local(at: datetime) -> datetime:
     return at.replace(tzinfo=settings.tz) if at.tzinfo is None else at.astimezone(settings.tz)
 
 
-def _status_notices() -> list[dict]:
+def _status_notices(around: datetime | None = None) -> list[dict]:
     """The doorbell's device_online / device_offline notifications Ring sent, and Shopfront's own status
-    samples (app/coverage.py)."""
+    samples (app/coverage.py). In synthetic mode with no samples of its own, the demo's made-up status checks
+    around `around`, marked demo."""
     samples = status_log.samples(settings.tz, webhook_log.device_id)
+    try:
+        ring = _ring()
+    except RingError:
+        ring = None
+    if around is not None and isinstance(ring, SyntheticRingClient) and not samples:  # real checks always win
+        samples = samples + [s for d in (around.date() - timedelta(days=1), around.date(), around.date() + timedelta(days=1))
+                             for s in ring.status_samples(d)]
     try:
         rows = webhook_log.recent(1_000_000)
     except ValueError:  # a damaged log line: no notices, so coverage falls back to the samples and door events
@@ -705,7 +713,7 @@ def sample_status() -> dict | None:
 
 def _check_attempt(at: datetime, claim: str = ATTEMPTED) -> dict:
     at = _local(at)
-    status = _status_notices()
+    status = _status_notices(at)
     if claim == BUSINESS_CLOSED:
         return check_closed_scan(at, _around(at, dispute.WINDOW), posted_hours(profile.hours(), at.date()),
                                  frames.url, status=status)

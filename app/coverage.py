@@ -146,6 +146,12 @@ def check(scan: datetime, visits: list[ClassifiedVisit], status: list[dict] | No
                 "text": f"Ring's status check said the doorbell was offline at {_hhmm(start, tz)}"
                         + (f" and online again at {_hhmm(back, tz)}" if back else "")
                         + f", so the camera may not have been watching at {_hhmm(scan, tz)}."}
+    if samples and not gaps and any(s.get("demo") for s in near):
+        return {**facts, "state": ONLINE_BY_STATUS, "demo": True,
+                "text": f"Demo status checks, made up by Shopfront's demo and not asked of Ring, said online every "
+                        f"{_every(near)} {window} ({int(tolerance.total_seconds() // 60)} minutes either side of the "
+                        f"{_hhmm(scan, tz)} scan). With Ring connected, Shopfront asks Ring itself and this line "
+                        f"quotes its answers."}
     if samples and not gaps:
         return {**facts, "state": ONLINE_BY_STATUS,
                 "text": f"Shopfront asked Ring every {_every(near)} whether the doorbell was online, and every "

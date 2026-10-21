@@ -3,6 +3,11 @@
 Not Ring data. The same date always produces the same events, so "vs last week" comparisons
 are stable. Each event carries `truth` (the generator's answer key) for tests only.
 
+It also makes up the doorbell's status checks (`status_samples`): "online" every 5 minutes from an hour before
+opening to an hour after closing, the shape of Shopfront's own GET /v1/devices/{id}/status samples
+(app/ring/status.py), so the demo's dispute pack shows its camera-coverage line. Each is marked `demo`, and the
+coverage sentence says they were made up, not asked of Ring.
+
 Like a doorbell with Ring's Smart Alerts on, some motion by people carries `ring_subtype="human"` (API
 reference, Notifications > Motion Detection: sub_type `human`, "Human detected"), so the demo shows the path
 Ring's own person signal takes. They are drawn from a separate seed, so the events themselves don't change, and
@@ -13,11 +18,13 @@ from __future__ import annotations
 
 import hashlib
 import random
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from app.models import DoorEvent, VisitType
 from app.ring.base import RingClient
+
+STATUS_EVERY_S = 300  # the demo's made-up status checks, as often as the live sampler's default
 
 # Share of people's motion events that the demo marks the way Ring's Smart Alert would ("human"); the rest stay
 # plain motion, as from a doorbell with Smart Alerts off or a person Ring didn't classify
@@ -46,6 +53,22 @@ class SyntheticRingClient(RingClient):
     def _at_min(self, day: date, minutes: int) -> datetime:
         minutes = max(0, min(minutes, 24 * 60 - 1))
         return self._at(day, minutes // 60, minutes % 60)
+
+    def status_samples(self, day: date) -> list[dict]:
+        """Made-up "online" status checks for `day`, in StatusLog.samples' shape, each marked demo. None on a
+        closed day, and none from the future."""
+        hours = self.hours[day.weekday()]
+        if not hours:
+            return []
+        now = datetime.now(self.tz)
+        at = self._at_min(day, max(0, hours[0] - 60))
+        end = self._at_min(day, min(24 * 60 - 1, hours[1] + 60))
+        out = []
+        while at <= end and at <= now:
+            out.append({"at": at, "online": True, "every_s": STATUS_EVERY_S, "request_id": None, "sampled": True,
+                        "demo": True})
+            at += timedelta(seconds=STATUS_EVERY_S)
+        return out
 
     def events_for_day(self, day: date) -> list[DoorEvent]:
         rng = self._rng(day)
