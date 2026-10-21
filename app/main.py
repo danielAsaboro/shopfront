@@ -27,7 +27,7 @@ from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
 from app import checks as kept_checks
-from app import coverage, dispute, pages, provenance
+from app import coverage, dispute, pack_signing, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, RING_SERVER_PATHS, UNSAFE, OwnerGate, PublicDemoGate
@@ -92,6 +92,7 @@ ring_link = RingLink(DATA, client_id=settings.ring_client_id, client_secret=sett
                      hmac_key=settings.ring_hmac_key)
 source = RingSource(settings, DATA / "ring-access-token", ring_link)
 live = LiveLog(DATA, settings.tz)
+pack_signer = pack_signing.make_signer(settings, DATA)  # dispute packs are signed (app/pack_signing.py)
 scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
 ask_probe = AskProbe(settings.aws_region, settings.bedrock_model_id)  # can Ask reach Bedrock from here?
 
@@ -772,7 +773,7 @@ def _setup(request: Request, section: str, error: str | None = None, notice: str
         "p": p, "days": list(zip(DAYS, hours)), "error": error, "notice": notice, "section": section,
         "cost_typed": (form or {}).get("redelivery_cost"),
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
-        "ring_linked": source.linked() if not source.pasted_token() else None,
+        "ring_linked": source.linked() if not source.pasted_token() else None, "pack_key": _pack_key_summary(),
         "orders": orders[:ORDERS_SHOWN], "orders_more": max(0, len(orders) - ORDERS_SHOWN),
         "order_days": len({e.day for e in orders}), "pairing": _pairing(request)}, status_code)
 
@@ -1009,9 +1010,28 @@ def dispute_zip(request: Request, date: str | None = Query(None), at: str | None
                 carrier: str = Query(""), tracking: str = Query(""), made: str | None = Query(None)):
     p = _pack(_parse_day(date), at, claim, order, carrier, tracking, made)
     name = f"shopfront-dispute-{p['day']}" + (f"-{p['claim']['time'][-5:].replace(':', '')}" if p["claim"] else "")
-    return Response(dispute.as_zip(p, frames), media_type="application/zip",
+    body = pack_signing.sign_zip(dispute.as_zip(p, frames), pack_signer, f"{name}.zip")  # + manifest.sig, VERIFY.txt
+    return Response(body, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}.zip"',
-                             "X-Manifest-SHA256": dispute.manifest_digest(p, frames)})
+                             "X-Manifest-SHA256": dispute.manifest_digest(p, frames),
+                             "X-Pack-Key-Id": pack_signer.jwk()["kid"]})
+
+
+@app.get(pack_signing.KEY_PATH)
+def pack_key():
+    """The public key dispute packs are signed with, as a JWK (public: a recipient checks a pack against it)."""
+    try:
+        return JSONResponse(pack_signer.jwk(), headers={"Cache-Control": "max-age=300"})
+    except Exception as exc:  # KMS unreachable or misconfigured: say so, never a key we don't have
+        return JSONResponse({"error": "KEY_UNAVAILABLE", "detail": type(exc).__name__}, status_code=503)
+
+
+def _pack_key_summary() -> dict | None:
+    try:
+        jwk = pack_signer.jwk()
+    except Exception:
+        return None
+    return {"kid": jwk["kid"], "alg": jwk["alg"], "signer": pack_signer.name, "url": pack_signing.KEY_PATH}
 
 
 @app.post("/orders/import")

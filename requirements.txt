@@ -7,4 +7,5 @@ python-dotenv==1.2.4
 httpx==0.28.1
 boto3==1.43.115
 botocore[crt]==1.43.115  # needed for credentials from `aws login`
+cryptography==50.0.2  # signs dispute packs (Ed25519 locally; verifies KMS ECDSA keys); scripts/verify_pack.py
 strands-agents==1.61.1  # Ask Shopfront: agent with tools over the door data, on Bedrock

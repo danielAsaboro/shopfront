@@ -247,6 +247,7 @@ sam build && sam deploy --guided
 | DemoLogRetentionDays | 7 | Days CloudWatch keeps the public demo's logs. |
 | AlarmEmail | empty | Optional address the alarm topic emails (AWS sends a confirmation link first). Empty: subscribe anything you like to `AlarmTopicArn` yourself. |
 | HmacFailureThreshold | 5 | Bad or missing signatures in 5 minutes above which `HmacFailureAlarm` fires. |
+| AppPrincipalArn | empty | Optional: the IAM role or user the app runs as. When set, the stack makes `PackSigningKey`, the KMS key that signs dispute packs (below), and only this principal may Sign with it. |
 
 SAM asks twice whether a function URL "has no authentication. Is this okay?": answer **y** to both (the
 webhook's authentication is the HMAC; the demo is public on purpose and read-only), and **Y** to IAM role
@@ -255,7 +256,7 @@ git-ignored because it can hold your Ring IDs; later deploys are just `sam build
 
 The stack's outputs: `DemoUrl`, `WebhookUrl`, `HmacSecretArn`, `WebhookTableName`, `FramesBucketName`,
 `AppPolicyArn`, `LogGroupName`, `ConsumerLogGroupName`, `QueueUrl`, `DeadLetterQueueArn`, `DemoLogGroupName`,
-`AlarmTopicArn`.
+`AlarmTopicArn`, and `PackSigningKeyArn` when AppPrincipalArn is set.
 
 `DemoUrl` (`https://<id>.lambda-url.<region>.on.aws/`) is the link for judges. Open it once yourself:
 the first request is the cold start. To print it again later:
@@ -326,6 +327,29 @@ and checks they give the same answers.
 Differences from the file log, on purpose: events from another device or account are dropped rather than
 stored, so `ignored()` is 0; and `recent()` reads the shop's whole table (bounded by the TTL), newest by
 Ring's timestamp first.
+
+### Sign dispute packs with KMS (optional)
+
+Every dispute pack zip carries `manifest.sig`, a signature over its `manifest.sha256`, and a `VERIFY.txt`
+with the one-line check (`python3 verify_pack.py <zip> --kid <key ID>`, [scripts/verify_pack.py](../scripts/verify_pack.py),
+offline, stdlib + `cryptography`). By default the key is an Ed25519 key the app makes in its data folder
+(0600). To keep the private key out of the shop computer altogether, deploy with
+`AppPrincipalArn=<the role or user the app runs as>` and set in `.env`:
+
+```sh
+SHOPFRONT_SIGNING=kms
+SHOPFRONT_SIGNING_KEY_ARN=<PackSigningKeyArn>
+```
+
+`PackSigningKey` is `ECC_NIST_P256`, `SIGN_VERIFY`; the app signs with `ECDSA_SHA_256` (`kms:Sign`,
+`MessageType=RAW`) and publishes the public key (from `kms:GetPublicKey`) as an ES256 JWK at
+`/.well-known/shopfront-pack-key` and on Set up. Its key policy gives the account administration but not
+`kms:Sign` or `kms:CreateGrant`, gives `AppPrincipalArn` `Sign`, `GetPublicKey` and `DescribeKey`, and denies
+`kms:Sign` to any other principal (`aws:PrincipalArn`), whatever an IAM policy or grant says. One asymmetric
+key costs about $1 a month plus $0.15 per 10,000 Sign calls (KMS pricing); a shop makes a handful of packs.
+Asymmetric keys don't rotate automatically: deploy a new one and keep the old public key for packs it signed.
+Tested with botocore's Stubber and moto ([tests/test_pack_signing.py](../tests/test_pack_signing.py)); not yet
+run against a real KMS key.
 
 ## 4. What it costs at one shop's volume
 

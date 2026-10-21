@@ -53,7 +53,7 @@ ENV_FLAG = "SHOPFRONT_PUBLIC_DEMO"
 # GET/HEAD reads a visitor may make. Everything else is refused before it reaches the app.
 READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/healthz", "/favicon.ico",
                         "/api/deliveries", "/api/events", "/api/briefing", "/api/attempt", "/api/dispute",
-                        "/api/webhooks"})
+                        "/api/webhooks", "/.well-known/shopfront-pack-key"})
 READ_PREFIXES = ("/frames/",)
 READ_METHODS = frozenset({"GET", "HEAD"})
 
@@ -244,6 +244,7 @@ def install(main: ModuleType, data: Path, today: date | None = None, setattr=set
     dated orders CSV. `setattr` lets tests use monkeypatch.setattr, so their app.main is restored after."""
     from app.classify.rules import RulesClassifier
     from app.owner import PublicDemoGate
+    from app.pack_signing import MemorySigner
     from scripts import demo as demo_script
 
     tz = main.settings.tz
@@ -267,6 +268,7 @@ def install(main: ModuleType, data: Path, today: date | None = None, setattr=set
         "agent_factory": _no_agent,
         "_housekeeping": lambda: None,  # nothing to prune, and no deletes
         "gate": PublicDemoGate(hosts=main.settings.allowed_hosts.split(",")),
+        "pack_signer": MemorySigner(),  # a key per cold start, never written; the demo's packs are made-up anyway
     }.items():
         if not hasattr(main, name):
             raise RuntimeError(f"app.main has no {name}; the public demo can't make it read-only")

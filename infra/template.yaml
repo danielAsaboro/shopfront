@@ -3,8 +3,9 @@ Transform: AWS::Serverless-2016-10-31
 Description: >-
   Shopfront: a public HTTPS endpoint for Ring's signed webhooks (Lambda Function URL) that checks the HMAC and
   queues the event in SQS, a consumer that stores it in a DynamoDB log the app reads (dead-letter queue after
-  5 tries), a private S3 bucket for door frames, the HMAC key in Secrets Manager, and a read-only public
-  demo of the app over a made-up shop (a second Function URL). See docs/aws.md.
+  5 tries), a private S3 bucket for door frames, the HMAC key in Secrets Manager, an optional
+  KMS key that signs dispute packs, and a read-only public demo of the app over a made-up shop (a second
+  Function URL). See docs/aws.md.
 
 Parameters:
   ShopId:
@@ -69,6 +70,13 @@ Parameters:
     Description: >-
       Optional. An email address the alarm topic sends to (AWS mails a confirmation link first). Empty: the
       topic has no subscription, and you subscribe whatever you like to the AlarmTopicArn output.
+  AppPrincipalArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-zA-Z-]*:iam::[0-9]{12}:(role|user)/[a-zA-Z0-9+=,.@_/-]+$"
+    Description: >-
+      Optional. The IAM role or user the Shopfront app runs as. When set, the stack makes PackSigningKey, a KMS
+      key that only this principal may Sign with (dispute packs, app/pack_signing.py; SHOPFRONT_SIGNING=kms).
   HmacFailureThreshold:
     Type: Number
     Default: 5
@@ -85,6 +93,7 @@ Conditions:
   CapDemoConcurrency: !Not [!Equals [!Ref DemoConcurrency, -1]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
   HasShopMap: !Not [!Equals [!Ref ShopMapParameter, ""]]
+  HasAppPrincipal: !Not [!Equals [!Ref AppPrincipalArn, ""]]
 
 Resources:
   # The key Ring signs webhooks with (partner onboarding). The template only creates the empty slot; the
@@ -609,6 +618,74 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlarmTopic]
 
+  # ---- Dispute pack signing: an asymmetric KMS key the app signs with and nobody else can ----------------
+  # ECC_NIST_P256 with ECDSA_SHA_256 (JOSE ES256): the private key never leaves KMS; the app publishes the public
+  # key at /.well-known/shopfront-pack-key and scripts/verify_pack.py checks a pack offline. The account keeps
+  # administration (so the key can't be orphaned) but not Sign or CreateGrant, and an explicit Deny refuses Sign
+  # to every principal but AppPrincipalArn, whatever an IAM policy or a grant says. Asymmetric keys don't
+  # rotate automatically; to rotate, deploy a new key and keep the old public key for packs it signed.
+  PackSigningKey:
+    Type: AWS::KMS::Key
+    Condition: HasAppPrincipal
+    Properties:
+      Description: Shopfront dispute pack signing key (ECDSA P-256); only the app principal may Sign
+      KeySpec: ECC_NIST_P256
+      KeyUsage: SIGN_VERIFY
+      PendingWindowInDays: 30
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdministersButDoesNotSign
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action:
+              - kms:DescribeKey
+              - kms:GetKeyPolicy
+              - kms:GetPublicKey
+              - kms:GetKeyRotationStatus
+              - kms:ListGrants
+              - kms:ListKeyPolicies
+              - kms:ListResourceTags
+              - kms:PutKeyPolicy
+              - kms:UpdateKeyDescription
+              - kms:EnableKey
+              - kms:DisableKey
+              - kms:RevokeGrant
+              - kms:RetireGrant
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:CreateAlias
+              - kms:UpdateAlias
+              - kms:DeleteAlias
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: "*"
+          - Sid: OnlyTheAppSigns
+            Effect: Allow
+            Principal:
+              AWS: !Ref AppPrincipalArn
+            Action:
+              - kms:Sign
+              - kms:GetPublicKey
+              - kms:DescribeKey
+            Resource: "*"
+          - Sid: NobodyElseSigns
+            Effect: Deny
+            Principal: "*"
+            Action: kms:Sign
+            Resource: "*"
+            Condition:
+              StringNotEquals:
+                aws:PrincipalArn: !Ref AppPrincipalArn
+
+  PackSigningKeyAlias:
+    Type: AWS::KMS::Alias
+    Condition: HasAppPrincipal
+    Properties:
+      AliasName: !Sub "alias/shopfront-${AWS::StackName}-pack-signing"
+      TargetKeyId: !Ref PackSigningKey
+
   # For the machine that runs the Shopfront app (attach to its IAM user or role): read and replay webhooks
   # in the table, and keep door frames in the bucket. Nothing else.
   ShopfrontAppPolicy:
@@ -670,3 +747,7 @@ Outputs:
   AlarmTopicArn:
     Description: SNS topic every alarm notifies; subscribe email, chat or a pager to it
     Value: !Ref AlarmTopic
+  PackSigningKeyArn:
+    Condition: HasAppPrincipal
+    Description: SHOPFRONT_SIGNING_KEY_ARN for the app (with SHOPFRONT_SIGNING=kms); only AppPrincipalArn may Sign
+    Value: !GetAtt PackSigningKey.Arn

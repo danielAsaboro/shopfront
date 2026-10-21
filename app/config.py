@@ -52,6 +52,11 @@ class Settings:
     aws_region: str = _env("AWS_REGION", "us-east-1")
     bedrock_model_id: str = _env("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
+    # Dispute packs are signed (app/pack_signing.py): "local" (default, an Ed25519 key made in the data folder)
+    # or "kms" with SHOPFRONT_SIGNING_KEY_ARN (an ECC_NIST_P256 key; infra/template.yaml's PackSigningKey).
+    signing: str = _env("SHOPFRONT_SIGNING", "local").lower()
+    signing_key_arn: str = _env("SHOPFRONT_SIGNING_KEY_ARN")
+
     data_dir: str = _env("SHOPFRONT_DATA_DIR", ".data")
     # Door frames (pictures of people) are deleted after this many days; 0 keeps them.
     frame_days: float = frame_days(_env("SHOPFRONT_FRAME_DAYS"))

@@ -111,5 +111,6 @@
     <p>The receiving desk ticks off each delivery as the doorbell sees it.{% if ring_mode == "ring" %} Open the live door to see a courier labelled as they arrive.{% endif %}</p>
     <a class="primary" href="/?date={{ today }}">Open today's receiving desk</a>{% if ring_mode == "ring" %} &nbsp; <a href="/live">Live door</a>{% endif %}
   </section>
+  {% if pack_key %}<p class="proof" id="pack-key">Dispute packs are signed ({{ pack_key.alg }}{% if pack_key.signer == "kms" %}, key in AWS KMS{% endif %}). Key ID <code>{{ pack_key.kid }}</code>, public key at <a href="{{ pack_key.url }}">{{ pack_key.url }}</a>. Give the key ID to whoever checks a pack.</p>{% endif %}
   {% include "_pairing.html" %}
 {% endblock %}

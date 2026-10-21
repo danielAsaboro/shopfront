@@ -63,7 +63,10 @@ prints three links, the check first:
    Northline Parcel this month; "Keep in Northline Parcel's record" under a check adds it.
 3. **The dispute pack** (`/dispute?…`): the finding, the door log around the scan, the posted hours,
    what the pack can't show, two drafts to pick from (to the supplier, and to the carrier about its
-   scan), and a zip (`/dispute.zip`).
+   scan), and a signed zip (`/dispute.zip`): `manifest.sha256` lists every file's SHA-256, `manifest.sig`
+   signs it with the shop's key (Ed25519, or an AWS KMS key), and anyone can check it offline with
+   `python3 scripts/verify_pack.py <zip> --kid <key ID>`. The key ID is on Set up and the public key at
+   `/.well-known/shopfront-pack-key`.
 
 The demo keeps its data in `.data/demo` (git-ignored) and starts fresh each run. Use `--port` if 8000
 is taken. To run the app on its own, use `.venv/bin/uvicorn app.main:app --port 8000`. With no Ring

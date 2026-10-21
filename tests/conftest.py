@@ -39,6 +39,7 @@ from app.classify.rules import RulesClassifier  # noqa: E402
 from app.deliveries import DeliveryBook, FrameStore  # noqa: E402
 from app.live import LiveLog  # noqa: E402
 from app.owner import OwnerGate  # noqa: E402
+from app.pack_signing import LocalSigner  # noqa: E402
 from app.ring import RingSource  # noqa: E402
 from app.ring.link import RingLink  # noqa: E402
 from app.ring.status import StatusLog  # noqa: E402
@@ -112,6 +113,7 @@ def no_local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "status_log", StatusLog(d / "ring-status.jsonl"))
     monkeypatch.setattr(main, "live", LiveLog(d, main.settings.tz))
     monkeypatch.setattr(main, "classifier", RulesClassifier())
+    monkeypatch.setattr(main, "pack_signer", LocalSigner(d / "pack-signing-key.pem"))
     # Starlette's TestClient connects as client "testclient" to host "testserver". Production never
     # treats either as this machine, so only the tests add them.
     monkeypatch.setattr(main, "gate", OwnerGate(d / "owner-secret", hosts={"testserver"},

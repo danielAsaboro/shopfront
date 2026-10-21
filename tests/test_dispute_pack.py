@@ -293,7 +293,8 @@ def _verify(blob: bytes) -> tuple[dict[str, str], str]:
         digest, name = line.split("  ", 1)  # sha256sum's text-mode separator: two spaces
         assert len(digest) == 64 and int(digest, 16) >= 0
         listed[name] = digest
-    assert set(listed) == set(z.namelist()) - {"manifest.sha256"}  # every other file, nothing else
+    # every other file, nothing else; the signature and its how-to (app/pack_signing.py) sign the manifest itself
+    assert set(listed) == set(z.namelist()) - {"manifest.sha256", "manifest.sig", "VERIFY.txt"}
     for name, digest in listed.items():
         assert hashlib.sha256(z.read(name)).hexdigest() == digest, name
     return listed, hashlib.sha256(text.encode()).hexdigest()
@@ -367,7 +368,9 @@ def test_every_window_is_named_where_it_appears_and_the_hedge_is_one_line(monkey
     page = TestClient(main.app).get("/dispute", params={"date": DAY.isoformat(), "at": "12:40",
                                                          "claim": "business_closed"}).text
     assert "Door log, 30 minutes either side of the scan</h2>" in page
-    assert "events in the 30 minutes either side (12:10–13:10)" in page
+    # round 4: the window is the verdict's fact and its picture, which brackets the 10 minutes that count as near
+    assert "door events 12:10–13:10" in page and "<desc id=\"pack-d\">Door from 12:10 to 13:10." in page
+    assert "10 minutes either side bracketed as near the scan" in page and ">±10 min</text>" in page
     assert page.count("door answered") == 1 and page.count("can miss people") == 1
 
 
