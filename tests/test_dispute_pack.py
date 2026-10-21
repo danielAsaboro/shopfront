@@ -205,11 +205,11 @@ def test_synthetic_events_watermark_the_pack_draft_and_zip(tmp_path):
     vs = [visit(12, m, "customer", "bedrock", src="synthetic") for m in (13, 20, 50)]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["demo_data"] and p["watermark"].startswith("DEMO DATA, not from a camera")
-    # Round 2: one short tag on the subject, one line on top of the body, the full story in the README
+    # Round 2: one short tag on the subject, the full story in the README. Round 8: the body's own warning line
+    # went (the page's watermark already said it); the [DEMO] subject travels with the copied message
     assert p["draft"]["subject"].startswith("[DEMO] ") and p["draft"]["subject"].count("DEMO") == 1
-    first, rest = p["draft"]["body"].split("\n\n", 1)
-    assert first == "DEMO DATA, not from a camera: don't send this." and rest.startswith("Hello")
-    assert "DEMO" not in rest and "demo generator" not in rest
+    body = p["draft"]["body"]
+    assert body.startswith("Hello") and "DEMO" not in body and "demo generator" not in body
     assert any("synthetic" in x for x in p["limits"]) and p["cited_sources"] == ["synthetic"]
     text = dispute.as_text(p)
     assert text.startswith("DEMO DATA, not from a camera")
@@ -223,8 +223,9 @@ def test_replayed_events_are_disclosed_in_limits_and_draft(tmp_path):
     vs = confirmed_lunch() + [visit(12, 55, "customer", "bedrock", src="ring-webhook-replay")]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["replayed"] and dispute.REPLAY_LIMIT in p["limits"]
-    assert p["draft"]["body"].split("\n\n")[0] == "REPLAYED RING EVENTS, not live Ring notifications: don't send this as evidence."
+    assert p["draft"]["body"].startswith("Hello")  # round 8: the [DEMO] subject is the draft's one mark
     assert p["draft"]["subject"].startswith("[DEMO] ")
+    assert dispute.REPLAYED in dispute.as_text(p).split("\n")[0]
     real = pack(confirmed_lunch(), rc.check_closed_scan(at(12, 40), confirmed_lunch(), OPEN, now=NOW), tmp=tmp_path)
     assert not real["replayed"] and not real["demo_data"] and real["watermark"] is None
     assert real["draft"]["body"].startswith("Hello,")

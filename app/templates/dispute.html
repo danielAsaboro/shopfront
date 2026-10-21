@@ -38,7 +38,7 @@
   <h1>{% if p.claim %}{{ p.claim.label }} scan at {{ p.claim.time|local_time(p.day) }}{% elif p.order %}{{ p.order.supplier }}{% if p.order.order_ref %} · {{ p.order.order_ref }}{% endif %}{% else %}{{ p.shop }}{% endif %}</h1>
 
   {% if p.watermark %}
-  {# The one place the pack page says it: the banner above is the site's, the draft gets a tag and one line #}
+  {# The one place the pack page says it (no site banner above it); the draft's subject gets the [DEMO] tag #}
   <p class="watermark" role="alert">{{ "Demo data" if p.demo_data else "Replayed Ring events" if p.replayed else "Ring Developer Playground scenes" }}: don't send this pack as evidence.<span>{% if p.playground %}Its door events include Playground scenes (Ring simulator): Ring's Developer Playground filed them, not the shop's door. {% endif %}{% if p.demo_data %}Its door events came from Shopfront's demo generator, not a camera{% if p.replayed %}, and the courier alert from its webhook replay feeder, not from Ring{% endif %}.{% elif p.replayed %}Some door events came from Shopfront's webhook replay feeder, not a live Ring notification.{% endif %} The zip's README says the same.{% if ring_mode == "synthetic" %} <a class="no-print" href="/connect">Connect Ring</a> to use your doorbell.{% endif %}</span></p>
   {% endif %}
 

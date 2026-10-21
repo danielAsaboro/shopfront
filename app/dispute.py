@@ -14,7 +14,8 @@ A scan pack offers two drafts and the owner picks: one to the supplier, as a rec
 shipper is the carrier's customer, so it is who can make the carrier act), and one to the carrier about
 its own scan, by the name the owner typed. With no order there is only the carrier's; a pack about an
 order with no scan (missing, short, damaged) only has the supplier's. When any event that day is Shopfront's demo data or a replayed
-webhook, the pack, the draft and the zip README say so in their first line.
+webhook, the pack and the zip README say so in their first line and the draft's subject carries "[DEMO]", which travels
+with the copied message; the pack page says it once, in its watermark (round 8: not again inside the draft).
 
 Shopfront never sends it: the owner reads it, edits it and sends it from their own email. When the
 door agrees with the carrier there is no draft, and the pack says why.
@@ -55,19 +56,10 @@ PLAYGROUND_LIMIT = ("Some events are Ring Developer Playground scenes (marked ri
 DEMO = "DEMO DATA, not from a camera"
 REPLAYED = "REPLAYED RING EVENTS, not live Ring notifications"
 PLAYGROUND_MARK = "RING DEVELOPER PLAYGROUND SCENES, not the shop's door"
-SUBJECT_TAG = "[DEMO] "  # one short tag on the draft's subject; the body's first line says what it means
-
-
-def draft_warning(demo: bool, replayed: bool, playground: bool = False) -> str:
-    """The one line at the top of a draft built on demo, replayed or Playground data. The pack page's watermark
-    and the zip README carry the full explanation; the draft only has to stop it being sent."""
-    if playground and not demo:
-        return f"{PLAYGROUND_MARK}{', with replayed Ring events' if replayed else ''}: don't send this as evidence."
-    if demo and replayed:
-        return f"{DEMO}, with replayed Ring events: don't send this."
-    if demo:
-        return f"{DEMO}: don't send this."
-    return f"{REPLAYED}: don't send this as evidence."
+# The one mark a draft built on demo, replayed or Playground data carries: a tag on its subject, which the page's
+# "Copy this message" copies with the body. The pack page's watermark and the zip README say what it means; round 8
+# dropped the body's own warning line, the page's second notice.
+SUBJECT_TAG = "[DEMO] "
 
 
 # Where a frame came from, by the source of the event it belongs to
@@ -286,7 +278,6 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     ds, pack["no_draft_reason"] = drafts(pack, visits)
     for d in ds if marks else []:
         d["subject"] = SUBJECT_TAG + d["subject"]
-        d["body"] = draft_warning(demo, replayed, playground) + "\n\n" + d["body"]
     pack["drafts"] = ds
     pack["draft"] = ds[0] if ds else None  # the one shown first: the supplier's when there is an order
     _reader_rows(pack)
@@ -399,12 +390,12 @@ def _facts(p: dict) -> str:
 
 def _people(a: dict) -> str:
     """", and Ring's person detection classified 4 of them as people": Ring's own signal, in the shop's voice. A
-    demo or replayed alert is never written as Ring's (the draft is watermarked too)."""
+    demo or replayed alert is never written as Ring's (the draft's subject is tagged [DEMO] too)."""
     n = a.get("people") or 0
     if not n:
         return ""
     real = set(a.get("people_source") or []) <= {"ring", "ring-webhook"}
-    if not real:  # the draft's first line already says it is demo data
+    if not real:  # the draft's [DEMO] subject already says it is demo data
         return f", {'one of them a person alert' if n == 1 else f'{n} of them person alerts'}"
     return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
 
@@ -693,8 +684,8 @@ def _readme(p: dict, frame_name: str | None) -> str:
         lines += ["", "Why this pack says DEMO: " + " ".join(
             ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])
             + ([PLAYGROUND_LIMIT] if p.get("playground") else [])),
-            "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
-            "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
+            "The pack page shows this once, in its watermark, and the draft's subject carries [DEMO]: don't send "
+            "it. A pack built from your own Ring doorbell has none of these marks."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]
     return "\n".join(lines) + "\n"
 

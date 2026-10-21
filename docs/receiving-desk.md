@@ -69,7 +69,8 @@ events, skipped at stage 0, labelled by Ring, reached Bedrock, labelled by rules
 **Replays.** The Developer Playground sends no webhooks. `scripts/feed_webhook.py` posts signed
 payloads in Ring's documented shape with `X-Shopfront-Replay: 1`; they are logged `replayed: true`,
 their events say `ring-webhook-replay`, and every dispute pack built on them says so in its limits, in
-the first line of the draft and its subject ("REPLAYED RING EVENTS"), and in the zip's README.
+its watermark and `pack.txt` ("REPLAYED RING EVENTS"), in the draft's subject ("[DEMO]") and in the zip's
+README.
 
 ## 3. Carrier scans (`app/reconcile.py`, dashboard "The carrier's tracking says")
 
@@ -220,8 +221,11 @@ courier came later but no order is linked, or for an order that is only "possibl
 "not seen" order gets a draft only when every door event in its window was looked at.
 
 **Demo and replayed data.** The pack records every event's source (`event_sources`, `cited_sources`).
-If any is `synthetic`, the pack, `pack.txt`, the zip README and the draft's subject and first line say
-"DEMO DATA, not from a camera"; replayed webhooks add "REPLAYED RING EVENTS". Frames say where they
+If any is `synthetic`, `pack.txt` and the zip README start "DEMO DATA, not from a camera" (replayed webhooks
+add "REPLAYED RING EVENTS"), the pack page says it once in its watermark, and the draft's subject starts
+"[DEMO]", which the copy button copies with the body. Every door event row in the pack (page, `pack.txt`,
+`pack.json`) takes its label and "how we know" from `app/provenance.py`, so a demo person alert reads "Demo
+person alert, no camera", never Ring's Smart Alert. Frames say where they
 came from: a Ring image download, or a frame captured in the owner's browser from a Ring live-view
 session. Times are the shop's (`made_at`, the staff tap).
 

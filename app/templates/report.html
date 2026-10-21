@@ -29,12 +29,14 @@
   }
 </style>
 {% endblock %}
+{# One demo notice on this page (round 8): the report's watermark, which also prints, stands in for the site banner #}
+{% block banner %}{% with source_said = rep.demo %}{% include "_banner.html" %}{% endwith %}{% endblock %}
 {% block main %}
 <article class="report">
   <div class="eyebrow">Monthly carrier report · {{ shop }}</div>
   <h1>Carrier scans, {{ rep.month }}</h1>
   <p class="why" style="margin:0">Made {{ made|local_stamp }} (shop time) by Shopfront from {{ shop }}'s own kept checks.</p>
-  {% if rep.demo %}<p class="watermark" role="alert">Demo data: {{ 'every check here was' if rep.demo == rep.checks else rep.demo ~ ' of these checks were' }} made on Shopfront's demo door. Don't send this report.</p>{% endif %}
+  {% if rep.demo %}<p class="watermark" role="alert">Demo data: {{ 'every check here was' if rep.demo == rep.checks else rep.demo ~ ' of these checks were' }} made on Shopfront's demo door. Don't send this report.{% if ring_mode == "synthetic" %} <a class="no-print" href="/connect">Connect Ring</a> to use your doorbell.{% endif %}</p>{% endif %}
   <div class="actions">
     <button type="button" class="primary" onclick="window.print()">Print or save as PDF</button>
     <a href="/#record">Back to the receiving desk</a>

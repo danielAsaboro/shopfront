@@ -411,8 +411,8 @@ def test_visit_label_marks_rule_guesses():
 
 
 def test_demo_pack_says_demo_once_on_the_page(c):
-    """Round 2: the site banner and ONE watermark block; the subject gets "[DEMO]", the draft one line, and the
-    'what this does not show' list doesn't repeat it."""
+    """Round 2: ONE watermark block; the subject gets "[DEMO]", and the 'what this does not show' list doesn't
+    repeat it. Round 8: the draft's body no longer repeats it either."""
     e = main.book.add(date(2026, 10, 7), "Dairy Co", "05:00", "05:30", order_ref="PO-9")
     page = c.get(f"/dispute?date=2026-10-07&order={e.id}").text
     assert page.count('class="watermark"') == 1 and page.count("demo generator") == 1
@@ -421,7 +421,7 @@ def test_demo_pack_says_demo_once_on_the_page(c):
     subject = page.split('id="subject-supplier">')[1].split("</dd>")[0]
     assert subject.startswith("[DEMO] ") and subject.count("DEMO") == 1
     body = page.split('id="draft-supplier">')[1].split("</div>")[0]
-    assert body.count("DEMO") == 1 and body.startswith("DEMO DATA, not from a camera: don&#39;t send this.")
+    assert "DEMO" not in body and body.startswith("Hello")
 
 
 def test_the_desk_says_which_day_it_shows():
@@ -448,7 +448,7 @@ def test_a_scan_pack_page_lets_the_owner_pick_the_supplier_or_the_carrier(c):
     assert page.count('name="to"') == 2 and "Pick a draft" in page
     assert "To Valley Creamery, the supplier" in page and "To Northline Parcel, the carrier" in page
     assert 'id="draft-supplier">' in page and 'id="draft-carrier">' in page
-    assert page.split('id="draft-carrier">')[1].split("</div>")[0].split("\n\n")[1].startswith("Hello Northline Parcel,")
+    assert page.split('id="draft-carrier">')[1].split("</div>")[0].startswith("Hello Northline Parcel,")  # round 8: no warning line
 
 
 def test_the_story_is_on_screen_first(c):

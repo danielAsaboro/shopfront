@@ -30,7 +30,7 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 ## Components
 
 - **Header.** The same on every page: "Shopfront · shop name" and links to the receiving desk, live door, set up and Ring. The current page is bold with an ink underline.
-- **Banner** (synthetic mode, replayed webhooks, Ring sign-in expired). On every page, error pages and the printed pack included, except where the page carries its own watermark saying the same (the dispute page's pack watermark, which links to Connect Ring), so the warning appears once. Shows the source of truth. Full width, warn colours, one sentence.
+- **Banner** (synthetic mode, replayed webhooks, Ring sign-in expired). On every page, error pages and the printed pack included, except where the page carries its own watermark saying the same (the dispute page's pack watermark and the monthly report's, each linking to Connect Ring in demo mode). One page-level notice per page: never a banner and a watermark, and never a second warning inside the draft. Shows the source of truth. Full width, warn colours, one sentence.
 - **Details.** Request IDs, hashes, sub_types, event IDs and the funnel sit in a closed "Details" toggle on owner pages. Printing a pack opens them.
 - **Receiving desk.** The day's orders, each with how its courier was seen (Ring alert, Bedrock frame, or "possible, unconfirmed" from the rules) or "not seen". Leads the dashboard.
 - **Check the door.** One row: the carrier's scan, its time, carrier and tracking, one button. The answer is one sentence, in warn colour only when the owner should act, with a link to the dispute pack.
@@ -47,12 +47,12 @@ The values live in [app/templates/_style.html](app/templates/_style.html) (`:roo
 
 | State | What shows |
 |---|---|
-| Synthetic | Banner on every page (or the pack's watermark on the dispute page) |
+| Synthetic | Banner on every page (or the page's own watermark on the dispute page and /report) |
 | Live | Footer with the Ring request ID |
 | Ring error | `ring_error.html` with a plain sentence, "Reconnect Ring", and the named `RingStatus` under Details |
 | Ring sign-in expired (dashboard) | The receiving desk from orders and Ring's webhooks, with a notice; unconfirmed orders read "not confirmed", never "no courier seen", and the scan check waits for Ring |
 | Bad link or input | `error.html`: a title, one sentence and a way back; the HTTP status and detail under Details |
-| Demo or replayed data in a pack | The watermark ("DEMO DATA, not from a camera") above the verdict, on screen and in print |
+| Demo or replayed data in a pack | The watermark ("Demo data: don't send this pack as evidence") above the verdict, on screen and in print. What leaves the page stays marked: the draft's subject starts "[DEMO]" (the copy button copies it with the body), and pack.txt and the zip README start "DEMO DATA, not from a camera" |
 | Empty day | "No door activity recorded for <date>." |
 | Closed day | "The shop was closed." Doorbell presses while closed are still listed. |
 | No orders yet | One sentence on what Shopfront does, with links to import orders, check a scan and the dispute pack. |
