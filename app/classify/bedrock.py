@@ -217,7 +217,8 @@ class BedrockClassifier(Classifier):
             self._record(rec)
             return self.fallback.classify(event, open_hours, note=f"Bedrock error: {type(exc).__name__}")
         self._note(rec, resp, started)
-        visit = ClassifiedVisit(event, visit_type, confidence, reason, self.name, rec.get("request_id"))
+        request_id = (resp.get("ResponseMetadata") or {}).get("RequestId")
+        visit = ClassifiedVisit(event, visit_type, confidence, reason, self.name, request_id)
         rec["label"] = visit.visit_type.value
         self._record(rec)
         return visit
