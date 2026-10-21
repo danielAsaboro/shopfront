@@ -4,18 +4,21 @@
 
 What it does, in order:
 
-1. Picks the demo day: the most recent day before today when the demo shop is open, so nothing
-   it shows is in the future.
+1. Picks the demo day: the most recent day before today when the demo shop is open and its synthetic
+   door leaves a scan time the door can answer, so nothing it shows is in the future.
 2. Copies samples/orders.csv with its dates moved to that day and imports it into a fresh data
    folder (.data/demo, git-ignored), the same way the CSV upload on /setup does.
 3. Starts Shopfront on that folder with synthetic door events (no Ring account needed; every page
    says the events are synthetic).
-4. Replays one signed Ring `package_delivery` webhook at 10:12 through scripts/feed_webhook.py,
-   the way Ring's Smart Alert would announce the flour courier. It is logged as a replay, never as
-   Ring's own.
+4. Replays one signed Ring `package_delivery` webhook at 10:12, built and signed the way
+   scripts/feed_webhook.py does it, the way Ring's Smart Alert would announce the flour courier. It is
+   logged as a replay, never as Ring's own. The receiving desk must then show that alert as the flour
+   order's courier (PO-1041); if it doesn't, the demo stops and says so instead of telling a story the
+   page contradicts.
 5. Picks a time when the door was busy but no one was at it, treats it as the carrier's
-   "business closed" scan for the dairy order, asks the running app what the door shows, and
-   prints the links to check it and to build the dispute pack.
+   "business closed" scan for the dairy order, asks the running app what the door shows and builds the
+   dispute pack, and prints the links to both. The pack must have a draft; if the door doesn't support
+   one, the demo stops and says why.
 
 The server keeps running until Ctrl-C. Nothing is sent to any carrier or supplier.
 """
@@ -45,8 +48,10 @@ MARKER = ".shopfront-demo"
 SHOP_NAME = "Corner Bakery"
 SHOP_HOURS = "8-18,8-18,8-18,8-18,8-19,9-16,closed"  # Monday first
 CARRIER = "Northline Parcel"  # made-up carrier; the owner types the real one on the dashboard
-PACKAGE_AT = "10:12"          # Ring's package_delivery alert for the flour order (PO-1041)
+PACKAGE_AT = "10:12"          # Ring's package_delivery alert for the flour order
+FLOUR_ORDER = "PO-1041"       # Hillside Mill, due 10:00-11:00
 SCAN_ORDER = "PO-1042"        # the dairy order the carrier scanned "business closed"
+SCAN_WINDOW = ("13:00", "16:00")  # its delivery window in samples/orders.csv
 DEMO_HMAC_KEY = "demo-key"
 
 
@@ -59,11 +64,11 @@ def open_hours(spec: str, day: date) -> tuple[int, int] | None:
     return start, end
 
 
-def demo_day(today: date, spec: str = SHOP_HOURS) -> date:
-    """The most recent day before `today` when the shop was open."""
-    for back in range(1, 8):
+def demo_day(today: date, spec: str = SHOP_HOURS, usable=lambda d: True) -> date:
+    """The most recent day before `today` when the shop was open (and `usable(day)` holds)."""
+    for back in range(1, 29):
         d = today - timedelta(days=back)
-        if open_hours(spec, d):
+        if open_hours(spec, d) and usable(d):
             return d
     raise ValueError("the demo hours have no open day")
 
@@ -79,27 +84,48 @@ def dated_orders(text: str, day: date) -> str:
     return out.getvalue()
 
 
-def pick_scan_time(day: date, events: list[datetime], hours: tuple[int, int], avoid: list[datetime],
-                   tz: ZoneInfo) -> str:
-    """A time inside posted hours with door activity within 30 minutes but nothing within 12, so the
-    door shows an open, busy shop and no courier near the scan. Prefers the afternoon delivery window."""
+def pick_scan_time(day: date, events: list[datetime], hours: tuple[int, int], couriers: list[datetime],
+                   tz: ZoneInfo, prefer: tuple[str, str] | None = None) -> str | None:
+    """A "business closed" scan time the door can honestly answer, or None: inside posted hours, with door
+    activity within 30 minutes (so the door was recording) but nothing within 12 (more than the scan
+    check's 10-minute tolerance, so nothing near it could have been the courier), and well after every
+    courier Ring confirmed that day (a scan before one reads "a courier came later"). Prefers the scanned
+    order's window `prefer` ("13:00", "16:00"), then a busier door."""
     open_h, close_h = hours
 
-    def ok(t: datetime) -> bool:
+    def score(t: datetime) -> tuple | None:
         gaps = [abs((e - t).total_seconds()) / 60 for e in events]
-        return (all(g > 12 for g in gaps) and sum(g <= 30 for g in gaps) >= 2
-                and all(abs((a - t).total_seconds()) / 60 > 40 for a in avoid))
+        nearby = sum(g <= 30 for g in gaps)
+        if not nearby or any(g <= 12 for g in gaps) or any((t - c).total_seconds() / 60 <= 40 for c in couriers):
+            return None
+        in_window = prefer is not None and prefer[0] <= t.strftime("%H:%M") < prefer[1]
+        return (in_window, min(nearby, 2))
 
-    def slots(lo: int, hi: int):
-        for h in range(lo, hi):
-            for m in range(0, 60, 5):
-                yield datetime(day.year, day.month, day.day, h, m, tzinfo=tz)
+    best = None
+    for m in range((open_h + 1) * 60, (close_h - 1) * 60):
+        t = datetime(day.year, day.month, day.day, m // 60, m % 60, tzinfo=tz)
+        s = score(t)
+        if s is not None and (best is None or s > best[0]):
+            best = (s, t)
+    return best[1].strftime("%H:%M") if best else None
 
-    preferred = list(slots(max(open_h, 13), min(close_h - 1, 16)))
-    for t in preferred + list(slots(open_h + 1, close_h - 1)):
-        if ok(t):
-            return t.strftime("%H:%M")
-    return f"{min(max(open_h + 1, 14), close_h - 1):02d}:30"
+
+def _package_at(day: date, tz: ZoneInfo) -> datetime:
+    return datetime.combine(day, datetime.strptime(PACKAGE_AT, "%H:%M").time(), tzinfo=tz)
+
+
+def has_scan_slot(day: date, tz: ZoneInfo, window: tuple[str, str] = SCAN_WINDOW) -> bool:
+    """Whether the demo's synthetic door that day leaves a scan time the door can answer (some days are
+    too busy). The same generator, hours and time zone the demo server uses."""
+    from app.hours import parse_hours
+    from app.ring.synthetic import SyntheticRingClient
+
+    hours = open_hours(SHOP_HOURS, day)
+    if not hours:
+        return False
+    events = [e.timestamp for e in SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)]
+    return pick_scan_time(day, events + [_package_at(day, tz)], hours, [_package_at(day, tz)],
+                                          tz, window) is not None
 
 
 def _port_busy(port: int) -> bool:
@@ -147,6 +173,49 @@ def _import_orders(data: Path, text: str) -> int:
     return len(parsed["rows"])
 
 
+class DemoMismatch(SystemExit):
+    """The pages don't say what the demo is about to tell the viewer."""
+
+
+def feed_package_alert(client, day: date, tz: ZoneInfo, key: str) -> None:
+    """POST the signed package_delivery replay at PACKAGE_AT, exactly as scripts/feed_webhook.py would."""
+    from scripts.feed_webhook import payload, signed
+
+    raw, sig = signed(payload("motion_detected", _package_at(day, tz), "replay-doorbell", "package_delivery"), key)
+    r = client.post("/webhooks/ring", content=raw, headers={"X-Signature": sig, "Content-Type": "application/json"})
+    if r.status_code != 200:
+        raise DemoMismatch(f"The signed webhook replay was refused: {r.status_code} {r.text}")
+
+
+def walk(client, day: date, tz: ZoneInfo, orders_text: str) -> dict:
+    """The demo's story, read back from the running app: the flour order's courier on the receiving desk,
+    the dairy order's "business closed" scan, its check and its dispute pack. `client` is anything with
+    httpx's get/post on the app (an httpx.Client with base_url, or Starlette's TestClient). Raises
+    DemoMismatch when the app doesn't say what the demo would print."""
+    hours = open_hours(SHOP_HOURS, day)
+    assert hours
+    desk = client.get("/api/deliveries", params={"date": day.isoformat()}).json()
+    flour = next(x for x in desk["expected"] if x["order_ref"] == FLOUR_ORDER)
+    v = flour.get("visit") or {}
+    if flour["status"] != "seen" or v.get("time") != PACKAGE_AT or v.get("labelled_by") != "ring":
+        raise DemoMismatch(f"The receiving desk doesn't show Ring's {PACKAGE_AT} alert as {FLOUR_ORDER}'s courier "
+                           f"(it shows {flour['status']} {v.get('time', '')}), so the demo won't claim it.")
+    events = [datetime.fromisoformat(e["time"]) for e in
+              client.get("/api/events", params={"date": day.isoformat()}).json()]
+    scan = pick_scan_time(day, events, hours, [_package_at(day, tz)], tz, SCAN_WINDOW)
+    if scan is None:
+        raise DemoMismatch(f"The synthetic door on {day} is too busy to leave a scan time the door can answer.")
+    order = next(r for r in csv.DictReader(io.StringIO(orders_text)) if r["order_ref"] == SCAN_ORDER)
+    check = client.get("/api/attempt", params={"at": f"{day.isoformat()}T{scan}", "claim": "business_closed"}).json()
+    q = {"date": day.isoformat(), "carrier": CARRIER, "tracking": order["tracking"]}
+    pack = client.get("/api/dispute", params={**q, "at": scan, "claim": "business_closed"}).json()
+    if not pack.get("draft"):
+        raise DemoMismatch(f"The door doesn't support a dispute of the {scan} scan ({check.get('outcome')}): "
+                           f"{pack.get('no_draft_reason') or check.get('text')}")
+    return {"hours": hours, "flour": flour, "scan": scan, "order": order, "check": check, "pack": pack,
+            "query": q}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run the Shopfront receiving-desk demo.")
     ap.add_argument("--port", type=int, default=8000)
@@ -160,9 +229,7 @@ def main() -> None:
     if _port_busy(a.port):
         raise SystemExit(f"Something is already listening on port {a.port}. Stop it, or pass --port 8010.")
 
-    day = demo_day(datetime.now(tz).date())
-    hours = open_hours(SHOP_HOURS, day)
-    assert hours
+    day = demo_day(datetime.now(tz).date(), usable=lambda d: has_scan_slot(d, tz))
     data = (ROOT / a.data_dir) if not Path(a.data_dir).is_absolute() else Path(a.data_dir)
     _fresh(data)
     orders_csv = data / f"orders-{day.isoformat()}.csv"
@@ -177,21 +244,10 @@ def main() -> None:
                                "--port", str(a.port), "--log-level", "warning"], cwd=ROOT, env=env)
     try:
         _wait_up(base, server)
-        fed = subprocess.run([sys.executable, "-m", "scripts.feed_webhook", "--sub-type", "package_delivery",
-                              "--at", f"{day.isoformat()}T{PACKAGE_AT}", "--url", f"{base}/webhooks/ring"],
-                             cwd=ROOT, env=env, capture_output=True, text=True)
-        if fed.returncode != 0 or not fed.stdout.startswith("200"):
-            raise SystemExit("The signed webhook replay was refused:\n" + fed.stdout + fed.stderr)
-
-        events = [datetime.fromisoformat(e["time"]) for e in httpx.get(
-            f"{base}/api/events", params={"date": day.isoformat()}, timeout=30).json()]
-        package = datetime.combine(day, datetime.strptime(PACKAGE_AT, "%H:%M").time(), tzinfo=tz)
-        scan = pick_scan_time(day, events, hours, [package], tz)
-        order = next(r for r in csv.DictReader(io.StringIO(orders_csv.read_text())) if r["order_ref"] == SCAN_ORDER)
-        check = httpx.get(f"{base}/api/attempt", params={"at": f"{day.isoformat()}T{scan}",
-                                                          "claim": "business_closed"}, timeout=30).json()
-
-        q = {"date": day.isoformat(), "carrier": CARRIER, "tracking": order["tracking"]}
+        with httpx.Client(base_url=base, timeout=30, trust_env=False) as client:  # no proxy for localhost
+            feed_package_alert(client, day, tz, key)
+            story = walk(client, day, tz, orders_csv.read_text())
+        hours, scan, order, check, q = (story[k] for k in ("hours", "scan", "order", "check", "query"))
         desk = f"{base}/?{urlencode({'date': day.isoformat()})}"
         check_url = f"{base}/?{urlencode({**q, 'attempt': scan, 'claim': 'business_closed'})}#atth"
         pack_url = f"{base}/dispute?{urlencode({**q, 'at': scan, 'claim': 'business_closed'})}"
@@ -201,7 +257,8 @@ Shopfront demo is running at {base}
 Ring webhook is a signed replay: every page says so. Nothing here is sent to anyone.
 
 1. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
-   The flour courier (PO-1041) was announced at {PACKAGE_AT} by Ring's package_delivery Smart Alert.
+   The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by Ring's
+   package_delivery Smart Alert; the desk shows it as that order's courier.
    {desk}
 
 2. {CARRIER} scanned the dairy order {SCAN_ORDER} (tracking {order['tracking']}) "business closed" at {scan}.
@@ -210,7 +267,7 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    Shopfront's answer: {check.get('text') or check}
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,
-   and a draft you copy and send yourself:
+   and a draft to {story['pack']['draft']['to']} you copy and send yourself:
    {pack_url}
 
 Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; nothing else in .data is touched.

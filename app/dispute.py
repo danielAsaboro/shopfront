@@ -114,7 +114,21 @@ def _order(e: Expected | None, receipt: dict | None, tz: tzinfo | None = None) -
             "door_status_text": STATUS_TEXT.get(receipt["status"]) if receipt else None,
             "also_fits": receipt.get("also_fits", []) if receipt else [],
             "possible": receipt.get("possible", []) if receipt else [],
+            "unidentified": possible_text(receipt.get("possible", [])) if receipt else "",
             "courier_visit": receipt.get("visit") if receipt else None}
+
+
+def possible_text(possible: list[dict]) -> str:
+    """"a doorbell press at 14:36" / "doorbell presses at 10:09 and 10:53": the door events in an order's
+    window that only the time-of-day rules called a courier. What Ring recorded, never who it was."""
+    if not possible:
+        return ""
+    presses = all(x.get("ring_event") == "ding" for x in possible)
+    times = [x["time"] for x in possible]
+    when = times[0] if len(times) == 1 else ", ".join(times[:-1]) + " and " + times[-1]
+    if len(times) == 1:
+        return f"{'a doorbell press' if presses else 'a door event'} at {when}"
+    return f"{'doorbell presses' if presses else 'door events'} at {when}"
 
 
 def _in_order_window(v: ClassifiedVisit, o: dict) -> bool:
@@ -309,7 +323,7 @@ def _scan_dispute(p: dict, sign: str) -> dict:
         what = "scanned it \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
         track = f" (tracking {c['tracking']})" if c["tracking"] else ""
         parts = [f"Hello {o['supplier']},", _order_line(o),
-                 f"{who} {what} at {c['time'][-5:]} on {p['day']}{track}.{otherwise}", _facts(p),
+                 f"{who} {what} at {c['time'][-5:]} on {p['day']}{track}.{otherwise}", _facts(p) + _also_recorded(o),
                  f"{_evidence(p)} Please ask {ask} to correct the scan and arrange redelivery, or tell us what happened."]
         to = o["supplier"]
     else:  # no order: the carrier's own scan, to the carrier by the name the owner typed
@@ -322,6 +336,14 @@ def _scan_dispute(p: dict, sign: str) -> dict:
     subject = f"{'Business closed' if c['kind'] == rc.BUSINESS_CLOSED else 'Missed delivery'} scan, " \
               f"{p['day']} {c['time'][-5:]}" + (f", {ref}" if ref else "")
     return {"to": to, "subject": subject, "body": "\n\n".join(x for x in parts if x) + sign}
+
+
+def _also_recorded(o: dict) -> str:
+    """The order's own unidentified door events, said plainly so the draft doesn't hide what the pack shows."""
+    if not o.get("unidentified"):
+        return ""
+    span = "during the delivery window" if o.get("window_start") else "that day"
+    return f" Our doorbell also recorded {o['unidentified']} {span}, which no camera frame identified."
 
 
 def _unlooked_in_window(o: dict, visits: list[ClassifiedVisit]) -> list[ClassifiedVisit]:
@@ -394,6 +416,7 @@ def as_text(p: dict) -> str:
         lines += [f"Order: {o['order_ref'] or '(no ref)'} · {o['supplier']} · due {o['day']} {o['window']}"
                   + (f" · {o['items']}" if o["items"] else "") + (f" · {o['amount']}" if o["amount"] else ""),
                   f"At the door: {o['door_status_text'] or '—'}"
+                  + (f" ({o['unidentified']}, not identified)" if o.get("unidentified") else "")
                   + (f" · staff marked {o['received']['status']} at {o['received']['time']}" if o["received"] else ""),
                   ""]
     lines.append(f"Posted hours that day: {p['posted_hours']}")

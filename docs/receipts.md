@@ -26,11 +26,15 @@ comes at 07:47).
 All of a day's expected deliveries are assigned at once to the couriers Ring or Bedrock saw (Hungarian
 method, `app/deliveries.py`), in this
 order of priority: match as many suppliers as there are couriers; then as many of those inside their
-window as possible; then the closest times; then the earliest courier. The earlier one-supplier-at-a-time
-matcher failed two cases that property tests found (`tests/test_matcher_properties.py`):
+window as possible; then the closest times; then a courier inside an order's window before an order with no
+window (the window is the stronger evidence); then earlier-listed orders get the earlier couriers, an order
+left unmatched counting as later than any courier. The earlier one-supplier-at-a-time
+matcher failed three cases that the property tests and the demo found (`tests/test_matcher_properties.py`):
 
 - a wide window took the only courier that fitted a narrower one, pushing that supplier outside its window;
-- a windowed supplier took a courier outside its window while a supplier with no window went unmatched.
+- a windowed supplier took a courier outside its window while a supplier with no window went unmatched;
+- with fewer couriers than orders, the tie-break cost nothing for an unmatched order, so Ring's 10:12 courier went
+  to a windowless invoice listed last instead of the 10:00–11:00 flour order listed first (found running the demo).
 
 Properties checked on random days (with rules-labelled visits mixed in): one door visit never backs two
 receipts; only Ring- or Bedrock-confirmed couriers become receipts, and a rules guess makes an unmatched

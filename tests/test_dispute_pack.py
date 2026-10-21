@@ -105,6 +105,20 @@ def test_an_order_linked_scan_dispute_goes_to_the_supplier(tmp_path):
     assert "please ask swift parcel to correct the scan" in d["body"].lower()
 
 
+def test_scan_pack_and_draft_name_the_orders_unidentified_presses(tmp_path):
+    """The desk says "Possible courier" for the order; the pack and the draft must say what that was, a
+    press no frame identified, instead of leaving it out and reading as if the door was silent."""
+    vs = confirmed_lunch() + [visit(15, 36, "delivery", "rules", ring_event="ding")]
+    order = Expected("exp-9", DAY.isoformat(), "Bay Mills", "15:00", "17:00", order_ref="PO-9", carrier="Swift Parcel")
+    p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), order, tmp=tmp_path)
+    assert p["order"]["door_status"] == "possible" and p["order"]["unidentified"] == "a doorbell press at 15:36"
+    assert "Our doorbell also recorded a doorbell press at 15:36 during the delivery window, which no camera " \
+           "frame identified." in p["draft"]["body"]
+    assert "(a doorbell press at 15:36, not identified)" in dispute.as_text(p)
+    assert dispute.possible_text([{"time": "10:09", "ring_event": "ding"}, {"time": "10:53", "ring_event": "ding"}]) \
+        == "doorbell presses at 10:09 and 10:53"
+
+
 def test_carrier_facts_name_kinds_and_only_confirmed_customers(tmp_path):
     vs = [visit(12, m) for m in (13, 17, 20)] + [visit(12, 25, "customer", "bedrock"), visit(12, 50, "customer", "bedrock")]
     check = rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW)

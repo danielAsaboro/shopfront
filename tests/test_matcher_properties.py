@@ -128,3 +128,29 @@ def test_identical_windows_tie_break_the_same_way_whatever_the_order():
     for order in (vs, vs[::-1], vs[1:] + vs[:1]):
         r = receipts(exp, order, OPEN, NO_FRAMES)
         assert [x["visit"]["time"] for x in r["expected"]] == ["09:10", "09:25", "09:40"]
+
+
+def _courier(h, m, i=0):
+    ev = DoorEvent(f"ev-{i}", "d", datetime.combine(DAY, time(h, m), tzinfo=TZ), "motion", "ring")
+    return ClassifiedVisit(ev, VisitType.DELIVERY, 0.95, "Ring package_delivery", "ring")
+
+
+def test_fewer_couriers_than_orders_go_to_the_order_whose_window_they_fit():
+    """Found running the demo: one courier at 10:12, a 10:00-11:00 flour order listed first and a windowless
+    invoice listed last. The tie-break cost nothing for an unmatched row, so the invoice got the courier."""
+    flour = Expected("exp-f", DAY.isoformat(), "Hillside Mill", "10:00", "11:00")
+    dairy = Expected("exp-d", DAY.isoformat(), "Valley Creamery", "13:00", "16:00")
+    paper = Expected("exp-p", DAY.isoformat(), "Pinecrest Paper Goods")
+    for order in ([flour, dairy, paper], [paper, flour, dairy]):  # whatever order the rows come in
+        r = receipts(order, [_courier(10, 12)], OPEN, NO_FRAMES)
+        by = {x["supplier"]: x for x in r["expected"]}
+        assert by["Hillside Mill"]["status"] == "seen" and by["Hillside Mill"]["visit"]["time"] == "10:12"
+        assert by["Hillside Mill"]["also_fits"] == ["Pinecrest Paper Goods"]
+        assert by["Pinecrest Paper Goods"]["visit"] is None and by["Valley Creamery"]["visit"] is None
+
+
+def test_with_equal_windows_the_earlier_listed_order_takes_the_only_courier():
+    a = Expected("exp-a", DAY.isoformat(), "A", "09:00", "12:00")
+    b = Expected("exp-b", DAY.isoformat(), "B", "09:00", "12:00")
+    r = receipts([a, b], [_courier(10, 0)], OPEN, NO_FRAMES)
+    assert [x["visit"] and x["visit"]["time"] for x in r["expected"]] == ["10:00", None]

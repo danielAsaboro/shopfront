@@ -264,21 +264,31 @@ DAY_S = 86_401  # one more than the seconds in a day
 def _costs(expected: list[Expected], couriers: list[ClassifiedVisit]) -> list[list[int]]:
     """Costs in strict tiers, each worth more than everything below it put together:
     leaving a supplier unmatched > a match outside its window > seconds outside the window >
-    earlier-listed suppliers get the earlier couriers. The last tier makes ties impossible, so the
-    receipts never depend on the order events arrived in."""
+    a match to an order with no window > earlier-listed suppliers get the earlier couriers.
+
+    The fourth tier means a courier inside one order's window goes to that order before one that
+    could have come any time: the window is the stronger evidence. In the last tier an unmatched row
+    counts as later than any courier, so with fewer couriers than orders the earlier-listed orders are
+    matched first (before, a row left unmatched cost nothing in this tier, so a 10:12 courier went to
+    a windowless invoice listed last instead of the 10:00-11:00 order listed first). That tier also
+    makes ties impossible, so the receipts never depend on the order events arrived in."""
     n = len(expected)
-    lex_tier = 2 * DAY_S ** n  # above any sum of t * DAY_S ** (n - 1 - i)
-    gap_tier = lex_tier * (n + 1)  # above any sum of lex terms
+    lex_tier = 2 * DAY_S ** n  # above any sum of t * DAY_S ** (n - 1 - i), t < DAY_S
+    open_tier = lex_tier  # a match to an order with no window
+    gap_tier = open_tier * (n + 1)  # above n open-tier terms plus the lex sum
     outside_tier = gap_tier * DAY_S * (n + 1)  # above any sum of seconds outside
     not_seen = outside_tier * (n + 1)
+    unmatched_t = DAY_S - 1  # later than any second of the day, for the lex tier
 
     def cost(i: int, v: ClassifiedVisit, e: Expected) -> int:
         d = int(_distance(v, e).total_seconds())
         t = v.event.timestamp
         secs = t.hour * 3600 + t.minute * 60 + t.second
-        return (outside_tier if d else 0) + d * gap_tier + secs * DAY_S ** (n - 1 - i)
+        return ((outside_tier if d else 0) + d * gap_tier + (0 if e.window() else open_tier)
+                + secs * DAY_S ** (n - 1 - i))
 
-    return [[cost(i, v, e) for v in couriers] + [not_seen] * n for i, e in enumerate(expected)]
+    return [[cost(i, v, e) for v in couriers] + [not_seen + unmatched_t * DAY_S ** (n - 1 - i)] * n
+            for i, e in enumerate(expected)]
 
 
 def _due_by(e: Expected, tz) -> datetime:
