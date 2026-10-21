@@ -1,8 +1,9 @@
 # Shopfront on AWS
 
 **Status: template ready, not yet deployed.** [infra/template.yaml](../infra/template.yaml) passes
-`sam validate --lint` and `cfn-lint`, and `sam build` packages both functions, but no stack has been
-deployed, no Ring webhook has reached it, and there is no public demo URL yet. Until someone deploys it,
+`sam validate --lint` (SAM CLI 1.169.0) and `cfn-lint` 1.53.3 with no findings, and `sam build` packages
+all three functions, but no stack has been deployed, no Ring webhook has reached it, no alarm has fired,
+no trace has been recorded, and there is no public demo URL yet. Until someone deploys it,
 every claim below is about the template and its tests, not about a running service.
 
 Shopfront runs on the shop's own computer. Two things need more than that:
@@ -23,32 +24,34 @@ made-up shop, at a link anyone can open. Same `sam deploy`; the link is the `Dem
 ## 1. What the template deploys
 
 ```
-Ring ──HTTPS POST /webhooks/ring──▶ Lambda Function URL (RingWebhookFunction, 4 s timeout)
-                                        │  size cap, then app.ring.webhooks.check: HMAC-SHA256 over the
-                                        │  raw body (key from Secrets Manager, cached 5 min); 200 QUEUED
-                                        ▼
-                                    SQS queue (SSE) ──after 5 failed receives──▶ dead-letter queue (14 days)
-                                        │  batches of up to 10
-                                        ▼
-                                    Lambda WebhookConsumerFunction
-                                        │  device/account filter, conditional writes on meta.request_id;
-                                        │  reports only the failed records (partial batch response)
-                                        ▼
-                                    DynamoDB table  ◀── Shopfront app (SHOPFRONT_WEBHOOK_STORE=dynamodb)
-                                    (one item per event, TTL)
-S3 bucket for door frames (private, encrypted, expires)      CloudWatch log groups (retention set)
+            Ring
+              │ HTTPS POST /webhooks/ring, signed (X-Signature), answer within 5 s
+              ▼
+ RingWebhookFunction (Function URL)   size cap, HMAC (key: Secrets Manager), request_id; 200 QUEUED
+              │ SendMessage (+ AWSTraceHeader)                       │ BAD_SIGNATURE log line
+              ▼                                                      ▼
+ SQS queue (SSE) ──5 failed receives──▶ dead-letter queue    HmacFailures metric
+              │ batches of ≤10                                       │
+              ▼                                                      │
+ WebhookConsumerFunction   shop map (stack parameters, or SSM)       │
+              │ conditional writes, partial batch failures           │
+              ▼                                                      ▼
+ DynamoDB (pk = shop_id#day) ◀── Shopfront app          5 CloudWatch alarms ──▶ SNS topic ──▶ email
+                                                        (DLQ depth, HMAC failures, consumer and
+ X-Ray traces all three functions, across the queue      handler errors, demo throttles)
+ S3 bucket for door frames (private, encrypted, expires); CloudWatch log groups (retention set)
 ```
 
 | Resource | Why this service | Settings |
 |---|---|---|
 | Lambda function (Python 3.12, arm64) with a Function URL | Ring needs HTTPS and an answer in under 5 s; a Function URL is HTTPS with nothing in front, and the function costs nothing while the door is quiet. API Gateway would add a service and a bill for one POST route that authenticates by HMAC anyway. | 256 MB, 4 s timeout. `AuthType: NONE`, because Ring can't sign AWS requests; the HMAC over the body is the authentication, and anything unsigned gets 401 before it reaches the queue. It does only the size cap, the HMAC and one `SendMessage`, so a slow or throttled table never delays Ring's answer. |
 | SQS queue and dead-letter queue | Decouples Ring's 5-second answer from storage. A write that fails is retried by SQS instead of by Ring, and an event that can't be stored lands somewhere visible instead of being lost. A standard queue, not FIFO: FIFO's deduplication only covers 5 minutes, and the table's conditional write already dedupes on `meta.request_id` for as long as the event is kept. | SSE with SQS-managed keys on both, TLS-only queue policy. Visibility timeout 180 s (6 × the consumer's 30 s timeout). `maxReceiveCount` 5, then the dead-letter queue, which keeps a message 14 days. |
-| Lambda consumer (Python 3.12, arm64) | Stores what the queue holds. | 256 MB, 30 s timeout, batches of up to 10, `ReportBatchItemFailures` so only the failed records are retried, at most 2 concurrent pollers (one door's events). |
+| Lambda consumer (Python 3.12, arm64) | Stores what the queue holds. | 256 MB, 30 s timeout, batches of up to 10, `ReportBatchItemFailures` so only the failed records are retried, at most 2 invocations at once (`ScalingConfig`, one door's events). |
 | DynamoDB table | Ring retries a delivery with the same `meta.request_id` (API reference, Notifications > Webhook Response Handling), and SQS can deliver a message more than once. A conditional write makes either a no-op, durably, with no server to run. TTL bounds how long door events are kept. | On-demand. `pk` = `<shop_id>#<UTC day>`, `sk` = `<timestamp ms>#<request_id>`, `expires_at` TTL (EventDays, default 90). Encrypted at rest with a DynamoDB-owned key. `shop_id` is ShopId, or the shop the shop map names (below). |
 | Secrets Manager secret | The HMAC key never appears in the template, its parameters, the function's environment, or logs, and can be changed without a redeploy. | Created as an empty slot `{"RING_HMAC_KEY": ""}`; you set the value once after deploy. Until then the function answers 503, which Ring retries. |
 | S3 bucket for frames | Door frames are pictures of people. If they move off the laptop, they need a private place that deletes them on schedule. | SSE-S3, all public access blocked, bucket-owner-enforced, TLS-only policy, lifecycle expiry after FrameDays (default 30, matching `SHOPFRONT_FRAME_DAYS`). **The app doesn't write to it yet**: frames stay in `.data/frames/` with the same 30-day limit. |
 | CloudWatch log groups | One JSON line per request from the Function URL handler (status, request_id, event type, replayed) and one per record from the consumer, never the body. | Retention LogRetentionDays (default 30). |
-| IAM roles for the two functions | Least privilege, and the public function can't touch the table. | Function URL handler: its own log group, `secretsmanager:GetSecretValue` on the one secret, `sqs:SendMessage` on the queue. Consumer: its own log group, `sqs:ReceiveMessage`/`DeleteMessage`/`GetQueueAttributes` on the queue, `dynamodb:PutItem` on the table. No wildcards. |
+| IAM roles for the two webhook functions | Least privilege, and the public function can't touch the table. | Function URL handler: its own log group, `secretsmanager:GetSecretValue` on the one secret, `sqs:SendMessage` on the queue. Consumer: its own log group, `sqs:ReceiveMessage`/`DeleteMessage`/`GetQueueAttributes` on the queue, `dynamodb:PutItem` on the table, and `ssm:GetParameter` on the shop map only when one is set. No wildcards, except the separate X-Ray write policy (below), which takes none. |
 | IAM managed policy for the app | The machine running Shopfront reads the table (and could keep frames in the bucket). | `dynamodb:Query`/`Scan`/`PutItem` on the table, `s3:GetObject`/`PutObject`/`DeleteObject` on `frames/*`. Attach it to the IAM user or role the app runs as. |
 
 Both functions run the app's own code, not a copy. [infra/package_lambda.py](../infra/package_lambda.py)
@@ -332,18 +335,25 @@ region.
 
 | Service | Usage per month | Approx. cost |
 |---|---|---|
-| Lambda (arm64, 256 MB) | 6,000 requests × ~0.2 s = 300 GB-s | under $0.01 (inside the free tier) |
+| Lambda (arm64, 256 MB): webhook and consumer | 6,000 webhook requests × ~0.2 s, plus up to 6,000 consumer invocations × ~0.1 s = ~450 GB-s | under $0.01 (inside the free tier) |
 | Function URL | included with Lambda | $0 |
+| SQS (standard queue + DLQ) | 6,000 sends and deletes, plus Lambda's long polls of an idle queue (a few pollers, 20 s each, all month): ~0.7 million requests | $0 inside the 1 million free requests; ~$0.28 without them |
 | DynamoDB writes | 6,000 events × 2 items in a transaction = 24,000 write units | ~$0.02 |
 | DynamoDB reads | per page load, the day's queries plus one read of the whole table (the app's "any replays?" check); ~3 million read units | ~$0.40 |
 | DynamoDB storage | ~18,000 items, under 10 MB | ~$0.01 |
 | Secrets Manager | 1 secret, a few thousand calls | ~$0.40 |
 | S3 | nothing written yet; frames for 30 days would be a few hundred MB | $0 now, under $0.02 if used |
-| CloudWatch Logs | a few MB | under $0.01 |
+| CloudWatch Logs | a few MB across the three functions | under $0.01 |
+| CloudWatch alarms | 5 alarms on 6 metrics (the consumer alarm's math reads two), standard resolution | $0 inside the free tier's 10; ~$0.60 without it |
+| CloudWatch custom metrics | `HmacFailures`, `ConsumerFailedRecords`: data only when something fails | $0 when nothing fails; at most ~$0.60 if both have data all month |
+| SNS | a handful of alarm emails | $0 |
+| X-Ray | the default sampling rule (1 request a second, then 5%) keeps nearly every one of ~6,000 webhook traces, plus demo visits: ~10,000 traces | $0 inside the 100,000 free; ~$0.05 without it |
 | Public demo (arm64, 512 MB) | a few hundred visits × ~10 requests × ~0.1 s | under $0.01 (inside the free tier) |
-| **Total** | | **under $1 a month** |
+| **Total** | | **about $1 a month inside the free tier, about $2 without it** |
 
-The two fixed-ish costs are the secret and the whole-table read on each page load. The public demo is
+The fixed-ish costs are the secret, the whole-table read on each page load, the alarms, and (outside the
+free tier) SQS's idle polling. Queueing, alarms and tracing roughly double a bill that stays under the
+price of a coffee. The public demo is
 the only part strangers can make you pay for. With `DemoConcurrency=2` the worst case is two requests
 running every second of the hour: 3,600 GB-s (about $0.05) plus ~72,000 requests (about $0.015), so
 roughly $0.06 an hour, $1.50 a day, for as long as someone keeps it up. Set `DemoConcurrency=0` and
@@ -371,7 +381,7 @@ cd infra
 sam validate --lint                # SAM transform + cfn-lint
 cfn-lint template.yaml
 sam build                          # runs package_lambda.py (twice) and package_demo.py; output in infra/.aws-sam/ (git-ignored)
-cd .. && .venv/bin/python -m pytest -q tests/test_lambda_webhook.py tests/test_webhook_store.py tests/test_public_demo.py
+cd .. && .venv/bin/python -m pytest -q tests/test_lambda_webhook.py tests/test_shops.py tests/test_webhook_store.py tests/test_public_demo.py
 ```
 
 `sam build` downloads the demo's wheels for arm64, so it needs network access to PyPI, and `python3` with
