@@ -14,7 +14,8 @@
   <div class="eyebrow">Live door</div>
   <h1>Watch the door now</h1>
   {% if not connected %}
-  <p style="font-size:17px;margin:12px 0 0">Live view needs your Ring doorbell. <a href="/connect">Connect Ring</a> first; with demo data there is no camera to watch.</p>
+  <p style="font-size:17px;margin:12px 0 0">Connect Ring to watch your door. Live view streams your Ring doorbell; with demo data there is no camera to watch.</p>
+  <p><a class="primary" href="/connect">Connect Ring</a></p>
   {% else %}
   <p class="why" style="margin-top:8px">Opens a live view of your doorbell, takes a still every 3 seconds{% if classifier == 'bedrock' %} and asks Amazon Bedrock what it shows{% endif %}, and adds the visit to today's receiving desk. With the Ring Developer Playground, pick Package, Vehicle or Motion there first to choose what the test doorbell plays.</p>
   <div class="stage"><video id="v" autoplay playsinline muted></video><div class="idle" id="idle">Not streaming</div></div>

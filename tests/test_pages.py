@@ -430,3 +430,27 @@ def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
         page.split(f'action="/deliveries/{e.id}/received"')[1].split("</tr>")[0]
     assert '<span class="badge b-demo">demo</span>' in row
     assert '<details class="src"><summary title="Synthetic demo event' in row
+
+
+def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypatch):
+    """Round 2: on demo data "Live door" led to a page with nothing to watch. It shows with Ring connected;
+    without, the Ring link reads "Connect Ring", and /live itself says how, plainly."""
+    page = c.get(f"/?date={WEDNESDAY}").text
+    nav = page.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
+    assert 'href="/live"' not in nav and ">Connect Ring</a>" in nav
+    live = c.get("/live").text
+    assert "Connect Ring to watch your door." in live and 'aria-current="page">Live door' in live
+    monkeypatch.setattr(main, "_chrome", lambda r: {**chrome(r), "ring_mode": "ring"})
+    nav = c.get(f"/?date={WEDNESDAY}").text.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
+    assert 'href="/live">Live door</a>' in nav and 'href="/connect">Ring</a>' in nav
+
+
+chrome = main._chrome
+
+
+def test_fresh_install_shows_no_ask_example_about_orders_it_doesnt_have(c):
+    page = c.get(f"/?date={WEDNESDAY}").text  # no orders yet
+    assert "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine." in page
+    assert "PO-1041" not in page and "ask-example" not in page.split("</style>")[-1]
+    main.book.add(WEDNESDAY, "Bay Mills")
+    assert 'class="ask-example"' in c.get(f"/?date={WEDNESDAY}").text

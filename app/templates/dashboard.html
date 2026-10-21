@@ -155,6 +155,9 @@
     </form>
     <div id="answer" aria-live="polite"></div>
     {% else %}
+    {% if first_run %}
+    <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine. With it, and your orders in, you can ask things like "Did the flour come yesterday?"</p>
+    {% else %}
     <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine. This is the kind of answer it gives:</p>
     <figure class="ask-example" aria-label="Example answer">
       <figcaption class="eyebrow">Example answer, recorded from the test fakes, not live</figcaption>
@@ -162,6 +165,7 @@
       <p class="a">{{ ask_example.answer }}</p>
       <p class="why" style="margin:0">Looked at {{ ask_example.tools }}</p>
     </figure>
+    {% endif %}
     <details class="tech"><summary>Details</summary><p class="why" style="margin:0">Answers come from a Strands agent on Amazon Bedrock, using the same door data as this page. Sign in to AWS with Bedrock model access (<code>aws login</code>) and restart Shopfront to turn it on.{% if ask_reason %} State: {{ ask_reason }}.{% endif %}</p></details>
     {% endif %}
   </section>

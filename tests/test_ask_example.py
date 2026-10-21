@@ -63,6 +63,7 @@ def test_probe_reads_how_bedrock_refuses_a_blank_message():
 
 def test_no_question_box_when_bedrock_is_unreachable(c, monkeypatch):
     monkeypatch.setattr(main, "ask_probe", AskProbe("r", "m", call=raising(_error("403", "request blocked"))))
+    main.book.add(date(2026, 10, 7), "Bay Mills")  # the example is about orders; a fresh install has none
     page = c.get("/?date=2026-10-07").text
     assert 'id="ask"' not in page and 'name="q"' not in page
     assert "Ask needs an AWS sign-in with Bedrock access" in page
