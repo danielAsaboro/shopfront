@@ -1,7 +1,7 @@
-"""Property tests for the delivery matcher: random expected deliveries and random door visits,
-checked against invariants a receipt must never break. Local only, no Ring or Bedrock."""
+"""Property tests for the delivery matcher: random expected deliveries and random door visits (some labelled
+by the time-of-day rules), checked against invariants a receipt must never break. Local only."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from itertools import permutations
 from zoneinfo import ZoneInfo
 
@@ -38,9 +38,10 @@ def visit_list(draw):
     out = []
     for i, m in enumerate(draw(st.lists(minutes, max_size=6))):
         kind = draw(st.sampled_from([VisitType.DELIVERY, VisitType.DELIVERY, VisitType.CUSTOMER]))
+        labelled_by = draw(st.sampled_from(["bedrock", "bedrock", "ring", "rules"]))
         ev = DoorEvent(id=f"ev-{i}", device_id="d", kind="ding", source="ring",
                        timestamp=datetime.combine(DAY, time(m // 60, m % 60), tzinfo=TZ))
-        out.append(ClassifiedVisit(ev, kind, 0.9, "", "bedrock"))
+        out.append(ClassifiedVisit(ev, kind, 0.9, "", labelled_by))
     return out
 
 
@@ -64,13 +65,23 @@ def best_possible_in_window(expected, couriers) -> int:
 @given(expected_list(), visit_list())
 def test_matcher_invariants(expected, visits):
     r = receipts(expected, visits, OPEN, NO_FRAMES)
-    couriers = [v for v in visits if v.visit_type == VisitType.DELIVERY]
+    couriers = [v for v in visits if v.visit_type == VisitType.DELIVERY and v.source in ("bedrock", "ring")]
+    guesses = [v for v in visits if v.visit_type == VisitType.DELIVERY and v.source == "rules"]
     used = [x["visit"]["event_id"] for x in r["expected"] if x["visit"]]
 
     # one row per expected delivery, and one door visit never backs two receipts
     assert [x["id"] for x in r["expected"]] == [e.id for e in expected]
     assert len(used) == len(set(used))
-    # only courier-labelled visits become receipts, and every courier is accounted for exactly once
+    # a rules guess is never a receipt, never "seen": at most a possible courier for an unmatched supplier
+    assert r["seen"] == len(used) and not set(used) & {v.event.id for v in guesses}
+    for x, e in zip(r["expected"], expected):
+        fits = [v.event.id for v in guesses if in_window(v, e)]
+        if x["visit"]:
+            assert x["possible"] == []
+        else:
+            assert x["status"] == ("possible" if fits else "not_seen")
+            assert [p["event_id"] for p in x["possible"]] == fits
+    # only Ring- or Bedrock-confirmed couriers become receipts, and every one is accounted for exactly once
     assert set(used) <= {v.event.id for v in couriers}
     assert sorted(used + [u["event_id"] for u in r["unexpected"]]) == sorted(v.event.id for v in couriers)
     # no supplier is reported "not seen" while an unmatched courier is standing by

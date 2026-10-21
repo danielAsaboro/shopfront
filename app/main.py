@@ -69,7 +69,7 @@ def _visits(day: date):
 
 def _receipts(day: date, visits=None) -> dict:
     visits = _visits(day) if visits is None else visits
-    return receipts(book.for_day(day), visits, posted_hours(profile.hours(), day), frames)
+    return receipts(book.for_day(day), visits, posted_hours(profile.hours(), day), frames, now=datetime.now(settings.tz))
 
 
 def _week_money(day: date) -> str | None:
@@ -79,10 +79,8 @@ def _week_money(day: date) -> str | None:
     closed = missing = 0
     for i in range(7):
         d = day - timedelta(days=i)
-        vs = _visits(d)
-        oh = posted_hours(profile.hours(), d)
-        r = _receipts(d, vs)
-        closed += sum(1 for v in vs if v.visit_type.value == "delivery" and not _is_open(v, oh))
+        r = _receipts(d)
+        closed += r["closed_couriers"]  # Ring- or Bedrock-confirmed couriers only, staff not in
         missing += sum(1 for x in r["expected"] if x["status"] == "not_seen")
     return money_line(closed, missing, p.redelivery_cost, p.currency)
 

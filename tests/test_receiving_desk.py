@@ -350,7 +350,24 @@ def isolated(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_import_page_flow_and_staff_tap(isolated):
+def add_ring_courier(monkeypatch, day, hh, mm, eid="ring-pkg"):
+    """The synthetic day plus one courier Ring's package_delivery alert named. Rule-guessed presses are only
+    "possible" couriers, so a receipt needs one of these (or a Bedrock label)."""
+    synthetic = main._visits
+
+    def visits(d):
+        out = synthetic(d)
+        if d == day:
+            e = DoorEvent(eid, "d", datetime.combine(d, time(hh, mm), tzinfo=main.settings.tz), "motion",
+                          "ring-webhook", "package_delivery")
+            out = sorted(out + [ClassifiedVisit(e, VisitType.DELIVERY, 1.0, "Ring Smart Alert: package_delivery", "ring")],
+                         key=lambda v: v.event.timestamp)
+        return out
+    monkeypatch.setattr(main, "_visits", visits)
+
+
+def test_import_page_flow_and_staff_tap(isolated, monkeypatch):
+    add_ring_courier(monkeypatch, date(2026, 10, 11), 11, 20)
     c = TestClient(main.app)
     r = c.post("/orders/import", files={"file": ("orders.csv", SHOPFRONT_CSV.replace("2026-10-07", "2026-10-11"), "text/csv")},
                follow_redirects=False)
@@ -358,7 +375,7 @@ def test_import_page_flow_and_staff_tap(isolated):
     assert "Skipped 2" in c.get(r.headers["location"]).text
     bad = c.post("/orders/import", data={"csv": "nothing,useful\n1,2\n"}, follow_redirects=False)
     assert "error=" in bad.headers["location"]
-    # Oct 11 is a closed Sunday; the synthetic courier rings at 11:xx and lands on the window-less order
+    # Oct 11 is a closed Sunday; Ring's courier at 11:20 lands on the window-less order
     page = c.get("/?date=2026-10-11").text
     assert "PO-1043" in page and "Flour 25kg x4" in page and 'name="status" value="short"' in page
     e = next(x for x in main.book.for_day(date(2026, 10, 11)) if x.order_ref == "PO-1043")

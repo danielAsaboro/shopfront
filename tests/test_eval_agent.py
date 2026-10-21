@@ -29,6 +29,25 @@ def test_unsupported_catches_an_invented_time():
     assert ea.unsupported("A courier rang at 09:15.", results, DAY) == ["09:15"]
 
 
+def _with_a_ring_courier(main, monkeypatch):
+    """The synthetic day, plus one courier Ring's package_delivery alert named: rule-guessed presses are not
+    couriers, so without it the day has nothing to ask "did it come?" about."""
+    from datetime import datetime, time
+
+    from app.models import ClassifiedVisit, DoorEvent, VisitType
+    synthetic = main._visits
+
+    def visits(d):
+        out = synthetic(d)
+        if d == DAY:
+            e = DoorEvent("ring-pkg", "d", datetime.combine(d, time(10, 15), tzinfo=main.settings.tz), "motion",
+                          "ring-webhook", "package_delivery")
+            out = sorted(out + [ClassifiedVisit(e, VisitType.DELIVERY, 1.0, "Ring Smart Alert: package_delivery",
+                                                "ring")], key=lambda v: v.event.timestamp)
+        return out
+    monkeypatch.setattr(main, "_visits", visits)
+
+
 def _cases_and_tools(isolated_main):
     tools = isolated_main._agent_tools(date(2026, 10, 8))
     ea.seed_book(isolated_main.book, DAY, tools.door_visits(DAY.isoformat())["visits"])
@@ -73,8 +92,9 @@ def _honest(cases):
 
 
 def test_honest_agent_scores_clean(tmp_path, monkeypatch):
-    import app.main as main
+    from app import main
     monkeypatch.setattr(main, "book", DeliveryBook(tmp_path / "e.json"))
+    _with_a_ring_courier(main, monkeypatch)
     cases, tools = _cases_and_tools(main)
     assert {c.kind for c in cases} >= {"yes_time", "no", "count", "attempt", "refuse"}
     honest = _honest(cases)
@@ -85,8 +105,9 @@ def test_honest_agent_scores_clean(tmp_path, monkeypatch):
 
 
 def test_a_wrong_or_invented_answer_is_caught(tmp_path, monkeypatch):
-    import app.main as main
+    from app import main
     monkeypatch.setattr(main, "book", DeliveryBook(tmp_path / "e.json"))
+    _with_a_ring_courier(main, monkeypatch)
     cases, tools = _cases_and_tools(main)
     lying = {c.question: "Yes, the courier handed the parcel to your staff at 04:44." for c in cases}
     ask = lambda q: shop_agent.ask(q, tools, "Shop", "r", "m", agent_factory=_fake(lying.get), keep_results=True)

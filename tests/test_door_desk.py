@@ -1,14 +1,14 @@
 """Expected deliveries, receipts, the owner's profile and the Ask agent. Local tests only: synthetic
 events and a fake agent, never Ring or Bedrock."""
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.testclient import TestClient
 
-import app.main as main
 from app import agent as shop_agent
+from app import main
 from app.classify.rules import RulesClassifier
 from app.deliveries import DeliveryBook, FrameStore, headline, money_line, receipts
 from app.hours import parse_hours, posted_hours
@@ -60,7 +60,7 @@ def test_courier_while_closed_and_missing_supplier_lead_the_headline(tmp_path):
     assert by["Milk"]["status"] == "seen_while_closed" and by["Milk"]["also_fits"] == []
     assert by["Coffee beans"]["status"] == "not_seen"
     lines = headline(r)
-    assert lines[0] == "No courier seen for Coffee beans." and "Milk's courier rang at 19:30" in lines[1]
+    assert lines[0] == "No courier seen for Coffee beans." and "Milk's courier was at the door at 19:30" in lines[1]
 
 
 def test_receipt_names_other_suppliers_the_courier_also_fits(tmp_path):
@@ -83,7 +83,7 @@ def test_money_uses_only_the_owners_number():
     assert money_line(3, 1, None, "$") is None
     assert money_line(0, 0, 15, "$") is None
     line = money_line(3, 1, 12.5, "£")
-    assert line.endswith("At your £12.5 per redelivery, that's £50.") and "3 couriers rang" in line
+    assert line.endswith("At your £12.5 per redelivery, that's £50.") and "3 couriers came while you were closed" in line
 
 
 def test_hours_form_round_trip():
@@ -107,13 +107,25 @@ def test_setup_saves_profile_and_expected_delivery(isolated):
     assert "error=" in bad.headers["location"]
 
 
-def test_dashboard_shows_receipt_and_money_line(isolated):
+def test_dashboard_shows_receipt_and_money_line(isolated, monkeypatch):
     main.profile.save(Profile("Test Shop", "8-18,8-18,8-18,8-18,8-19,9-16,closed", 10, "$"))
-    main.book.add(date(2026, 10, 11), "Sunday bread")  # a closed day; synthetic courier rings at 11:xx
+    main.book.add(date(2026, 10, 11), "Sunday bread")  # a closed day; the synthetic press at 11:xx is a rules guess
     c = TestClient(main.app)
     page = c.get("/?date=2026-10-11").text
-    assert "Sunday bread" in page and "Courier rang while you were closed" in page
-    assert "At your $10 per redelivery" in page
+    assert "Sunday bread" in page and "Possible courier, not confirmed by a camera frame" in page
+    assert "per redelivery" not in page  # a guess is never priced
+    assert c.get("/api/deliveries?date=2026-10-11").json()["seen"] == 0
+    synthetic = main._visits
+
+    def with_ring_courier(d):  # Ring's package_delivery alert names the courier
+        out = synthetic(d)
+        if d == date(2026, 10, 11):
+            e = DoorEvent("pkg", "d", datetime(2026, 10, 11, 11, 20, tzinfo=main.settings.tz), "motion", "ring-webhook")
+            out.append(ClassifiedVisit(e, VisitType.DELIVERY, 1.0, "Ring Smart Alert: package_delivery", "ring"))
+        return out
+    monkeypatch.setattr(main, "_visits", with_ring_courier)
+    page = c.get("/?date=2026-10-11").text
+    assert "Courier came while you were closed" in page and "At your $10 per redelivery" in page
     assert c.get("/api/deliveries?date=2026-10-11").json()["seen"] == 1
 
 

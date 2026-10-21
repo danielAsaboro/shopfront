@@ -68,6 +68,11 @@ def claims(answer: str) -> list[str]:
     return out
 
 
+def _confirmed_courier(v: dict) -> bool:
+    """A courier Ring's package_delivery alert or Bedrock on the frame named; rule guesses are not couriers."""
+    return v.get("type") == "delivery" and v.get("labelled_by") in ("ring", "bedrock")
+
+
 def support(results: list) -> set[str]:
     """Every value the agent's tool calls returned, plus list lengths and per-type counts it could compute."""
     seen: set[str] = set()
@@ -83,6 +88,8 @@ def support(results: list) -> set[str]:
                     for val in {i.get(key) for i in x} - {None}:
                         seen.add(str(sum(1 for i in x if i.get(key) == val)))
                 seen.add(str(sum(1 for i in x if i.get("type") == "delivery" and not i.get("shop_open", True))))
+                seen.add(str(sum(1 for i in x if _confirmed_courier(i) and not i.get("shop_open", True))))
+                seen.add(str(sum(1 for i in x if _confirmed_courier(i))))
             for v in x:
                 walk(v)
         elif isinstance(x, bool) or x is None:
@@ -130,7 +137,7 @@ def is_correct(c: Case, answer: str) -> bool:
 
 def seed_book(book, day: date, visits: list[dict]) -> None:
     """One expected delivery per courier the door saw (window around it), plus one that never came."""
-    couriers = [v for v in visits if v["type"] == "delivery"]
+    couriers = [v for v in visits if _confirmed_courier(v)]
     for i, v in enumerate(couriers[:3]):
         h, m = map(int, v["time"].split(":"))
         start = datetime(2000, 1, 1, h, m) - timedelta(minutes=30)
@@ -153,7 +160,7 @@ def build_cases(tools, day: date) -> list[Case]:
                               "yes_time", x["visit"]["time"]))
         else:
             cases.append(Case(f"expected-{x['supplier']}", f"Did the {x['supplier']} delivery come on {d}?", "no"))
-    couriers = [v for v in visits if v["type"] == "delivery"]
+    couriers = [v for v in visits if _confirmed_courier(v)]
     cases.append(Case("count-couriers", f"How many couriers came to the door on {d}?", "count", len(couriers)))
     closed = [v for v in couriers if not v["shop_open"]]
     cases.append(Case("count-closed", f"How many couriers rang while we were closed on {d}?", "count", len(closed)))
