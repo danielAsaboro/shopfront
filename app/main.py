@@ -748,8 +748,19 @@ def frame(request: Request, name: str):
 
 
 @app.post("/frames/{name}/delete")
-def frame_delete(name: str):
-    """Delete a door frame now (and, for a live view, every frame kept from that session)."""
+async def frame_delete(request: Request, name: str):
+    """Delete a door frame now (and, for a live view, every frame kept from that session). A form gets
+    sent back to the page it came from; a script gets {"deleted": n}."""
+    form = await request.form() if "form" in request.headers.get("content-type", "") else None
+    gone = await run_in_threadpool(_delete_frame, name)
+    if form is not None:
+        back = _safe_next(str(form.get("back", "/")))
+        return RedirectResponse(back + ("&" if "?" in back else "?") + f"notice={quote('Frame deleted.')}",
+                                status_code=303)
+    return {"deleted": gone}
+
+
+def _delete_frame(name: str) -> int:
     stem = name.removesuffix(".jpg")
     if frame_name(stem) != name:
         raise HTTPException(404)
@@ -759,7 +770,7 @@ def frame_delete(name: str):
             if p.is_file():
                 p.unlink()
                 gone += 1
-    return {"deleted": gone}
+    return gone
 
 
 _last_housekeeping = 0.0

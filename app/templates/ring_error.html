@@ -6,7 +6,7 @@
   <p style="font-size:17px;margin:12px 0 0">{% if e.status.value in ('TOKEN_REJECTED', 'NOT_CONFIGURED') %}The Ring sign-in is missing or has expired. Paste a fresh token from the Ring Developer Playground.
   {% elif e.status.value == 'REFRESH_FAILED' %}Ring refused the refresh token. Re-link the Ring account to get a new one.
   {% elif e.status.value in ('FORBIDDEN', 'DEVICE_NOT_FOUND', 'NO_DEVICES') %}This Ring sign-in can't see the doorbell. Check which devices were shared with Shopfront.
-  {% elif e.status.value == 'RATE_LIMITED' %}Ring is asking Shopfront to slow down. Try again in a minute.
+  {% elif e.status.value == 'RATE_LIMITED' %}Ring is asking Shopfront to slow down. Try again in {% if e.retry_after %}{{ e.retry_after }} second{{ '' if e.retry_after == 1 else 's' }}{% else %}a minute{% endif %}.
   {% else %}Ring didn't answer cleanly. Nothing is shown until it does, so Shopfront never mixes in made-up data.{% endif %}</p>
   <p style="margin-top:20px"><a class="primary" href="/connect">Reconnect Ring</a> &nbsp; <a href="/setup">Set up</a></p>
   <details class="tech block">

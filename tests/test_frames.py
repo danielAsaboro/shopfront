@@ -79,3 +79,20 @@ def test_token_files_are_created_private_not_chmod_ed_after(tmp_path, monkeypatc
     rt = tmp_path / "rt.json"
     RingAuth(refresh_token="rt-1", client_id="c", client_secret="s", token_file=rt, http=http).token()
     assert json.loads(rt.read_text()) == {"refresh_token": "rt-2"} and oct(rt.stat().st_mode & 0o777) == "0o600"
+
+
+def test_the_delete_button_form_goes_back_to_its_page():
+    main.frames.save("evt-7", JPEG)
+    r = TestClient(main.app).post("/frames/evt-7.jpg/delete", data={"back": "/?date=2026-10-07"},
+                                  follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/?date=2026-10-07&notice=")
+    assert main.frames.path("evt-7") is None
+    r = TestClient(main.app).post("/frames/x.jpg/delete", data={"back": "//evil.example/"}, follow_redirects=False)
+    assert r.headers["location"].startswith("/?notice=")
+
+
+def test_frame_delete_macro_renders_a_post_form():
+    from jinja2 import Environment, FileSystemLoader
+    env = Environment(loader=FileSystemLoader("app/templates"), autoescape=True)
+    html = env.from_string('{% from "_frame_delete.html" import delete_frame %}{{ delete_frame("/frames/a.jpg", "/") }}').render()
+    assert 'action="/frames/a.jpg/delete"' in html and 'method="post"' in html and "Delete frame" in html

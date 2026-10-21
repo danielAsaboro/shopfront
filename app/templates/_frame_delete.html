@@ -1,0 +1,4 @@
+{# A small "Delete frame" button for a door frame Shopfront keeps. Frames are pictures of people. #}
+{% macro delete_frame(url, back) -%}
+<form method="post" action="{{ url }}/delete" class="frame-del" onsubmit="return confirm('Delete this door frame from Shopfront? It can\'t be undone.')"><input type="hidden" name="back" value="{{ back }}"><button type="submit" class="quiet" aria-label="Delete this door frame">Delete frame</button></form>
+{%- endmacro %}

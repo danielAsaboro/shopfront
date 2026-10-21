@@ -74,3 +74,9 @@ def test_setup_keeps_what_the_owner_typed_when_hours_are_wrong():
     r = c.post("/setup", data=form, follow_redirects=False)  # the form comes straight back, with the error
     assert r.status_code == 400
     assert "Wed: " in r.text and 'value="19-8"' in r.text
+
+
+def test_setup_hint_shows_the_accepted_formats_and_any_keyboard():
+    page = TestClient(main.app).get("/setup").text
+    assert "7:30-15" in page and "7am-3pm" in page
+    assert 'name="h0"' in page and 'inputmode="numeric"' not in page.split('name="h0"')[1].split(">")[0]

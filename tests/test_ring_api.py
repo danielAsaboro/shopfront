@@ -342,3 +342,16 @@ def test_rate_limit_reaches_the_api_caller_with_retry_after(monkeypatch):
     r = TestClient(main.app).get(f"/api/events?date={DAY.isoformat()}")
     assert r.status_code == 429 and r.json()["error"] == "RATE_LIMITED" and r.json()["retry_after"] == 30
     assert r.headers["retry-after"] == "30"
+
+
+def test_rate_limit_page_says_when_to_try_again(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    ring, _ = client(lambda r: httpx.Response(429, headers={"Retry-After": "30"}))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
+    c = TestClient(main.app)
+    r = c.get(f"/?date={DAY.isoformat()}")  # the receiving desk degrades and says when to reload
+    assert r.status_code == 200 and "slow down" in r.text and "reload in 30 seconds" in r.text
+    page = c.get(f"/dispute?date={DAY.isoformat()}&at=12:00")
+    assert page.status_code == 429 and "Try again in 30 seconds" in page.text and page.headers["retry-after"] == "30"

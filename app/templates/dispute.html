@@ -1,4 +1,5 @@
 {% extends "_base.html" %}
+{% from "_frame_delete.html" import delete_frame %}
 {% block title %}Dispute pack, {{ p.day }}{% endblock %}
 {% block head %}
 <style>
@@ -56,6 +57,7 @@
     <h2 id="frameh">{{ p.frame.label }}, {{ p.frame.time }}</h2>
     <a href="{{ p.frame.url }}"><img class="frame-big" src="{{ p.frame.url }}" alt="{{ p.frame.label }} at {{ p.frame.time }}"></a>
     <p class="why" style="margin:6px 0 0">{{ p.frame.provenance[:1]|upper }}{{ p.frame.provenance[1:] }}.</p>
+    {{ delete_frame(p.frame.url, "/dispute?" ~ query) }}
     <details class="tech">
       <summary>Details</summary>
       <p class="hash" style="margin:0">SHA-256 {{ p.frame.sha256 }} · event {{ p.frame.event_id }}{% if p.frame.bedrock_request_id %} · Bedrock RequestId {{ p.frame.bedrock_request_id }}{% endif %}</p>

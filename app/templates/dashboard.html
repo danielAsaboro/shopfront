@@ -1,6 +1,8 @@
 {% extends "_base.html" %}
+{% from "_frame_delete.html" import delete_frame %}
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
+{% set back = "/?date=" ~ b.date %}
   <div class="page-head">
     <div>
       <div class="eyebrow">Receiving desk</div>
@@ -14,7 +16,7 @@
 
   {% if ring_down %}
   {% set st = ring_down.status.value %}
-  <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until you <a href="/connect">reconnect Ring</a>. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
+  <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif st == "RATE_LIMITED" %}Ring asked Shopfront to slow down{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until {% if st == "RATE_LIMITED" %}you reload in {{ ring_down.retry_after ~ ' seconds' if ring_down.retry_after else 'a minute' }}{% else %}you <a href="/connect">reconnect Ring</a>{% endif %}. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
   {% if first_run %}
@@ -76,7 +78,7 @@
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
           </div></td>
         <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason) }}{% endif %}</td>
-        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{% endif %}</td>
+        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
       </tr>
       {% else %}
       {% set u = x.visit %}
@@ -84,7 +86,7 @@
         <td class="t">{{ u.time }}</td>
         <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
         <td class="why">{{ u.labelled_by|how(u.reason) }}</td>
-        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="Ring frame at {{ u.time }}" loading="lazy"></a>{% endif %}</td>
+        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="Ring frame at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% endif %}</td>
       </tr>
       {% endif %}
       {% endfor %}
@@ -110,7 +112,7 @@
       <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
       <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
     </div>
-    {% if attempt.visit and attempt.visit.frame_url %}<p class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a></p>{% endif %}
+    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
     {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason) }}</p>{% endif %}
     {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ asked_time }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}
     {% endif %}
@@ -196,7 +198,9 @@ f.addEventListener("submit", async e => {
     const res = await fetch("/api/ask", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({question: q})});
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const said = PLAIN[d.error] || "Shopfront couldn't answer that right now.";
+      const said = d.message  // AGENT_UNAVAILABLE says why in one plain sentence
+        || (d.error === "RATE_LIMITED" ? `Ring asked Shopfront to slow down. Try again in ${d.retry_after ? d.retry_after + " seconds" : "a minute"}.` : "")
+        || PLAIN[d.error] || "Shopfront couldn't answer that right now.";
       out.innerHTML = `<p class="warn">${esc(said)}</p>`
         + `<details class="tech"><summary>Details</summary><p class="why" style="margin:0">${esc(d.error || res.status)}${d.detail ? " · " + esc(d.detail) : ""}</p></details>`;
       return;

@@ -43,7 +43,7 @@
       <h2><span class="n">2</span>Your shop</h2>
       {{ message('shop') }}
       <div class="fields" style="margin-top:8px"><label class="field grow">Shop name<input name="name" value="{{ p.name }}" maxlength="60" required></label></div>
-      <p class="why" style="margin:16px 0 6px">Posted hours on the 24-hour clock, like <code>8-18</code>. Leave a day blank if you're closed.</p>
+      <p class="why" style="margin:16px 0 6px">Posted hours, written the way you would on the door: <code>8-18</code>, <code>7:30-15</code> or <code>7am-3pm</code>. Leave a day blank if you're closed.</p>
       <div class="hours">
         {% for d, h in days %}<label class="field">{{ d }}<input name="h{{ loop.index0 }}" value="{{ '' if h == 'closed' else h }}" placeholder="closed"></label>{% endfor %}
       </div>
