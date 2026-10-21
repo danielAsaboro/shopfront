@@ -74,6 +74,7 @@ None recorded yet, because no live Bedrock call from this project has been captu
 | Code | [app/agent.py](../app/agent.py), `POST /api/ask` |
 | Framework | [Strands Agents](https://strandsagents.com) (`strands-agents`), `Agent` with `strands.models.BedrockModel` (`BEDROCK_MODEL_ID`, temperature 0, at most 400 tokens out) |
 | Tools | `door_visits`, `deliveries`, `week`, `check_attempt`, `dispute_pack`: plain Python over the same data the pages use. No tool writes or sends anything. |
+| Provenance | Every visit a tool returns carries `provenance` (`ring`: Ring's package_delivery alert, `bedrock`: Bedrock read a frame, `rules`: a time-of-day guess, `replay`: Shopfront's replayed webhook, `synthetic`: demo data) and `said_by` in words; orders, posted hours and the quoted scan say `owner`; the week's counts are split `by_provenance`. A row nobody can place is stamped `rules`. The system prompt says only `ring` and `bedrock` are sightings and the rest must be named as a guess, a replay or demo data. [tests/test_agent_provenance.py](../tests/test_agent_provenance.py) |
 | Trace | Every tool call and every Bedrock `RequestId` (from botocore's `after-call` event) is returned with the answer |
 | Failure | No credentials, no model access, throttling or network: `503 AGENT_UNAVAILABLE` with the cause. No answer is made up. |
 | Tests | [tests/test_door_desk.py](../tests/test_door_desk.py) with a fake agent; [scripts/eval_agent.py](../scripts/eval_agent.py) is the eval for a live run (ten questions from a day's data, two of them traps) |

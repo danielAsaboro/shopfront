@@ -4,6 +4,14 @@ The agent can only see what the tools return (Ring door visits and their labels,
 deliveries and receipts, posted hours), and it is told to answer from those and nothing else.
 Every tool call and every Bedrock RequestId is returned with the answer, so the page can show
 exactly what the answer rests on.
+
+Provenance: every fact a tool hands the model says where it came from, so a guess can't be passed off
+as something the camera saw. Each door visit carries `provenance` (one of `PROVENANCE`) and `said_by`
+in words; orders, posted hours and staff taps say `owner`; the week's counts are split by provenance.
+`ring` is Ring's own package_delivery alert, `bedrock` is Bedrock reading a frame, `rules` is a guess
+from the time of day, `replay` is Shopfront's replayed webhook (not a Ring notification) and
+`synthetic` is demo data no camera recorded (app/provenance.py says each one exactly). A visit whose
+source can't be told is stamped `rules`: unknown is a guess, never a sighting.
 """
 
 from __future__ import annotations
@@ -12,11 +20,16 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Callable
 
+from app import provenance as prov
+
 SYSTEM = """You are Shopfront, the front-door assistant for {shop}, a small shop. Today is {today} ({weekday}).
 You answer the owner's questions about what happened at the shop's door, using only the tools.
 - Call tools for every fact. Never guess times, counts or suppliers.
-- Labels "by bedrock" came from Amazon Bedrock looking at the Ring frame. Labels "by rules" are guesses
-  from time of day and event kind; say so when an answer depends on one.
+- Every visit has a provenance. Only "ring" (Ring's own package_delivery alert) and "bedrock" (Amazon Bedrock
+  looked at the frame) are things something saw. "rules" is a guess from time of day and event kind, "replay"
+  is Shopfront's replayed webhook (not a Ring notification) and "synthetic" is made-up demo data: never state
+  those as facts; say "a guess", "a replayed event" or "demo data" whenever an answer rests on one. "owner"
+  is what the owner entered (orders, posted hours, staff taps).
 - Ring has no "door answered" signal. Say a courier was at the door, never that a parcel was received.
 - When the owner quotes a carrier's scan ("attempted delivery" or "business closed"), call check_attempt with
   that claim and give its text; don't soften or strengthen it.
@@ -94,6 +107,45 @@ class Trace:
     bedrock_request_ids: list[str] = field(default_factory=list)
 
 
+PROVENANCE = ("ring", "bedrock", "rules", "replay", "synthetic", "owner")
+_FROM_KIND = {prov.RING_ALERT: "ring", prov.BEDROCK_RING: "bedrock", prov.BEDROCK_LIVE: "bedrock",
+              prov.RULES: "rules", prov.REPLAY: "replay", prov.SYNTHETIC: "synthetic"}
+
+
+def visit_provenance(row: dict) -> str:
+    """ring | bedrock | rules | replay | synthetic for a visit row; anything unrecognised is 'rules'."""
+    return _FROM_KIND.get(prov.of(row), "rules")
+
+
+def stamp(x):
+    """Put `provenance` and `said_by` on every visit row in a tool result, however deeply it sits.
+    A visit row is a dict that carries a label (`labelled_by`) or an event source (`event_source`)."""
+    if isinstance(x, list):
+        return [stamp(i) for i in x]
+    if not isinstance(x, dict):
+        return x
+    out = {k: stamp(v) for k, v in x.items()}
+    if "labelled_by" in x or "event_source" in x:
+        p = visit_provenance(x)
+        out["provenance"] = p
+        out["said_by"] = prov.SAID_BY.get(prov.of(x), prov.SAID_BY[prov.RULES])
+    return out
+
+
+def unstamped(x, path: str = "$") -> list[str]:
+    """Paths of visit rows without a known provenance: what `stamp` must leave empty."""
+    if isinstance(x, list):
+        return [p for i, v in enumerate(x) for p in unstamped(v, f"{path}[{i}]")]
+    if not isinstance(x, dict):
+        return []
+    bad = [path] if ("labelled_by" in x or "event_source" in x) and x.get("provenance") not in PROVENANCE else []
+    return bad + [p for k, v in x.items() for p in unstamped(v, f"{path}.{k}")]
+
+
+def _owner(rows: list) -> list:
+    return [{**r, "provenance": "owner"} if isinstance(r, dict) else r for r in rows]
+
+
 class ShopTools:
     """Plain functions over the app's data; agent tools wrap these and record each call."""
 
@@ -117,11 +169,16 @@ class ShopTools:
 
     def door_visits(self, day: str) -> dict:
         d = self._day(day)
-        return {"date": d.isoformat(), "posted_hours": self._hours(d), "visits": self._visits(d)}
+        return {"date": d.isoformat(), "posted_hours": self._hours(d), "posted_hours_provenance": "owner",
+                "visits": stamp(self._visits(d))}
 
     def deliveries(self, day: str) -> dict:
+        """Orders are the owner's (`provenance: owner`); the courier matched to each says its own."""
         d = self._day(day)
-        return {"date": d.isoformat(), **self._receipts(d)}
+        r = stamp(self._receipts(d))
+        if isinstance(r.get("expected"), list):
+            r["expected"] = _owner(r["expected"])
+        return {"date": d.isoformat(), **r}
 
     def check_attempt(self, day: str, at: str, claim: str = "attempted") -> dict:
         if not self._attempt:
@@ -132,8 +189,10 @@ class ShopTools:
         if claim not in ("attempted", "business_closed"):
             raise ValueError("claim must be attempted or business_closed")
         if claim == "attempted":
-            return self._attempt(datetime.combine(d, t))
-        return self._attempt(datetime.combine(d, t), claim)
+            out = self._attempt(datetime.combine(d, t))
+        else:
+            out = self._attempt(datetime.combine(d, t), claim)
+        return {**stamp(out), "scan_provenance": "owner", "posted_hours_provenance": "owner"}
 
     def dispute_pack(self, day: str, at: str = "", claim: str = "", order_ref: str = "") -> dict:
         if not self._pack:
@@ -143,17 +202,23 @@ class ShopTools:
             datetime.strptime(at.strip(), "%H:%M")
         if not at and not order_ref:
             raise ValueError("give the carrier's scan time or an order reference")
-        return self._pack(d, at.strip(), (claim or "").strip().lower().replace(" ", "_"), order_ref.strip())
+        out = stamp(self._pack(d, at.strip(), (claim or "").strip().lower().replace(" ", "_"), order_ref.strip()))
+        if isinstance(out.get("order"), dict):
+            out["order"] = {**out["order"], "provenance": "owner"}
+        return out
 
     def week(self, end_day: str) -> list[dict]:
         end = self._day(end_day)
         out = []
         for i in range(6, -1, -1):
             d = end - timedelta(days=i)
-            v = self._visits(d)
+            v = stamp(self._visits(d))
+            types = ("customer", "delivery", "staff", "after_hours")
             out.append({"date": d.isoformat(), "weekday": d.strftime("%a"), "posted_hours": self._hours(d),
-                        **{t: sum(1 for x in v if x["type"] == t)
-                           for t in ("customer", "delivery", "staff", "after_hours")}})
+                        "posted_hours_provenance": "owner", **{t: sum(1 for x in v if x["type"] == t) for t in types},
+                        "by_provenance": {t: {p: n for p in PROVENANCE
+                                              if (n := sum(1 for x in v if x["type"] == t and x["provenance"] == p))}
+                                          for t in types}})
         return out
 
 
