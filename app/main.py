@@ -25,7 +25,7 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
-from app import coverage, dispute, illustrations, pages, provenance
+from app import coverage, dispute, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, UNSAFE, OwnerGate, PublicDemoGate
@@ -67,12 +67,11 @@ templates.env.filters.update(
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, badge=pages.badge,
     pack_stills=pages.pack_stills,
-    illustration=illustrations.url_for, illustration_alt=illustrations.alt_for,
     relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
 templates.env.globals.update(cost_source=COST_SOURCE, default_cost=default_cost)
-templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(illustrations.FAVICON)
+templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(pages.FAVICON)
 
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
@@ -881,16 +880,7 @@ def frame(request: Request, name: str):
 
 @app.get("/favicon.ico")
 def favicon():  # for clients that ask for it anyway; the pages carry the icon inline
-    return Response(illustrations.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
-
-
-@app.get("/illustrations/{name}.svg")
-def illustration(name: str):
-    """A drawn still for a demo door event (app/illustrations.py): it says on itself that it isn't a frame."""
-    if name not in illustrations.files():
-        raise HTTPException(404)
-    return Response(illustrations.svg(name), media_type="image/svg+xml",
-                    headers={"Cache-Control": "max-age=86400"})
+    return Response(pages.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
 
 
 @app.post("/frames/{name}/delete")

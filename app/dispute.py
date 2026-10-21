@@ -544,6 +544,8 @@ def as_text(p: dict) -> str:
     lines.append(f"Posted hours that day: {p['posted_hours']}")
     if p.get("coverage"):
         lines.append(f"Camera around the scan: {p['coverage']['text']}")
+    if not p["frame"]:
+        lines.append(f"Camera frame: none for this {'scan' if p['claim'] else 'delivery'}")
     if p["frame"]:
         f = p["frame"]
         lines.append(f"{f['label']}: {f['time']} · event {f['event_id']} · {f['provenance']} · SHA-256 {f['sha256']}"
@@ -584,9 +586,6 @@ def _readme(p: dict, frame_name: str | None) -> str:
             ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])),
             "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
             "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
-    if p["demo_data"] or p["replayed"]:
-        lines += ["", "The pack page shows drawn illustrations for demo door events. They are not camera frames, "
-                  "not evidence, and not in this zip."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]
     return "\n".join(lines) + "\n"
 

@@ -9,7 +9,13 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from app import illustrations, provenance
+from app import provenance
+
+# The page icon: a shop door with its doorbell, inline on every page (and at /favicon.ico)
+FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>.b{fill:#1d1d1f}.f{fill:#f7f6f3}'
+           '@media (prefers-color-scheme: dark){.b{fill:#ececee}.f{fill:#151517}}</style>'
+           '<rect width="32" height="32" rx="7" class="b"/><rect x="9" y="6" width="12" height="21" rx="1.5" class="f"/>'
+           '<rect x="11.5" y="8.5" width="7" height="8" rx="1" class="b"/><circle cx="25" cy="16" r="2" class="f"/></svg>')
 
 # Who labelled a door event, in the owner's words (the API keeps the raw source names)
 BY = {"bedrock": "Bedrock looked at the Ring frame", "ring": "Ring's package alert",
@@ -98,8 +104,9 @@ def badge(source: str | None, event_source: str | None = None) -> str:
 
 
 def pack_stills(p: dict, limit: int = 2) -> list[dict]:
-    """The door log rows to picture on a pack: at most `limit`, nearest the time in question (the scan, or the
-    courier), the ones with a Ring frame first, and never the frame the pack already shows large."""
+    """The door log rows with a frame Shopfront holds (a Ring frame, or one captured from live view), to picture on
+    a pack: at most `limit`, nearest the time in question (the scan, or the courier), never the frame the pack
+    already shows large. Nothing is drawn: an event with no frame has no picture."""
     def secs(t: str) -> int:
         h, m, *rest = (int(x) for x in t.split(":"))
         return h * 3600 + m * 60 + (rest[0] if rest else 0)
@@ -108,9 +115,8 @@ def pack_stills(p: dict, limit: int = 2) -> list[dict]:
         return []
     centre = secs(centre_at)
     shown = (p.get("frame") or {}).get("event_id")
-    rows = [t for t in p.get("timeline") or [] if t["event_id"] != shown
-            and (t.get("frame_url") or illustrations.url_for(t))]
-    rows.sort(key=lambda t: (not t.get("frame_url"), abs(secs(t["time"]) - centre), t["time"]))
+    rows = [t for t in p.get("timeline") or [] if t["event_id"] != shown and t.get("frame_url")]
+    rows.sort(key=lambda t: (abs(secs(t["time"]) - centre), t["time"]))
     return sorted(rows[:limit], key=lambda t: t["time"])
 
 

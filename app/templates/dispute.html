@@ -65,6 +65,10 @@
     <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
   </dl>
 
+  {% set stills = p|pack_stills %}
+  {% if not p.frame and not stills %}
+  <p class="no-frame" style="margin:16px 0 0">No camera frame for this {{ 'scan' if p.claim else 'delivery' }}.</p>
+  {% endif %}
   {% if p.frame %}
   <section class="block" aria-labelledby="frameh">
     <h2 id="frameh">{{ p.frame.label }}, {{ p.frame.time }}</h2>
@@ -81,15 +85,12 @@
   {% if p.timeline %}
   <section class="block" aria-labelledby="logh">
     <h2 id="logh">Door log, {{ p.timeline_window_min }} min either side</h2>
-    {% set stills = p|pack_stills %}
-    {% set ns = namespace(drawn=0) %}
     {% if stills %}
     <div class="stills" role="list" aria-label="Door around {{ 'the scan' if p.claim else 'the courier' }}">
-      {% for t in stills %}{% set drawn = t|illustration %}
-      <figure role="listitem">{% if t.frame_url %}<a href="{{ t.frame_url }}"><img src="{{ t.frame_url }}" alt="{{ t|frame_label }} at {{ t.time[:5] }}" loading="lazy"></a><figcaption>{{ t.time[:5] }} · {{ t.type|visit_label(t.confirmed, t.event_source) }} · {{ t|frame_label }}</figcaption>{% else %}{% set ns.drawn = ns.drawn + 1 %}<img src="{{ drawn }}" alt="{{ t.type|illustration_alt }} ({{ t.time[:5] }})" title="Illustration, not a camera frame" loading="lazy"><figcaption>{{ t.time[:5] }} · {{ t.ring_event }}, {{ t.type|visit_label(t.confirmed) }} · illustration</figcaption>{% endif %}</figure>
+      {% for t in stills %}
+      <figure role="listitem"><a href="{{ t.frame_url }}"><img src="{{ t.frame_url }}" alt="{{ t|frame_label }} at {{ t.time[:5] }}" loading="lazy"></a><figcaption>{{ t.time[:5] }} · {{ t.type|visit_label(t.confirmed, t.event_source) }} · {{ t|frame_label }}</figcaption></figure>
       {% endfor %}
     </div>
-    {% if ns.drawn > 1 %}<p class="why" style="margin:6px 0 0">Both pictures are illustrations, not camera frames: Shopfront drew them for its demo events. No camera took them, and they aren't in the zip.</p>{% elif ns.drawn %}<p class="why" style="margin:6px 0 0">{{ "The picture is" if stills|length == 1 else "The drawn picture is" }} an illustration, not a camera frame: Shopfront drew it for a demo event. No camera took it, and it isn't in the zip.</p>{% endif %}
     {% endif %}
     <table class="log">
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>

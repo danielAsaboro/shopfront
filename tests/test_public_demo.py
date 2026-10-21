@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
-from app import illustrations, public_demo
+from app import public_demo
 from app.owner import COOKIE, OwnerGate, PublicDemoGate, admit_visitor
 from tests.aws_fakes import template
 
@@ -84,10 +84,7 @@ def state() -> tuple:
 
 def _example(route_path: str, demo) -> str:
     expected = main.book._all()[0].id
-    name = next(iter(illustrations.files()))
     path = route_path.replace("{expected_id}", expected).replace("{session_id}", "live-0001")
-    if path.startswith("/illustrations/"):
-        return path.replace("{name}", name)
     return path.replace("{name}", "ring-123.jpg")
 
 

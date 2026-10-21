@@ -54,7 +54,7 @@ ENV_FLAG = "SHOPFRONT_PUBLIC_DEMO"
 READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/healthz", "/favicon.ico",
                         "/api/deliveries", "/api/events", "/api/briefing", "/api/attempt", "/api/dispute",
                         "/api/webhooks"})
-READ_PREFIXES = ("/illustrations/", "/frames/")
+READ_PREFIXES = ("/frames/",)
 READ_METHODS = frozenset({"GET", "HEAD"})
 
 # Why a page or action is switched off, in the visitor's words
