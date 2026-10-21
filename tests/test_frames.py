@@ -96,3 +96,12 @@ def test_frame_delete_macro_renders_a_post_form():
     env = Environment(loader=FileSystemLoader("app/templates"), autoescape=True)
     html = env.from_string('{% from "_frame_delete.html" import delete_frame %}{{ delete_frame("/frames/a.jpg", "/") }}').render()
     assert 'action="/frames/a.jpg/delete"' in html and 'method="post"' in html and "Delete frame" in html
+
+
+
+def test_frame_days_zero_keeps_frames_and_empty_means_thirty():
+    from app.config import frame_days
+
+    assert frame_days("0") == 0
+    assert frame_days("") == 30
+    assert frame_days("7") == 7

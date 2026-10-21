@@ -17,6 +17,11 @@ def _env(name: str, default: str = "") -> str:
     return os.getenv(name, default).strip()
 
 
+def frame_days(raw: str) -> float:
+    """SHOPFRONT_FRAME_DAYS: empty means 30 days; 0 keeps frames forever."""
+    return float(raw) if raw else 30.0
+
+
 @dataclass(frozen=True)
 class Settings:
     shop_name: str = _env("SHOP_NAME", "Corner Bakery")
@@ -44,7 +49,7 @@ class Settings:
 
     data_dir: str = _env("SHOPFRONT_DATA_DIR", ".data")
     # Door frames (pictures of people) are deleted after this many days; 0 keeps them.
-    frame_days: float = float(_env("SHOPFRONT_FRAME_DAYS", "30") or 30)
+    frame_days: float = frame_days(_env("SHOPFRONT_FRAME_DAYS"))
     # Extra host names this app may be reached by (e.g. "shop-mac.local"), comma-separated. localhost and
     # IP addresses always work; anything else is refused, which stops DNS-rebinding pages.
     allowed_hosts: str = _env("SHOPFRONT_ALLOWED_HOSTS")
