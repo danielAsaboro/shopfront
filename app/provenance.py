@@ -1,0 +1,96 @@
+"""Where a door label came from, said exactly, for pages, packs and drafts.
+
+A courier label can rest on six different things, and they are not equally strong:
+
+- `ring_alert`: Ring's own motion `sub_type: package_delivery` (a Smart Alert, pushed by webhook or in Event
+  History). Ring says a courier came; Shopfront holds no frame of it unless it downloaded one.
+- `replay`: an event from Shopfront's signed webhook replay feeder (`ring-webhook-replay`), not a Ring
+  notification, whatever it was labelled.
+- `bedrock_ring_frame`: Bedrock read the frame Shopfront downloaded from Ring for that event.
+- `bedrock_live_frame`: Bedrock read a frame the owner's browser captured from a Ring live-view session
+  (app/live.py). Shopfront can't tell those bytes from any other JPEG, so it is never called a Ring frame.
+- `rules`: the time-of-day rules guessed; nothing looked at the door.
+- `synthetic`: Shopfront's demo generator made the event up; no camera recorded it.
+
+Each kind has its own wording; nothing says "the frame" when there is no frame.
+"""
+
+from __future__ import annotations
+
+RING_ALERT, REPLAY, BEDROCK_RING, BEDROCK_LIVE, RULES, SYNTHETIC = (
+    "ring_alert", "replay", "bedrock_ring_frame", "bedrock_live_frame", "rules", "synthetic")
+
+
+def kind(labelled_by: str | None, event_source: str | None) -> str:
+    """One of the six kinds above. Anything that isn't Ring, Bedrock or synthetic/replayed data is a rules
+    guess, the weakest reading."""
+    src = event_source or ""
+    if src == "synthetic":
+        return SYNTHETIC
+    if src == "ring-webhook-replay":
+        return REPLAY
+    if labelled_by == "ring":
+        return RING_ALERT
+    if labelled_by == "bedrock":
+        return BEDROCK_LIVE if src.startswith("ring-live") else BEDROCK_RING
+    return RULES
+
+
+def of(row: dict | None) -> str:
+    """The kind for a visit row (deliveries._visit_row, reconcile._visit, dispute._timeline)."""
+    row = row or {}
+    return kind(row.get("labelled_by"), row.get("event_source"))
+
+
+def how_known(labelled_by: str | None, event_source: str | None, has_frame: bool = False) -> str:
+    """What the label rests on, in the owner's words: 'Ring's package_delivery alert, no frame'."""
+    k = kind(labelled_by, event_source)
+    if k == SYNTHETIC:
+        return "Synthetic demo event, no camera recorded it; guess from the time of day"
+    if k == REPLAY:
+        what = "package_delivery alert" if labelled_by == "ring" else "event"
+        tail = "" if labelled_by == "ring" else "; guess from the time of day"
+        return f"Replayed Ring {what} from Shopfront's feeder, not a Ring notification, no frame{tail}"
+    if k == RING_ALERT:
+        return "Ring's package_delivery alert" + ("; Shopfront holds its Ring frame" if has_frame else ", no frame")
+    if k == BEDROCK_LIVE:
+        return "Bedrock read a frame captured in your browser from Ring live view"
+    if k == BEDROCK_RING:
+        return "Bedrock read the Ring frame"
+    return "Guess from the time of day"
+
+
+# The same, as the source of a statement in a pack or a draft: "(Ring's package_delivery alert)"
+SAID_BY = {
+    RING_ALERT: "Ring's package_delivery alert",
+    REPLAY: "a replayed Ring package_delivery alert, not a Ring notification",
+    BEDROCK_RING: "Bedrock saw them in the Ring frame",
+    BEDROCK_LIVE: "Bedrock saw them in a frame captured in the owner's browser from a Ring live-view session",
+    RULES: "a guess from the time of day",
+    SYNTHETIC: "a synthetic demo event, no camera",
+}
+
+# Why a courier label can't say whose order it was, per kind
+NOT_WHOSE = {
+    RING_ALERT: "Ring's package_delivery alert says a courier came, not whose order it was",
+    REPLAY: "the replayed package_delivery alert says a courier came, not whose order it was",
+    BEDROCK_RING: "the Ring frame shows a courier, not whose order it was",
+    BEDROCK_LIVE: "the frame captured in your browser from Ring live view shows a courier, not whose order it was",
+    RULES: "the time-of-day rules only guessed a courier, and can't say whose order it was",
+    SYNTHETIC: "it's a synthetic demo event: no camera saw a courier, let alone whose order it was",
+}
+
+FRAME_LABEL = {BEDROCK_LIVE: "Frame captured in your browser from Ring live view"}
+
+
+def said_by(row: dict | None) -> str:
+    return SAID_BY[of(row)]
+
+
+def not_whose(row: dict | None) -> str:
+    return NOT_WHOSE[of(row)]
+
+
+def frame_label(row: dict | None) -> str:
+    """Alt text and headings for a frame Shopfront holds: a Ring frame unless the browser captured it."""
+    return FRAME_LABEL.get(of(row), "Ring frame")

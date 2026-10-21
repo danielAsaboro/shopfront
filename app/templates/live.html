@@ -30,7 +30,7 @@
     <h2 id="recent">Recent live visits</h2>
     <table>
       <tr><th scope="col">Started</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
-      {% for s in sessions %}<tr><td class="t">{{ s.started|local_stamp }}</td><td>{{ s.label.type|replace('_', ' ') }}</td><td class="why">{{ s.label.source|how(s.label.reason) }}</td></tr>
+      {% for s in sessions %}<tr><td class="t">{{ s.started|local_stamp }}</td><td>{{ s.label.type|replace('_', ' ') }}</td><td class="why">{{ s.label.source|how(s.label.reason, "ring-live-browser") }}</td></tr>
       {% else %}<tr><td colspan="3" class="why">None yet.</td></tr>{% endfor %}
     </table>
   </section>

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, time, timedelta
 
+from app import provenance
 from app.models import SEEN_SOURCES, ClassifiedVisit, VisitType
 
 TOLERANCE = timedelta(minutes=10)  # carrier scans and doorbell clocks rarely agree to the minute
@@ -87,14 +88,12 @@ CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wor
     NO_DOOR_DATA: "Shopfront has no door events at all for that day, so it can't check this scan.",
 }
 
-BY = {"bedrock": "Bedrock saw them in the Ring frame", "ring": "Ring's package_delivery alert"}
-LIVE_BY = "Bedrock saw them in a frame captured in the owner's browser from a Ring live-view session"
-
-
 def _by(v: ClassifiedVisit) -> str:
-    if v.source == "bedrock" and v.event.source.startswith("ring-live"):  # app/live.py: not a Ring download
-        return LIVE_BY
-    return BY.get(v.source, "")
+    """What the courier label rests on, exactly (app/provenance.py): Ring's alert, a replay, a Ring frame or a
+    frame from the owner's browser."""
+    return provenance.SAID_BY[provenance.kind(v.source, v.event.source)]
+
+
 AMBIGUOUS = " {attempt} happened twice that night (the clocks went back an hour); Shopfront read it as the first."
 
 

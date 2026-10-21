@@ -67,7 +67,7 @@
       <tr>
         <td class="t {{ 'warn' if late }}{{ 'muted' if quiet }}">{{ x.visit.time if x.visit else (maybe.time if maybe else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—')) }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}</span>{% endif %}
-          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ 'fit' if many else 'fits' }} the window; no camera frame confirmed a courier.</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: the frame shows a courier, not whose.</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ 'fit' if many else 'fits' }} the window; no camera frame confirmed a courier.</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be {{ x.also_fits|join(" or ") }}'s courier: {{ x.visit|not_whose }}.</span>{% endif %}
           {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if (x.visit or maybe) and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
@@ -77,16 +77,16 @@
             </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
           </div></td>
-        <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason) }}{% endif %}</td>
-        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="Ring frame of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
+        <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason, x.visit.event_source, x.visit.frame_url) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason, maybe.event_source, maybe.frame_url) }}{% endif %}</td>
+        <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
       </tr>
       {% else %}
       {% set u = x.visit %}
       <tr>
         <td class="t">{{ u.time }}</td>
         <td>Courier nobody listed{% if not u.shop_open %} <span class="warn">· while closed</span>{% endif %}</td>
-        <td class="why">{{ u.labelled_by|how(u.reason) }}</td>
-        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="Ring frame at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% endif %}</td>
+        <td class="why">{{ u.labelled_by|how(u.reason, u.event_source, u.frame_url) }}</td>
+        <td class="thumb">{% if u.frame_url %}<a href="{{ u.frame_url }}"><img src="{{ u.frame_url }}" alt="{{ u|frame_label }} at {{ u.time }}" loading="lazy"></a>{{ delete_frame(u.frame_url, back) }}{% endif %}</td>
       </tr>
       {% endif %}
       {% endfor %}
@@ -112,8 +112,8 @@
       <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
       <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
     </div>
-    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="Ring frame at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
-    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason) }}</p>{% endif %}
+    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
+    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</p>{% endif %}
     {% if attempt.outcome in disputable %}<p><a class="primary" href="/dispute?date={{ b.date }}&amp;at={{ asked_time }}&amp;claim={{ attempt.claim }}{% if carrier %}&amp;carrier={{ carrier|urlencode }}{% endif %}{% if tracking %}&amp;tracking={{ tracking|urlencode }}{% endif %}">Build the dispute pack</a></p>{% endif %}
     {% endif %}
     {% endif %}
@@ -123,8 +123,8 @@
   <section class="block" aria-labelledby="look">
     <h2 id="look">Needs a look</h2>
     <table>
-      {% for m in b.deliveries_while_closed %}<tr><td class="t warn">{{ m.time }}</td><td class="warn">{{ m.what }}</td><td class="why">{{ m.labelled_by|how(m.reason) }}</td></tr>{% endfor %}
-      {% for m in b.presses_while_closed %}<tr><td class="t">{{ m.time }}</td><td>{{ m.what }}</td><td class="why">No camera frame confirmed who it was. {{ m.labelled_by|how(m.reason) }}</td></tr>{% endfor %}
+      {% for m in b.deliveries_while_closed %}<tr><td class="t warn">{{ m.time }}</td><td class="warn">{{ m.what }}</td><td class="why">{{ m.labelled_by|how(m.reason, m.event_source) }}</td></tr>{% endfor %}
+      {% for m in b.presses_while_closed %}<tr><td class="t">{{ m.time }}</td><td>{{ m.what }}</td><td class="why">No camera frame confirmed who it was. {{ m.labelled_by|how(m.reason, m.event_source) }}</td></tr>{% endfor %}
       {% for a in b.after_hours %}<tr><td class="t">{{ a.time }}</td><td>After-hours motion</td><td class="why">{{ a.reason }}</td></tr>{% endfor %}
     </table>
   </section>
@@ -166,7 +166,7 @@
     <summary><h2>Every door event ({{ b.visits|length }})</h2></summary>
     <table>
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
-      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td>{{ v.type|replace('_', ' ') }}</td><td class="why">{{ v.classifier|how(v.reason) }}</td></tr>{% endfor %}
+      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td>{{ v.type|replace('_', ' ') }}</td><td class="why">{{ v.classifier|how(v.reason, v.event_source) }}</td></tr>{% endfor %}
     </table>
   </details>
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from app import provenance
+
 # Who labelled a door event, in the owner's words (the API keeps the raw source names)
 BY = {"bedrock": "Bedrock looked at the Ring frame", "ring": "Ring's package alert",
       "rules": "Guess from the time of day"}
@@ -60,12 +62,22 @@ def local_stamp(value, tz: ZoneInfo) -> str:
     return f"{at:%Y-%m-%d} at {at:%H:%M}"
 
 
-def how(source: str | None, reason: str | None) -> str:
-    """'Guess from the time of day: doorbell press during open hours'. Ring's own reasons already say Ring."""
+# Notes the classifier adds to a reason that how_known() already says up front
+_SAID_ALREADY = (" (synthetic event has no frame)", " (replayed Ring event, no frame)")
+
+
+def how(source: str | None, reason: str | None, event_source: str | None = None, frame_url: str | None = None) -> str:
+    """'Ring's package_delivery alert, no frame' / 'Guess from the time of day: doorbell press during open
+    hours': what the label rests on, exactly for its source (app/provenance.py), then the reason."""
     reason = reason or ""
-    if source == "ring" and reason.lower().startswith("ring"):
-        return reason
-    return f"{by(source)}: {reason}" if reason else by(source)
+    for note in _SAID_ALREADY:
+        reason = reason.replace(note, "")
+    if source == "ring" and reason.lower().startswith("ring smart alert"):
+        reason = reason[len("Ring Smart Alert: package_delivery"):].strip(" ;:")  # the prefix says it
+    if source not in ("ring", "bedrock", "rules"):  # e.g. a live session nothing labelled ("none")
+        return f"{by(source)}: {reason}" if reason else by(source)
+    known = provenance.how_known(source, event_source, bool(frame_url))
+    return f"{known}: {reason}" if reason else known
 
 
 def long_date(value) -> str:
@@ -101,9 +113,12 @@ def labelled_by_text(funnel: dict, classifier: str) -> str:
         return "Bedrock vision, rules when there is no frame" if classifier == "bedrock" else "time-of-day rules"
     parts = []
     if funnel.get("labelled_by_ring"):
-        parts.append(f"{funnel['labelled_by_ring']} by Ring's package alert")
-    if funnel.get("reached_bedrock"):
-        parts.append(f"{funnel['reached_bedrock']} by Bedrock from a Ring frame")
+        parts.append(f"{funnel['labelled_by_ring']} by Ring's package_delivery alert")
+    ring_frames = funnel.get("reached_bedrock", 0) - funnel.get("bedrock_live", 0)
+    if ring_frames:
+        parts.append(f"{ring_frames} by Bedrock from a Ring frame")
+    if funnel.get("bedrock_live"):
+        parts.append(f"{funnel['bedrock_live']} by Bedrock from frames captured in your browser from Ring live view")
     if funnel.get("labelled_by_rules"):
         parts.append(f"{funnel['labelled_by_rules']} by time-of-day rules")
     if funnel.get("skipped_stage0"):

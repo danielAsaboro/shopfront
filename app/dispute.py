@@ -27,6 +27,7 @@ import json
 import zipfile
 from datetime import UTC, date, datetime, timedelta, tzinfo
 
+from app import provenance
 from app import reconcile as rc
 from app.deliveries import STATUS_TEXT, Expected, FrameStore
 from app.live import frame_provenance
@@ -77,7 +78,6 @@ NO_DRAFT = {
                       "Enter the tracking number of the order it was for, and the pack can draft a late-delivery "
                       "note to that supplier.",
 }
-BY = {"ring": "Ring's package-delivery alert", "bedrock": "identified from the camera frame"}
 
 
 def _sha256(path) -> str | None:
@@ -160,10 +160,10 @@ def _finding(check: dict, late: dict | None, order: dict | None) -> dict:
     what = "scanned \"business closed\"" if check["claim"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
     hours = f" Your posted hours had you open ({check['posted_hours']}), so the scan doesn't match them." \
         if check["claim"] == rc.BUSINESS_CLOSED else ""
-    whose = f" It could also have been {' or '.join(order['also_fits'])}'s courier: the frame shows a courier, " \
-            f"not whose." if order["also_fits"] else ""
+    whose = f" It could also have been {' or '.join(order['also_fits'])}'s courier: " \
+            f"{provenance.not_whose(late)}." if order["also_fits"] else ""
     text = (f"The carrier {what} at {check['attempt'][-5:]}, then the courier was at the door at {late['time']}, "
-            f"{late['minutes_after']} min later ({BY.get(late['labelled_by'], late['labelled_by'])}). Shopfront "
+            f"{late['minutes_after']} min later ({provenance.said_by(late)}). Shopfront "
             f"matched that courier to {order['order_ref'] or order['supplier']}.{hours}{whose}")
     return {**f, "outcome": DELIVERED_AFTER_SCAN, "text": text, "visit": late, "door_outcome": check["outcome"]}
 
@@ -257,7 +257,7 @@ def _facts(p: dict) -> str:
         line = f"Our posted hours that day were {p['posted_hours']}, and our doorbell camera recorded {kinds} " \
                f"between {a['from']} and {a['to']}{conf}."
         if f["outcome"] == rc.OPEN_COURIER_CAME:
-            return line + f" It also shows a courier at our door at {v['time']} ({BY.get(v['labelled_by'], '')}), " \
+            return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
         if not a.get("near"):
             return line + f" It recorded nothing at our door within {tol} minutes of the scan."
@@ -307,9 +307,10 @@ def _late_note(p: dict, sign: str) -> dict:
               f"late delivery, and ask {ask} to review the attempt scan if it affects anything on your side.")
         subject = f"Late delivery after an attempted-delivery scan, {o['order_ref'] or o['day']}"
     seen = (f"Our doorbell camera then recorded the courier at our door at {v['time']} "
-            f"({BY.get(v['labelled_by'], v['labelled_by'])}), {v['minutes_after']} minutes after that scan.")
+            f"({provenance.said_by(v)}), {v['minutes_after']} minutes after that scan.")
     if o["also_fits"]:
-        seen += f" (The camera shows a courier, not whose: it could also have been for {' or '.join(o['also_fits'])}.)"
+        seen += f" ({provenance.not_whose(v)[:1].upper()}{provenance.not_whose(v)[1:]}: it could also have been " \
+                f"for {' or '.join(o['also_fits'])}.)"
     body = "\n\n".join([f"Hello {o['supplier']},", _order_line(o), scan + " " + seen, so + " " + _evidence(p)]) + sign
     return {"to": o["supplier"], "subject": subject, "body": body}
 

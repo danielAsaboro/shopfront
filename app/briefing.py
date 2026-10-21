@@ -90,6 +90,7 @@ def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
     return {"events": len(visits) + skipped, "skipped_stage0": skipped,
             "labelled_by_ring": sum(1 for v in visits if v.source == "ring"),
             "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
+            "bedrock_live": sum(1 for v in visits if v.source == "bedrock" and v.event.source.startswith("ring-live")),
             "labelled_by_rules": sum(1 for v in visits if v.source == "rules"),
             "webhook_events": sum(1 for v in visits if v.event.source.startswith("ring-webhook")) + skipped,
             "replayed": any(v.event.source == "ring-webhook-replay" for v in visits)
@@ -137,7 +138,8 @@ def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_nam
 
     def row(v: ClassifiedVisit, what: str) -> dict:
         return {"time": v.event.timestamp.strftime("%H:%M"), "id": v.event.id, "reason": v.reason, "what": what,
-                "labelled_by": v.source, "confirmed": is_seen_courier(v), "ring_event": v.event.kind}
+                "labelled_by": v.source, "confirmed": is_seen_courier(v), "ring_event": v.event.kind,
+                "event_source": v.event.source}
     # Only a courier Ring or Bedrock saw is a courier; a rules "delivery" is a doorbell press and stays one
     closed_deliveries = [row(v, "Courier at the door while closed") for v in closed if is_seen_courier(v)]
     presses = [row(v, "Doorbell pressed while closed" if v.event.kind == "ding" else "Door event while closed")
