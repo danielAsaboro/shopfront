@@ -40,6 +40,7 @@ from app.deliveries import DeliveryBook, FrameStore  # noqa: E402
 from app.live import LiveLog  # noqa: E402
 from app.owner import OwnerGate  # noqa: E402
 from app.ring import RingSource  # noqa: E402
+from app.ring.link import RingLink  # noqa: E402
 from app.ring.status import StatusLog  # noqa: E402
 from app.ring.webhooks import WebhookLog  # noqa: E402
 from app.shop import ShopProfile  # noqa: E402
@@ -99,7 +100,9 @@ def no_local_data(tmp_path, monkeypatch):
     Ring, and a saved profile, delivery list or webhook log would change what the tests see."""
     d = tmp_path / "data"
     monkeypatch.setattr(main, "DATA", d)
-    monkeypatch.setattr(main, "source", RingSource(main.settings, d / "ring-access-token"))
+    link = RingLink(d, client_id="", client_secret="", hmac_key="")
+    monkeypatch.setattr(main, "ring_link", link)
+    monkeypatch.setattr(main, "source", RingSource(main.settings, d / "ring-access-token", link))
     monkeypatch.setattr(main, "profile", ShopProfile(d / "shop.json", main.settings.shop_name, main.settings.shop_hours))
     monkeypatch.setattr(main, "book", DeliveryBook(d / "expected-deliveries.json"))
     monkeypatch.setattr(main, "checks", CheckBook(d / "checks.json"))

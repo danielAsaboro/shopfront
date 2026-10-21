@@ -43,6 +43,9 @@ class Settings:
     # it is the only event a Developer Playground scene files, and the moment a Playground frame exists.
     ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion,on_demand")
     ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
+    # The HTTPS address Ring reaches this app at (a tunnel or a host of your own), e.g. https://shop.example.com.
+    # Only used to show the four URLs to register in the Ring Developer Portal for account linking (docs/ring.md).
+    public_url: str = _env("SHOPFRONT_PUBLIC_URL").rstrip("/")
 
     # Classifier: auto (Bedrock if AWS credentials resolve, else rules) | rules | bedrock
     classifier: str = _env("CLASSIFIER", "auto")

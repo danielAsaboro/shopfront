@@ -30,7 +30,7 @@ from app import checks as kept_checks
 from app import coverage, dispute, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
-from app.owner import COOKIE, COOKIE_DAYS, UNSAFE, OwnerGate, PublicDemoGate
+from app.owner import COOKIE, COOKIE_DAYS, RING_SERVER_PATHS, UNSAFE, OwnerGate, PublicDemoGate
 from app.scan_extract import MAX_BYTES as MAX_SCAN_BYTES
 from app.scan_extract import ScanReader, ScanReadError
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, REFUSED, TOLERANCE, check_attempt, check_closed_scan
@@ -44,6 +44,8 @@ from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.webhooks import MAX_BODY as MAX_WEBHOOK_BODY
 from app.ring.webhooks import WebhookStatus
+from app.ring.webhooks import verify as ring_signed
+from app.ring.link import LinkError, RingLink, freshness as link_freshness
 from app.ring.status import StatusLog, sampler
 from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 from app.store import make_webhook_log
@@ -69,7 +71,8 @@ templates.env.filters.update(
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, badge=pages.badge,
     pack_stills=pages.pack_stills, month_name=lambda v: date.fromisoformat(str(v)[:10]).strftime("%B %Y"),
-    relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
+    relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label,
+    verdict_facts=pages.verdict_facts, chip=pages.chip, strip=pages.door_strip, pack_check=pages.pack_check)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
 templates.env.globals.update(cost_source=COST_SOURCE, default_cost=default_cost)
@@ -84,7 +87,10 @@ classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = make_webhook_log(settings, DATA / "ring-webhooks.jsonl")  # file, or the Lambda's DynamoDB table
 status_log = StatusLog(DATA / "ring-status.jsonl")  # Shopfront's own GET /v1/devices/{id}/status samples
-source = RingSource(settings, DATA / "ring-access-token")
+# Ring account linking (app/ring/link.py): the unclaimed-token pool and the linked account's refresh token
+ring_link = RingLink(DATA, client_id=settings.ring_client_id, client_secret=settings.ring_client_secret,
+                     hmac_key=settings.ring_hmac_key)
+source = RingSource(settings, DATA / "ring-access-token", ring_link)
 live = LiveLog(DATA, settings.tz)
 scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
 ask_probe = AskProbe(settings.aws_region, settings.bedrock_model_id)  # can Ask reach Bedrock from here?
@@ -125,7 +131,7 @@ def _not_owner(request: Request) -> Response:
 async def owner_only(request: Request, call_next):
     """Everything but Ring's webhook and /healthz is the owner's. See app/owner.py."""
     path, headers = request.url.path, request.headers
-    if path == "/webhooks/ring" and path in gate.public_paths:  # Ring signs it (HMAC), under any public name
+    if path in RING_SERVER_PATHS and path in gate.public_paths:  # Ring's own server calls, under any public name
         return await call_next(request)
     if not gate.host_ok(headers.get("host")):
         return PlainTextResponse("Shopfront doesn't answer to this address. Open it at http://localhost:<port> "
@@ -412,6 +418,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "status_text": STATUS_TEXT,
         "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
         "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE, "refused": REFUSED,
+        "posted": f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if (oh := posted_hours(profile.hours(), day)) else "closed",
         **({"can_ask": True, "ask_reason": None} if (ask := _ask_state()) is None else
            {"can_ask": False, "ask_reason": ask}), "ask_example": pages.ASK_EXAMPLE,
         "can_read_scan": scan_reader.available()})
@@ -567,9 +574,117 @@ async def ring_webhook(request: Request):
     # ever mark one as a replay, never vouch for it being Ring's.
     status = webhook_log.handle(raw, request.headers.get("X-Signature"), settings.ring_hmac_key,
                                 replayed=request.headers.get("X-Shopfront-Replay") == "1")
+    if status == WebhookStatus.ACCEPTED and ring_signed(raw, request.headers.get("X-Signature"), settings.ring_hmac_key):
+        _link_webhook(raw)  # Ring's own key only: a replay can't unlink the account
     code = {WebhookStatus.ACCEPTED: 200, WebhookStatus.DUPLICATE: 200, WebhookStatus.MALFORMED: 400,
             WebhookStatus.BAD_SIGNATURE: 401, WebhookStatus.NOT_CONFIGURED: 503}[status]
     return JSONResponse({"status": status.value}, status_code=code)
+
+
+def _link_webhook(raw: bytes) -> None:
+    """app_integration_added / _removed for the linked account (API reference, Notifications)."""
+    try:
+        body = json.loads(raw)
+        kind, account = body["data"]["type"], body["meta"].get("account_id")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return
+    if kind in ("app_integration_added", "app_integration_removed") and ring_link.on_webhook(kind, account):
+        source._key = None  # rebuild the Ring client: the linked tokens changed
+
+
+# --- Ring account linking (app/ring/link.py; docs/ring.md, section 10) ---
+
+LINK_CODE_BYTES = 8 * 1024
+
+
+def _link_code(request: Request, raw: bytes) -> str:
+    """The authorization code from Ring's POST to the Token Exchange URL. The docs don't show that request's
+    body, so a JSON body, a form body and the query string are all read (docs/ring.md, section 10)."""
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    code = None
+    if ctype == "application/json":
+        try:
+            body = json.loads(raw or b"{}")
+            code = body.get("code") or body.get("authorization_code") if isinstance(body, dict) else None
+        except ValueError:
+            code = None
+    elif ctype == "application/x-www-form-urlencoded":
+        from urllib.parse import parse_qs
+        form = parse_qs(raw.decode("utf-8", "replace"))
+        code = (form.get("code") or form.get("authorization_code") or [None])[0]
+    code = code or request.query_params.get("code")
+    return code.strip() if isinstance(code, str) else ""
+
+
+@app.post("/ring/link/token")
+async def ring_link_token(request: Request):
+    """Token Exchange URL (Getting Started 4.1): Ring's backend sends the authorization code here."""
+    raw = await _capped_body(request, LINK_CODE_BYTES)
+    if raw is None:
+        return JSONResponse({"status": "TOO_LARGE"}, status_code=413)
+    code = _link_code(request, raw)
+    if not code:
+        return JSONResponse({"status": "NO_CODE"}, status_code=400)
+    try:
+        await run_in_threadpool(ring_link.exchange, code)  # within Ring's 60 seconds, never queued
+    except LinkError as exc:
+        return JSONResponse({"status": "FAILED", "step": exc.step, "detail": exc.detail},
+                            status_code=503 if exc.step == "config" else 502)
+    return JSONResponse({"status": "OK"})
+
+
+def _link_ctx(request: Request) -> dict:
+    row = ring_link.linked()
+    base = settings.public_url
+    return {"linked": row, "link_missing": ring_link.configured(), "unclaimed": ring_link.unclaimed_count(),
+            "public_url": base, "pasted": bool(source.pasted_token()),
+            "urls": [("Token Exchange URL", f"{base}/ring/link/token"), ("Account Link URL", f"{base}/ring/link"),
+                     ("Webhook URL", f"{base}/webhooks/ring"), ("App Homepage URL", f"{base}/ring/link/home")]
+            if base else []}
+
+
+@app.get("/ring/link", response_class=HTMLResponse)
+def ring_link_page(request: Request, nonce: str | None = Query(None), time: str | None = Query(None)):
+    """Account Link URL. Ring redirects the owner here with nonce and time; reaching this page at all needs the
+    owner's sign-in (the owner gate). Nothing is matched or claimed until the owner presses Link (a POST)."""
+    ctx = _link_ctx(request)
+    if nonce or time:
+        problem = ctx["link_missing"] and f"Shopfront isn't set up for account linking: set {ctx['link_missing']}."
+        problem = problem or link_freshness(time) or (None if nonce else "the link from Ring has no nonce")
+        ctx.update(nonce=nonce or "", time=time or "", problem=problem,
+                   form_token=ring_link.form_token(nonce or "", time or "") if not problem else "")
+    return _page(request, "ring_link.html", ctx, 400 if ctx.get("problem") else 200)
+
+
+@app.post("/ring/link")
+def ring_link_confirm(request: Request, nonce: str = Form(""), time: str = Form(""), form_token: str = Form("")):
+    ctx = _link_ctx(request)
+    ctx.update(nonce=nonce, time=time, form_token="")
+    if not ring_link.form_ok(nonce, time, form_token):
+        ctx["problem"] = "This confirmation didn't come from Shopfront's own page. Start again from the Ring app."
+        return _page(request, "ring_link.html", ctx, 403)
+    try:
+        row = ring_link.claim(nonce, time, profile.get().name)
+    except LinkError as exc:
+        ctx.update(problem=exc.detail[:1].upper() + exc.detail[1:] + ".", step=exc.step,
+                   request_id=exc.request_id, http_status=exc.http_status)
+        return _page(request, "ring_link.html", ctx, 400 if exc.step == "nonce" else 502)
+    source.forget_token()  # the linked account replaces a pasted Playground token
+    source._key = None
+    return _page(request, "ring_link.html", {**_link_ctx(request), "just_linked": row})
+
+
+@app.get("/ring/link/home")
+def ring_link_home():
+    """App Homepage URL (Getting Started 4.1): "custom app configuration page for post-linking setup"."""
+    return RedirectResponse("/setup#ring", status_code=303)
+
+
+@app.post("/ring/link/forget")
+def ring_link_forget():
+    ring_link.forget()
+    source._key = None
+    return RedirectResponse("/ring/link", status_code=303)
 
 
 @app.get("/api/webhooks")
@@ -657,6 +772,7 @@ def _setup(request: Request, section: str, error: str | None = None, notice: str
         "p": p, "days": list(zip(DAYS, hours)), "error": error, "notice": notice, "section": section,
         "cost_typed": (form or {}).get("redelivery_cost"),
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
+        "ring_linked": source.linked() if not source.pasted_token() else None,
         "orders": orders[:ORDERS_SHOWN], "orders_more": max(0, len(orders) - ORDERS_SHOWN),
         "order_days": len({e.day for e in orders}), "pairing": _pairing(request)}, status_code)
 

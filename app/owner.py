@@ -5,8 +5,9 @@
 - Another device (the owner's phone on the shop Wi-Fi) pairs once: /setup on the shop computer shows
   a six-digit code, the phone enters it on /pair, and gets a signed HttpOnly, SameSite=Strict cookie.
   "Forget paired devices" on /setup rotates the signing secret, which signs every device out.
-- Everyone else gets the pairing page (HTML) or 403 OWNER_ONLY (API). POST /webhooks/ring (HMAC) and
-  /healthz are the only public routes.
+- Everyone else gets the pairing page (HTML) or 403 OWNER_ONLY (API). POST /webhooks/ring (HMAC), Ring's
+  account-linking Token Exchange URL POST /ring/link/token (app/ring/link.py) and /healthz are the only
+  public routes. The Account Link URL (/ring/link) is owner-only: the pairing page is its sign-in.
 - SHOPFRONT_PUBLIC_DEMO=1 (the hosted demo, app/public_demo.py) uses PublicDemoGate instead: nobody is
   the owner, nobody can pair, and a request gets through only after the demo's own allowlist admitted it
   as a read of the made-up shop.
@@ -41,7 +42,10 @@ MAX_TRIES = 5  # wrong codes before the code is replaced
 
 LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1"})
 LOCAL_HOSTS = frozenset({"localhost"})
-PUBLIC_PATHS = frozenset({"/webhooks/ring", "/healthz", "/pair"})
+# Ring's two server-to-server calls (HMAC-signed webhooks; the account-linking Token Exchange URL, whose code is
+# worthless without our client secret) are public; everything else is the owner's.
+RING_SERVER_PATHS = frozenset({"/webhooks/ring", "/ring/link/token"})
+PUBLIC_PATHS = RING_SERVER_PATHS | {"/healthz", "/pair"}
 API_BODY_TYPES = frozenset({"application/json", "application/sdp", "image/jpeg"})
 UNSAFE = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 FORWARDED = ("forwarded", "x-forwarded-for", "x-real-ip")

@@ -29,13 +29,16 @@
 
   <section class="setup-step" id="ring">
     <h2><span class="n">1</span>Ring doorbell</h2>
-    {% if ring == "ring" %}
+    {% if ring == "ring" and ring_linked %}
+    <p>Linked to your Ring account (…{{ ring_linked.account_id[-6:] }}): Shopfront reads your doorbell's history and stays signed in. <a href="/ring/link">Linked account</a></p>
+    {% elif ring == "ring" %}
     <p>Connected to Ring: Shopfront reads your doorbell's history. <a href="/connect">Change token</a></p>
     {% elif ring_error %}
     <p class="warn">Ring refused the saved sign-in ({{ ring_error }}), so Shopfront can't read your door history. <a href="/connect">Paste a fresh token</a></p>
     {% else %}
     <p>Not connected, so Shopfront is showing synthetic demo data. <a href="/connect">Connect Ring</a> with a token from the Ring Developer Playground.</p>
     {% endif %}
+    {% if not ring_linked %}<p class="why">Or <a href="/ring/link">link your Ring account</a>: add Shopfront from the Ring app once and it stays signed in, instead of a Playground token that lasts 30 minutes.</p>{% endif %}
   </section>
 
   <form method="post" action="/setup">

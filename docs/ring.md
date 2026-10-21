@@ -43,6 +43,10 @@ Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /
 | `POST /v1/devices/{id}/media/streaming/whep/sessions` (SDP) → 201 + `Location` | Live view | Bearer | `RingApiClient.whep_start` |
 | `DELETE <Location>` | End live view | Bearer | `RingApiClient.whep_stop` |
 | `POST /webhooks/ring` (ours) | Receive Ring notifications | `X-Signature: sha256=<hex>` | `WebhookLog.handle` |
+| `POST https://oauth.ring.com/oauth/token` (`authorization_code`) | Account linking: redeem Ring's code | client id + secret | `RingLink.exchange` |
+| `POST /v1/accounts/me/app-integrations` | Account linking: confirm with the nonce (status `awaiting`) | Bearer (the matched token) | `RingLink.claim` |
+| `PATCH /v1/accounts/me/app-integrations` | Account linking: `{"status": "completed"}` (mandatory) | Bearer (the matched token) | `RingLink.claim` |
+| `POST /ring/link/token`, `GET`/`POST /ring/link`, `GET /ring/link/home` (ours) | Token Exchange URL, Account Link URL, App Homepage URL | see section 10 | `app/main.py`, [app/ring/link.py](../app/ring/link.py) |
 
 All Ring calls go to the production base URL `https://api.amazonvision.com`. Ring's docs list no separate staging API host.
 
@@ -93,7 +97,7 @@ Every row is covered by a test in [tests/test_ring_api.py](../tests/test_ring_ap
 
 ## 7. Config
 
-`RING_MODE`, `RING_ACCESS_TOKEN`, `RING_REFRESH_TOKEN`, `RING_CLIENT_ID`, `RING_CLIENT_SECRET`, `RING_DEVICE_ID`, `RING_EVENT_TYPES`, `RING_HMAC_KEY`, `SHOPFRONT_DATA_DIR`. See [.env.example](../.env.example). Secrets live only in `.env`, which git ignores.
+`RING_MODE`, `RING_ACCESS_TOKEN`, `RING_REFRESH_TOKEN`, `RING_CLIENT_ID`, `RING_CLIENT_SECRET`, `RING_DEVICE_ID`, `RING_EVENT_TYPES`, `RING_HMAC_KEY`, `SHOPFRONT_PUBLIC_URL` (account linking, section 10), `SHOPFRONT_DATA_DIR`. See [.env.example](../.env.example). Secrets live only in `.env`, which git ignores.
 
 ## 8. Live proof
 
@@ -111,6 +115,42 @@ To add rows, run `RING_ACCESS_TOKEN=<Playground token> .venv/bin/python -m scrip
 
 - Seen live, against the Developer Playground: `GET /v1/devices` (200), Event History (200, empty), a WHEP live-view session (201, WebRTC connected), and two error paths (401, 403). Not seen live: a non-empty Event History page, an `on_demand` event, a downloaded frame, `GET /v1/devices/{id}/status`, a video frame over live view, and a webhook from Ring. Those paths are tested only against Ring's documented response shapes.
 - One shop, one doorbell, the first camera the token sees. Multi-camera devices (Ring Elite) would need a `components` entry on frame downloads, which Shopfront doesn't send yet.
-- Shopfront hasn't been through Ring account linking or certification. Live mode runs on a Playground token or a refresh token pasted into `.env`, which is fine for a demo but not for real customers.
+- Shopfront implements one-way account linking as the API reference describes it (section 10), but has not been through a real Ring AppStore install or certification. Live mode has run only on a Playground token.
 - Webhook events feed the briefing, but none has arrived from Ring itself: the Playground sends none, so the demo uses signed replays marked `ring-webhook-replay`. Whether `sub_type` arrives on a real account is unverified.
 - Synthetic mode exists so the app runs without a Ring account. Its events are generated, and the UI labels them that way on every page.
+
+## 10. Account linking (one-way)
+
+How a shop uses Shopfront every day: the owner adds Shopfront from the Ring AppStore once, and Shopfront stays signed in on a refresh token it rotates. The Playground token paste on `/connect` stays, for trying Shopfront out. `/setup` offers both. Code: [app/ring/link.py](../app/ring/link.py), routes in [app/main.py](../app/main.py), tests in [tests/test_ring_link.py](../tests/test_ring_link.py) (MockTransport shaped like the reference's examples).
+
+All section names below are from the API reference, https://developer.amazon.com/docs/ring/api-documentation.html.
+
+**What to register** (Getting Started 1.3 and 4.1: four partner-hosted HTTPS endpoints, all required). Set `SHOPFRONT_PUBLIC_URL` to the HTTPS address Ring reaches the app at, add its host name to `SHOPFRONT_ALLOWED_HOSTS`, and `/ring/link` lists them:
+
+| Ring's name | Shopfront | Who calls it | Gate |
+|---|---|---|---|
+| Token Exchange URL | `POST /ring/link/token` | Ring's backend | Public: the code is useless without our client secret. Body capped at 8 KB. |
+| Account Link URL | `GET /ring/link?nonce=…&time=…`, then `POST /ring/link` | The owner's browser, redirected by Ring | Owner only: the shop computer, or a device paired with its code. The pairing page is the sign-in. |
+| Webhook URL | `POST /webhooks/ring` (or the Lambda's `WebhookUrl`, [aws.md](aws.md)) | Ring's backend | HMAC (section 3) |
+| App Homepage URL | `GET /ring/link/home` → `/setup#ring` | The owner, from the Ring app | Owner only |
+
+**The steps**, each as the reference describes it:
+
+1. **Token exchange** (Getting Started 5, "Ring Backend ... sends it directly to your Token Exchange URL"; 5.3, the code lives 60 seconds). Shopfront redeems the code at once: `POST https://oauth.ring.com/oauth/token`, form-encoded `grant_type=authorization_code`, `client_id`, `code`, `client_secret` (API Reference > Authentication Endpoints > Exchange Authorization Code). It answers 200 when that worked (7.1, Step 4).
+2. **Account ID** (Users API > Store Account ID at Token Receipt): `GET /v1/users/me`, `data.id`. The token pair is kept "unclaimed" under that ID in `.data/ring-link-unclaimed.json` (0600) for at most an hour, at most 20 of them.
+3. **The redirect** (One-Way Account Linking, Steps 1 to 3). Ring sends the owner to the Account Link URL with `nonce` and `time`. `time` must be at most 600 seconds old and not in the future (Nonce Technical Reference). The page is a sign-in and a button, never an automatic verification (Step 2, "Important"): reaching it needs the owner gate, and nothing is matched or sent to Ring until the owner presses **Link**.
+4. **Matching** (Step 4). For each unclaimed token, Shopfront recomputes `base64url_nopad(HMAC-SHA256(RING_HMAC_KEY, "<time>:<account_id>"))` and compares in constant time. The same key signs webhooks in hex; the nonce is URL-safe Base64 without padding ("Same key, different encoding").
+5. **Confirm** (Step 5; App Integrations > POST): `POST /v1/accounts/me/app-integrations` with the matched token and `{"account_identifier": <masked>, "nonce": <nonce>}`. Shopfront has no user emails; the identifier is the shop name masked the way the reference masks an email (`Corner Bakery` → `C***y`), which is optional per the field table.
+6. **Complete** (Step 7; App Integrations > PATCH, "mandatory"): `PATCH` the same endpoint with `{"status": "completed"}`. Never sent after a failed POST.
+7. **Keep the tokens**. The refresh token goes to `.data/ring-refresh-token.json`, created 0600 and swapped in atomically, the file `RingAuth` already reads and rewrites on every refresh (Refresh Tokens: rotated "with each exchange"). The link record (`.data/ring-link.json`, 0600) holds the Account ID, status and the POST/PATCH X-Request-IDs, no token. A pasted Playground token is removed when a link succeeds; one pasted later wins until removed.
+
+**CSRF and forgery.** The confirm is a POST that the owner gate refuses from another site (Origin, Referer or Sec-Fetch-Site), and it must carry a token Shopfront put in its own form (HMAC of the nonce and time under a per-process secret). A forged nonce, a stale `time` or a nonce for another time claims nothing and calls nothing.
+
+**Unlinking.** One-way apps get 403 on `DELETE /v1/accounts/me/app-integrations` (App Integrations > Removing the integration), so Shopfront never calls it. "Forget the linked account" deletes the tokens here and says to remove Shopfront in the Ring app. A signed `app_integration_removed` webhook for the linked account (Notifications > App Integration Removed) deletes them too; a replay signed with the feeder's key can't. `app_integration_added` records when Ring confirmed the link.
+
+**Not verified** (no Ring AppStore install has been run against Shopfront; none of this has an X-Request-ID in evidence/):
+
+- The shape of Ring's request to the Token Exchange URL. The reference says only that Ring "POSTs the auth code" and expects a 200. Shopfront reads `code` (or `authorization_code`) from a JSON body, a form body or the query string. If Ring signs that request, the reference doesn't say how, so Shopfront checks no signature on it.
+- What Ring does with a non-200 from the Token Exchange URL (Shopfront answers 502 when oauth.ring.com refuses the code, 503 when linking isn't configured).
+- That `x-request-id` comes back on the app-integrations calls (the reference documents it for the device APIs).
+- The whole flow end to end, including the confirmation email and the `app_integration_added` webhook.

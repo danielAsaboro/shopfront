@@ -1,0 +1,41 @@
+{% extends "_base.html" %}
+{% block title %}Link your Ring account{% endblock %}
+{% block main %}
+  <div class="eyebrow">Ring doorbell</div>
+  <h1>Link your Ring account</h1>
+  {% if just_linked %}
+  <p style="font-size:17px">Linked. Shopfront now reads your doorbell through your Ring account, and keeps itself signed in.</p>
+  <p><a class="primary" href="/setup#ring">Back to Set up</a></p>
+  {% elif problem %}
+  <p class="banner warn-bg" role="alert">{{ problem }}</p>
+  <p><a href="/setup#ring">Back to Set up</a></p>
+  {% if step %}<details class="tech block"><summary>Details</summary><p class="why" style="margin:0">Step {{ step }}{% if http_status %} · HTTP {{ http_status }}{% endif %}{% if request_id %} · Ring X-Request-ID {{ request_id }}{% endif %}</p></details>{% endif %}
+  {% elif nonce %}
+  <p style="font-size:17px">Ring sent you here to finish adding Shopfront. Press Link to let <strong>{{ shop }}</strong> read the doorbell you picked in the Ring app.</p>
+  <form method="post" action="/ring/link" style="margin-top:16px">
+    <input type="hidden" name="nonce" value="{{ nonce }}">
+    <input type="hidden" name="time" value="{{ time }}">
+    <input type="hidden" name="form_token" value="{{ form_token }}">
+    <button type="submit">Link Ring to Shopfront</button>
+  </form>
+  <p class="proof">Ring will email you to confirm. To remove Shopfront later, remove it in the Ring app (My Apps).</p>
+  {% elif linked %}
+  <p>Linked to your Ring account (…{{ linked.account_id[-6:] }}){% if linked.status %}, status {{ linked.status }}{% endif %}. Shopfront keeps itself signed in and saves each new sign-in Ring gives it.{% if pasted %} A pasted Playground token is in use right now; <a href="/connect">remove it</a> to use the linked account.{% endif %}</p>
+  <form method="post" action="/ring/link/forget" style="margin-top:12px">
+    <button type="submit" class="secondary">Forget the linked account on this computer</button>
+  </form>
+  <p class="proof">This deletes Shopfront's saved sign-in. To stop Ring sharing your doorbell, also remove Shopfront in the Ring app (My Apps): Ring doesn't let an app remove itself.</p>
+  {% else %}
+  <p>Linking is how a shop uses Shopfront every day: you add Shopfront from the Ring app, Ring sends you back here to press Link, and Shopfront stays signed in. A Developer Playground token (<a href="/connect">Connect Ring</a>) lasts about 30 minutes and is for trying Shopfront out.</p>
+  {% if link_missing %}<p class="warn">Not set up for linking on this computer yet: set {{ link_missing }} in <code>.env</code> (the three credentials Ring issues when the app is created) and restart.</p>{% endif %}
+  {% if urls %}
+  <h2>Register these with Ring</h2>
+  <p class="why">In the Ring Developer Portal, under your app's endpoints:</p>
+  <table>{% for name, url in urls %}<tr><td>{{ name }}</td><td class="t" style="overflow-wrap:anywhere">{{ url }}</td></tr>{% endfor %}</table>
+  {% else %}
+  <p class="why">Ring has to reach this app over HTTPS. Set <code>SHOPFRONT_PUBLIC_URL</code> to that address and this page lists the four URLs to register in the Ring Developer Portal.</p>
+  {% endif %}
+  {% if unclaimed %}<p class="why">{{ unclaimed }} Ring sign-in{{ 's' if unclaimed != 1 }} waiting to be linked.</p>{% endif %}
+  <p style="margin-top:20px"><a href="/setup#ring">Back to Set up</a></p>
+  {% endif %}
+{% endblock %}

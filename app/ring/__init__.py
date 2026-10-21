@@ -28,12 +28,16 @@ class RingSource:
     """The Ring client for the current request.
 
     A Playground token pasted on /connect (saved to `token_file`) wins over .env and switches the
-    app to live mode until it is removed. The client is rebuilt only when the token changes.
+    app to live mode until it is removed. Next comes a Ring account linked through the Ring AppStore
+    (app/ring/link.py): live mode on its refresh token, which RingAuth rotates in the same file. Then .env.
+    The client is rebuilt only when the token changes (for a linked account: when the linked account
+    changes, not on every rotation of its refresh token).
     """
 
-    def __init__(self, settings: Settings, token_file: Path):
+    def __init__(self, settings: Settings, token_file: Path, link=None):
         self.settings = settings
         self.token_file = token_file
+        self.link = link  # app.ring.link.RingLink, or None
         self._key: tuple | None = None
         self._client: RingClient | None = None
 
@@ -67,15 +71,25 @@ class RingSource:
         except OSError:
             return None
 
+    def linked(self) -> dict | None:
+        if self.link is None or self.link.configured():
+            return None
+        return self.link.linked()
+
     def effective_settings(self) -> Settings:
         pasted = self.pasted_token()
         if pasted:
             return replace(self.settings, ring_mode="live", ring_access_token=pasted, ring_refresh_token="")
+        row = self.linked()
+        if row:
+            return replace(self.settings, ring_mode="live", ring_access_token="",
+                           ring_refresh_token=self.link.refresh_token() or "linked")
         return self.settings
 
     def get(self) -> RingClient:
         s = self.effective_settings()
-        key = (s.ring_mode, s.ring_access_token, s.ring_refresh_token)
+        row = None if self.pasted_token() else self.linked()
+        key = (s.ring_mode, s.ring_access_token, f"linked:{row['account_id']}" if row else s.ring_refresh_token)
         if key != self._key or self._client is None:
             self._client, self._key = None, None
             self._client = make_ring_client(s, self.pasted_at() if self.pasted_token() else None)  # may raise

@@ -208,7 +208,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
   courier's, so only Ring's `package_delivery` alert or a Bedrock-labelled frame counts as a courier.
 - Ring only returns events from after the owner connected the app, so "vs last week" is empty for
   the first week.
-- One shop and one doorbell. Shopfront hasn't been through Ring account linking or certification.
+- One shop and one doorbell. One-way Ring account linking is built to the API reference (docs/ring.md, section 10) but hasn't been run against a real Ring AppStore install, and Shopfront hasn't been through certification.
 
 ## License
 

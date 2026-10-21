@@ -288,8 +288,8 @@ run the same command.
 
 In the Ring developer console, set your app's **Webhook URL** to the `WebhookUrl` output
 (`https://<id>.lambda-url.<region>.on.aws/webhooks/ring`). The Webhook URL is one of the three public
-HTTPS endpoints that one-way account linking asks for (API reference, Partner-Initiated OAuth 2.0;
-see [ring.md](ring.md), section 6). The Developer Playground sends no webhooks (organisers, forum
+HTTPS endpoints that one-way account linking asks for (API reference, Getting Started 4.1;
+see [ring.md](ring.md), sections 6 and 10). The Developer Playground sends no webhooks (organisers, forum
 45511), so with a Playground token Ring itself won't call it. To see the path work end to end, replay
 a signed event at it with the same key:
 
