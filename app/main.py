@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 import time
@@ -90,7 +91,11 @@ async def owner_only(request: Request, call_next):
                                                        headers, request.cookies):
         return _not_owner(request)
     await run_in_threadpool(_housekeeping)
-    return await call_next(request)
+    token = _request_visits.set({})
+    try:
+        return await call_next(request)
+    finally:
+        _request_visits.reset(token)
 
 
 def _parse_day(value: str | None) -> date:
@@ -118,8 +123,18 @@ def _briefing(day: date, stats: dict | None = None):
                           webhook_log, stats)
 
 
+_request_visits: ContextVar[dict | None] = ContextVar("request_visits", default=None)
+
+
 def _visits(day: date):
-    return classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
+    """The day's labelled visits, built once per request however many parts of the page need them."""
+    memo = _request_visits.get()
+    if memo is not None and day in memo:
+        return list(memo[day])
+    vs = classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
+    if memo is not None:
+        memo[day] = vs
+    return list(vs)
 
 
 def _receipts(day: date, visits=None) -> dict:
@@ -134,7 +149,10 @@ def _week_money(day: date) -> str | None:
     closed = missing = 0
     for i in range(7):
         d = day - timedelta(days=i)
-        vs = _visits(d)
+        try:
+            vs = _visits(d)
+        except RingError:  # e.g. RATE_LIMITED on one past day: leave the week's line out, keep the page
+            return None
         oh = posted_hours(profile.hours(), d)
         r = _receipts(d, vs)
         closed += sum(1 for v in vs if v.visit_type.value == "delivery" and not _is_open(v, oh))
@@ -144,7 +162,7 @@ def _week_money(day: date) -> str | None:
 
 def _ring_error_body(exc: RingError) -> dict:
     return {"error": exc.status.value, "detail": exc.detail, "http_status": exc.http_status,
-            "request_id": exc.request_id}
+            "request_id": exc.request_id, "retry_after": exc.retry_after}
 
 
 @app.exception_handler(RingError)
@@ -153,10 +171,14 @@ def ring_error(request: Request, exc: RingError):
     code = 401 if exc.status in (RingStatus.TOKEN_REJECTED, RingStatus.REFRESH_FAILED) else 502
     if exc.status == RingStatus.NOT_CONFIGURED:
         code = 503
+    headers = None
+    if exc.status == RingStatus.RATE_LIMITED:  # Ring said slow down: say when to try again
+        code = 429
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
     if request.url.path.startswith("/api/"):
-        return JSONResponse(_ring_error_body(exc), status_code=code)
+        return JSONResponse(_ring_error_body(exc), status_code=code, headers=headers)
     return templates.TemplateResponse(request, "ring_error.html", {"e": exc, "shop": settings.shop_name},
-                                      status_code=code)
+                                      status_code=code, headers=headers)
 
 
 def _claim(value: str | None) -> str:

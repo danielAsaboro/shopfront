@@ -10,13 +10,23 @@ Tokens come from POST https://oauth.ring.com/oauth/token (refresh_token grant), 
 Developer Playground access token used as-is.
 
 Every failure raises RingError with a named RingStatus. Nothing here falls back to synthetic data.
+
+Calls are kept down (API reference, Rate Limiting: limits are per partner client_id; "Cache device
+information when appropriate"): a past day's Event History doesn't change, so it is fetched once per
+client; today's is reused for `TODAY_TTL`. A frame Ring said doesn't exist (416), is corrupt (422) or is
+forbidden for this token (403: a Playground token on image download) isn't asked for again. A 429 is
+RATE_LIMITED with Ring's Retry-After; when that is a second or two, the call waits and tries once more
+("respect the Retry-After header").
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 import time as _time
+from dataclasses import replace
+from email.utils import parsedate_to_datetime
 from datetime import date, datetime, time, timedelta
 from enum import Enum
 from pathlib import Path
@@ -33,6 +43,10 @@ log = logging.getLogger(__name__)
 API_BASE = "https://api.amazonvision.com"
 TOKEN_URL = "https://oauth.ring.com/oauth/token"
 MAX_PAGES = 50
+MAX_CACHED_DAYS = 120
+TODAY_TTL = 60.0  # seconds today's Event History is reused for
+MAX_RETRY_WAIT = 2  # seconds: a longer Retry-After is reported, not waited out in a page load
+REMEMBERED_FRAME_ERRORS = {403, 416, 422}
 
 
 class RingStatus(str, Enum):
@@ -59,12 +73,28 @@ _BY_HTTP = {401: RingStatus.TOKEN_REJECTED, 403: RingStatus.FORBIDDEN, 404: Ring
 
 class RingError(Exception):
     def __init__(self, status: RingStatus, detail: str = "", http_status: int | None = None,
-                 request_id: str | None = None):
+                 request_id: str | None = None, retry_after: int | None = None):
         super().__init__(f"{status.value}: {detail}" if detail else status.value)
         self.status = status
         self.detail = detail
         self.http_status = http_status
         self.request_id = request_id
+        self.retry_after = retry_after  # seconds, from Ring's Retry-After on a 429
+
+
+def retry_after_seconds(value: str | None) -> int | None:
+    """Retry-After as seconds: either delta-seconds or an HTTP date."""
+    if not value:
+        return None
+    try:
+        return max(0, int(value.strip()))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+        return max(0, round(when.timestamp() - _time.time()))
+    except (TypeError, ValueError):
+        return None
 
 
 def status_for_http(code: int) -> RingStatus:
@@ -140,24 +170,36 @@ class RingApiClient(RingClient):
         self.last_request_id: str | None = None
         self._account_id: str | None = None
         self._account_asked = False
+        self._history: dict[tuple, tuple[float, list[DoorEvent]]] = {}  # (day, event_types) -> (fetched, events)
+        self._no_frame: dict[tuple, RingError] = {}  # (device, ms) -> the error Ring gave for that frame
+        self._lock = threading.Lock()
+        self.sleep = _time.sleep  # tests swap it
 
     def _request(self, method: str, path: str, **kw) -> httpx.Response:
         url = path if path.startswith("http") else f"{API_BASE}{path}"
         extra = kw.pop("headers", {})
-        for attempt in (0, 1):
-            headers = {"Authorization": f"Bearer {self.auth.token(force_refresh=attempt == 1)}", **extra}
+        refreshed = waited = False
+        while True:
+            headers = {"Authorization": f"Bearer {self.auth.token(force_refresh=refreshed)}", **extra}
             try:
                 resp = self._http.request(method, url, headers=headers, **kw)
             except httpx.HTTPError as exc:
                 raise RingError(RingStatus.NETWORK_ERROR, f"{method} {path}: {exc}") from exc
             self.last_request_id = resp.headers.get("X-Request-ID") or self.last_request_id
             # One retry after a refresh, only when we hold a refresh token.
-            if resp.status_code == 401 and attempt == 0 and self.auth.mode == "refresh":
+            if resp.status_code == 401 and not refreshed and self.auth.mode == "refresh":
+                refreshed = True
+                continue
+            wait = retry_after_seconds(resp.headers.get("Retry-After"))
+            if resp.status_code == 429 and not waited and wait is not None and wait <= MAX_RETRY_WAIT:
+                waited = True
+                self.sleep(wait or 1)
                 continue
             break
         if resp.status_code >= 400:
             raise RingError(status_for_http(resp.status_code), f"{method} {path}: {resp.text[:200]}",
-                            resp.status_code, resp.headers.get("X-Request-ID"))
+                            resp.status_code, resp.headers.get("X-Request-ID"),
+                            retry_after_seconds(resp.headers.get("Retry-After")) if resp.status_code == 429 else None)
         return resp
 
     def _json(self, resp: httpx.Response) -> dict:
@@ -213,6 +255,21 @@ class RingApiClient(RingClient):
         return self._account_id
 
     def events_for_day(self, day: date) -> list[DoorEvent]:
+        key = (day, self.event_types)
+        today = datetime.now(self.tz).date()
+        with self._lock:
+            hit = self._history.get(key)
+        if hit and (day < today or _time.monotonic() - hit[0] < TODAY_TTL):
+            return [replace(e) for e in hit[1]]  # copies: callers attach and drop frames on them
+        events = self._fetch_day(day)
+        if day <= today:
+            with self._lock:
+                if len(self._history) >= MAX_CACHED_DAYS:
+                    self._history.pop(next(iter(self._history)))
+                self._history[key] = (_time.monotonic(), events)
+        return [replace(e) for e in events]
+
+    def _fetch_day(self, day: date) -> list[DoorEvent]:
         start = datetime.combine(day, time.min, tzinfo=self.tz)
         end = start + timedelta(days=1)
         start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
@@ -247,9 +304,19 @@ class RingApiClient(RingClient):
 
     def snapshot(self, event: DoorEvent) -> bytes:
         """JPEG frame at the event's start time. Raises RingError (e.g. MEDIA_NOT_FOUND)."""
-        resp = self._request("POST", f"/v1/devices/{event.device_id}/media/image/download",
-                             json={"type": "at_timestamp", "timestamp": int(event.timestamp.timestamp() * 1000),
-                                   "image_options": {"format": "jpeg"}})
+        ms = int(event.timestamp.timestamp() * 1000)
+        forbidden = self._no_frame.get(("*", 403))
+        if forbidden:  # this token may not download images at all
+            raise forbidden
+        if (event.device_id, ms) in self._no_frame:
+            raise self._no_frame[(event.device_id, ms)]
+        try:
+            resp = self._request("POST", f"/v1/devices/{event.device_id}/media/image/download",
+                                 json={"type": "at_timestamp", "timestamp": ms, "image_options": {"format": "jpeg"}})
+        except RingError as exc:
+            if exc.http_status in REMEMBERED_FRAME_ERRORS:
+                self._no_frame[("*", 403) if exc.http_status == 403 else (event.device_id, ms)] = exc
+            raise
         if not resp.headers.get("content-type", "").startswith("image/"):
             raise RingError(RingStatus.MALFORMED_RESPONSE, f"snapshot content-type {resp.headers.get('content-type')}")
         return resp.content

@@ -217,3 +217,128 @@ def test_account_id_comes_from_users_me_and_failures_are_not_fatal():
     assert calls == ["/v1/users/me"]  # asked once
     broken, _ = client(lambda r: httpx.Response(403))
     assert broken.account_id() is None
+
+
+# ---- fewer Ring calls -----------------------------------------------------------------------------------
+from collections import Counter  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+
+def counting(calls, events_per_day=0, frame_status=416):
+    def handler(req: httpx.Request):
+        path = req.url.path
+        calls[(req.method, path.split("/")[2] if path.startswith("/v1/") else path)] += 1
+        if path == "/v1/users/me":
+            return httpx.Response(200, json={"data": {"type": "users", "id": "ava1.ring.account.SHOP"}})
+        if path.endswith("/image/download"):
+            return httpx.Response(frame_status, json={"errors": [{"code": "x"}]})
+        return httpx.Response(200, json={"data": [hist("ding", ms(9, i)) for i in range(events_per_day)], "links": {}})
+    return handler
+
+
+def test_past_days_are_fetched_once_and_today_briefly():
+    calls = Counter()
+    ring, _ = client(counting(calls))
+    ring.events_for_day(DAY)
+    ring.events_for_day(DAY)
+    assert calls[("GET", "history")] == 1
+    today = datetime.now(TZ).date()
+    ring.events_for_day(today)
+    ring.events_for_day(today)
+    assert calls[("GET", "history")] == 2  # within the short TTL
+    ring._history[(today, ring.event_types)] = (0.0, [])  # pretend the TTL ran out
+    ring.events_for_day(today)
+    assert calls[("GET", "history")] == 3
+
+
+def test_missing_and_forbidden_frames_are_remembered():
+    for status in (416, 403):
+        calls = Counter()
+        ring, _ = client(counting(calls, frame_status=status))
+        e = DoorEvent(id="e1", device_id=DEV, timestamp=datetime.fromtimestamp(ms(9) / 1000, TZ), kind="ding")
+        for _ in range(3):
+            with pytest.raises(RingError):
+                ring.snapshot(e)
+        assert calls[("POST", "devices")] == 1, status
+
+
+def test_not_ready_frames_are_asked_again():
+    calls = Counter()
+    ring, _ = client(counting(calls, frame_status=425))
+    e = DoorEvent(id="e1", device_id=DEV, timestamp=datetime.fromtimestamp(ms(9) / 1000, TZ), kind="ding")
+    for _ in range(2):
+        with pytest.raises(RingError):
+            ring.snapshot(e)
+    assert calls[("POST", "devices")] == 2
+
+
+def test_rate_limit_is_named_with_retry_after_and_retried_once_when_short():
+    ring, _ = client(lambda r: httpx.Response(429, headers={"Retry-After": "30", "X-Request-ID": "rid-429"}))
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.RATE_LIMITED and err.value.retry_after == 30
+    n = {"calls": 0}
+
+    def once(req):
+        n["calls"] += 1
+        return httpx.Response(429, headers={"Retry-After": "1"}) if n["calls"] == 1 else \
+            httpx.Response(200, json={"data": [], "links": {}})
+    ring, _ = client(once)
+    slept = []
+    ring.sleep = slept.append
+    assert ring.events_for_day(DAY) == [] and slept == [1] and n["calls"] == 2
+
+
+def test_one_dashboard_load_asks_ring_once_per_day_and_a_reload_asks_nothing(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.classify.bedrock import BedrockClassifier
+    from app.shop import Profile
+
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("no frame, no Bedrock call")
+
+    calls = Counter()
+    ring, _ = client(counting(calls, events_per_day=3))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
+    monkeypatch.setattr(main, "classifier", BedrockClassifier("us-east-1", "m", client=NoCall()))
+    main.profile.save(Profile("Shop", "", 15.0, "$"))
+    c = TestClient(main.app)
+    assert c.get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    days = {DAY - timedelta(days=i) for i in range(8)}  # the day, the week for the money line, last week
+    assert calls[("GET", "history")] == len(days)
+    first_frames = calls[("POST", "devices")]
+    calls.clear()
+    assert c.get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    assert calls[("GET", "history")] == 0 and calls[("POST", "devices")] == 0 and first_frames > 0
+
+
+def test_a_dashboard_load_labels_each_day_once(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.shop import Profile
+
+    seen = Counter()
+    real = main.classify_day
+
+    def counted(ring, classifier, day, *a, **kw):
+        seen[day] += 1
+        return real(ring, classifier, day, *a, **kw)
+    monkeypatch.setattr(main, "classify_day", counted)
+    main.profile.save(Profile("Shop", "", 15.0, "$"))
+    assert TestClient(main.app).get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    assert seen[DAY] == 1 and len(seen) == 7
+
+
+def test_rate_limit_reaches_the_api_caller_with_retry_after(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    ring, _ = client(lambda r: httpx.Response(429, headers={"Retry-After": "30", "X-Request-ID": "rid-429"}))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
+    r = TestClient(main.app).get(f"/api/events?date={DAY.isoformat()}")
+    assert r.status_code == 429 and r.json()["error"] == "RATE_LIMITED" and r.json()["retry_after"] == 30
+    assert r.headers["retry-after"] == "30"
