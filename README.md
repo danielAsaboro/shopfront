@@ -21,10 +21,10 @@ the doorbell recorded, and builds a dispute pack the owner reviews and sends the
 frame, a webhook sent by Ring itself and a Bedrock label haven't been captured yet.
 [Status and proof](docs/status.md).
 
-## What only Shopfront does
+## What Shopfront adds
 
 A doorbell clip shows who came to the door. On its own it's evidence of a visit, not an answer to the
-carrier's scan. Shopfront goes four steps further:
+carrier's scan. Shopfront adds four steps:
 
 1. **It keeps a record per carrier, month by month.** The desk shows, per carrier, how many "business
    closed" scans it made this month and how many fell in posted hours. `/report` prints that record on one
@@ -37,7 +37,18 @@ carrier's scan. Shopfront goes four steps further:
    who can get a scan corrected. The zip's manifest is signed (Ed25519 or an AWS KMS key), and
    `scripts/verify_pack.py` checks it with no account and no network.
 
-## How many shops this could help: an estimate (US)
+## What a wrong scan costs
+
+**The shop's own loss comes first.** After a "business closed" scan the delivery doesn't happen that day,
+and the shop trades without the stock. In the demo, the order the carrier scanned is butter and cream from
+Valley Creamery, $318.75 on the order ([samples/orders.csv](samples/orders.csv)), and the dispute pack's
+"At stake" row names the stock before the fee: "$318.75 of stock, and about $17.20 for a redelivery". When
+the owner marks an order perishable on the receiving desk (fresh dairy, bread, flowers), the carrier record
+lists it under **Lost trading**: the perishable stock behind each disputed scan this month, at the order's
+own value, as well as the redelivery fees. Shopfront lists those values as written and never adds them up
+into a bigger number.
+
+**What it costs senders, an estimate (US).** The redelivery fee is the part with a published average:
 
 | Factor | Value | Source |
 |---|---|---|
