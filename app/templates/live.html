@@ -7,6 +7,8 @@
   .stage .idle { position: absolute; inset: 0; display: grid; place-items: center; color: #9a9aa1; font-size: 14px; }
   .controls { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
   #status { color: var(--muted); font-size: 13px; }
+  .live-next { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  .live-next .primary { margin: 0; }
   #label { font-size: 20px; font-weight: 600; margin-top: 14px; min-height: 28px; }
 </style>
 {% endblock %}
@@ -14,8 +16,13 @@
   <div class="eyebrow">Live door</div>
   <h1>Watch the door now</h1>
   {% if not connected %}
-  <p style="font-size:17px;margin:12px 0 16px">Live view streams your own Ring doorbell, so it needs Ring connected{% if ring_mode != "ring" %}; the demo's door events have no camera behind them{% endif %}.</p>
-  <a class="primary" href="/connect">Connect Ring</a>
+  {# Round 6: not a dead end. What live view does in one sentence, the way back to the desk's check, and
+     Connect Ring as the second step; never a player with nothing behind it. #}
+  <p style="font-size:17px;margin:12px 0 16px">Live view plays your own Ring doorbell here, takes a still every 3 seconds and adds the visit to the receiving desk, so it needs Ring connected{% if ring_mode != "ring" %}; the demo's door events have no camera behind them{% endif %}.</p>
+  <div class="live-next">
+    <a class="primary" href="{{ check_href }}">{{ "Try the business-closed check" if demo_scan else "Check a carrier's scan" }}</a>
+    <a class="secondary" href="/connect">Connect Ring</a>
+  </div>
   {% else %}
   <p class="why" style="margin-top:8px">Opens a live view of your doorbell, takes a still every 3 seconds{% if classifier == 'bedrock' %} and asks Amazon Bedrock what it shows{% endif %}, and adds the visit to today's receiving desk. With the Ring Developer Playground, pick Package, Vehicle or Motion there first to choose what the test doorbell plays.</p>
   <div class="stage"><video id="v" autoplay playsinline muted></video><div class="idle" id="idle">Not streaming</div></div>

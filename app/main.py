@@ -589,8 +589,11 @@ def live_error(request: Request, exc: LiveError):
 @app.get("/live", response_class=HTMLResponse)
 def live_page(request: Request):
     ring = source.get()
-    return _page(request, "live.html", {"connected": isinstance(ring, RingApiClient),
-                                        "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
+    demo = _demo_scan()  # without Ring, /live leads back to the desk's check (the demo's, when there is one)
+    check_href = "/?" + urlencode(demo) if demo else "/#atth"
+    return _page(request, "live.html", {"connected": isinstance(ring, RingApiClient), "demo_scan": demo,
+                                        "check_href": check_href, "classifier": classifier.name,
+                                        "sessions": live.rows()[-10:][::-1]})
 
 
 # The async handlers below read the request body, then run every blocking call (Ring over httpx, Bedrock

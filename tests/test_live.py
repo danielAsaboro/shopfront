@@ -152,9 +152,25 @@ def test_demo_mode_never_links_to_live_and_live_says_one_thing(monkeypatch, tmp_
     page = c.get("/live").text
     main_part = page.split("<main", 1)[1].split("</main>", 1)[0]
     assert main_part.count("<p") == 1 and "needs Ring connected" in main_part
-    assert 'class="primary" href="/connect">Connect Ring</a>' in main_part
+    # round 6: not a dead end; back to the desk's check first, Connect Ring second
+    assert "takes a still every 3 seconds and adds the visit to the receiving desk" in main_part
+    assert main_part.index('class="primary" href="/#atth">Check a carrier&#39;s scan</a>') \
+        < main_part.index('class="secondary" href="/connect">Connect Ring</a>')
     for gone in ("Start live view", "<video", "Recent live visits", "<details"):
         assert gone not in main_part
+
+
+def test_demo_live_page_leads_to_the_demo_check(monkeypatch, tmp_path):
+    from app.ring import RingSource
+
+    monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
+    scan = {"date": "2026-10-20", "attempt": "14:30", "claim": "business_closed", "carrier": "Northline Parcel",
+            "tracking": "NP1"}
+    monkeypatch.setattr(main, "_demo_scan", lambda: scan)
+    page = TestClient(main.app).get("/live").text
+    assert '<a class="primary" href="/?date=2026-10-20&amp;attempt=14%3A30&amp;claim=business_closed&amp;' \
+           'carrier=Northline+Parcel&amp;tracking=NP1">Try the business-closed check</a>' in page
+    assert "<video" not in page
 
 
 def test_session_without_video_is_logged_but_not_a_visit(tmp_path):
