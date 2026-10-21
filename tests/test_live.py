@@ -139,6 +139,24 @@ def test_live_view_needs_ring_connected(monkeypatch, tmp_path):
     assert "Connect Ring" in c.get("/live").text
 
 
+def test_demo_mode_never_links_to_live_and_live_says_one_thing(monkeypatch, tmp_path):
+    """Round 3 audit: "Live door" was a dead end in the demo. Without Ring nothing links to /live, and /live
+    itself is one sentence and a Connect button: no player, no empty table, no Details."""
+    from app.ring import RingSource
+
+    monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
+    assert main.source.get().name == "synthetic"
+    c = TestClient(main.app)
+    for path in ("/", "/setup", "/connect", "/?attempt=14:30&claim=business_closed"):
+        assert 'href="/live"' not in c.get(path).text, path
+    page = c.get("/live").text
+    main_part = page.split("<main", 1)[1].split("</main>", 1)[0]
+    assert main_part.count("<p") == 1 and "needs Ring connected" in main_part
+    assert 'class="primary" href="/connect">Connect Ring</a>' in main_part
+    for gone in ("Start live view", "<video", "Recent live visits", "<details"):
+        assert gone not in main_part
+
+
 def test_session_without_video_is_logged_but_not_a_visit(tmp_path):
     log = LiveLog(tmp_path, TZ)
     s = log.start(DEV, SESSION_URL)

@@ -14,8 +14,8 @@
   <div class="eyebrow">Live door</div>
   <h1>Watch the door now</h1>
   {% if not connected %}
-  <p style="font-size:17px;margin:12px 0 0">Connect Ring to watch your door. Live view streams your Ring doorbell; with demo data there is no camera to watch.</p>
-  <p><a class="primary" href="/connect">Connect Ring</a></p>
+  <p style="font-size:17px;margin:12px 0 16px">Live view streams your own Ring doorbell, so it needs Ring connected{% if ring_mode != "ring" %}; the demo's door events have no camera behind them{% endif %}.</p>
+  <a class="primary" href="/connect">Connect Ring</a>
   {% else %}
   <p class="why" style="margin-top:8px">Opens a live view of your doorbell, takes a still every 3 seconds{% if classifier == 'bedrock' %} and asks Amazon Bedrock what it shows{% endif %}, and adds the visit to today's receiving desk. With the Ring Developer Playground, pick Package, Vehicle or Motion there first to choose what the test doorbell plays.</p>
   <div class="stage"><video id="v" autoplay playsinline muted></video><div class="idle" id="idle">Not streaming</div></div>
@@ -37,10 +37,12 @@
     </table>
   </section>
   {% endif %}
+  {% if connected %}
   <details class="tech block">
     <summary>Details</summary>
     <p class="why" style="margin:0">A Ring live-view session over WHEP (WebRTC), receive-only, up to 60 seconds. Ring X-Request-ID of this session: <span id="rid">none yet</span>. <a href="/api/live/sessions">sessions JSON</a></p>
   </details>
+  {% endif %}
 {% endblock %}
 {% block scripts %}
 {% if connected %}

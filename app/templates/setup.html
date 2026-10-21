@@ -105,8 +105,8 @@
 
   <section class="setup-step" id="watch">
     <h2><span class="n">4</span>Watch the door</h2>
-    <p>The receiving desk ticks off each delivery as the doorbell sees it. Open the live door to see a courier labelled as they arrive.</p>
-    <a class="primary" href="/?date={{ today }}">Open today's receiving desk</a> &nbsp; <a href="/live">Live door</a>
+    <p>The receiving desk ticks off each delivery as the doorbell sees it.{% if ring_mode == "ring" %} Open the live door to see a courier labelled as they arrive.{% endif %}</p>
+    <a class="primary" href="/?date={{ today }}">Open today's receiving desk</a>{% if ring_mode == "ring" %} &nbsp; <a href="/live">Live door</a>{% endif %}
   </section>
   {% include "_pairing.html" %}
 {% endblock %}

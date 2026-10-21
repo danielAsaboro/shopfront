@@ -439,7 +439,7 @@ def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypat
     nav = page.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
     assert 'href="/live"' not in nav and ">Connect Ring</a>" in nav
     live = c.get("/live").text
-    assert "Connect Ring to watch your door." in live and 'aria-current="page">Live door' in live
+    assert "Live view streams your own Ring doorbell, so it needs Ring connected" in live and 'aria-current="page">Live door' in live
     monkeypatch.setattr(main, "_chrome", lambda r: {**chrome(r), "ring_mode": "ring"})
     nav = c.get(f"/?date={WEDNESDAY}").text.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
     assert 'href="/live">Live door</a>' in nav and 'href="/connect">Ring</a>' in nav
