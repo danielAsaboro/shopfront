@@ -36,7 +36,7 @@
   </section>
   <details class="tech block">
     <summary>Details</summary>
-    <p class="why" style="margin:0">A Ring live-view session over WHEP (WebRTC), receive-only, up to 60 seconds. The Ring X-Request-ID of each session shows next to Start while it streams. <a href="/api/live/sessions">sessions JSON</a></p>
+    <p class="why" style="margin:0">A Ring live-view session over WHEP (WebRTC), receive-only, up to 60 seconds. Ring X-Request-ID of this session: <span id="rid">none yet</span>. <a href="/api/live/sessions">sessions JSON</a></p>
   </details>
 {% endblock %}
 {% block scripts %}
@@ -60,7 +60,7 @@
         if (!pc) return;
         window.__liveState = { connection: pc.connectionState, ice: pc.iceConnectionState };
         if (pc.connectionState === 'failed') stop('WebRTC connection failed');
-        else if (session) say(`${pc.connectionState === 'connected' ? 'Streaming' : pc.connectionState} · Ring X-Request-ID ${ridShown}`);
+        else if (session) say(pc.connectionState === 'connected' ? 'Streaming' : `Connection ${pc.connectionState}`);
       };
       await pc.setLocalDescription(await pc.createOffer());
       await new Promise((ok) => {
@@ -70,10 +70,11 @@
       });
       const r = await fetch('/api/live/start', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
       const body = await r.json();
-      if (!r.ok) throw new Error(body.error ? `${body.error}${body.request_id ? ' · X-Request-ID ' + body.request_id : ''}` : (body.detail || r.status));
+      if (!r.ok) throw new Error(body.error ? `Ring said ${body.error}` : (body.detail || r.status));
       session = body.session; ridShown = body.ring_request_id || '—';
+      document.getElementById('rid').textContent = ridShown;
       await pc.setRemoteDescription({ type: 'answer', sdp: body.answer });
-      say(`Streaming · Ring X-Request-ID ${body.ring_request_id || '—'}`);
+      say('Streaming');
       stopBtn.disabled = false;
       timer = setInterval(sendFrame, 3000);
       setTimeout(sendFrame, 1500);
