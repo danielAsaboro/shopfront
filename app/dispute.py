@@ -228,7 +228,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     marks = [m for m, on in ((DEMO, demo), (REPLAYED, replayed)) if on]
     cov = (check or {}).get("coverage")
     limits = LIMITS + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else []) + (
-        [NO_STATUS_LIMIT] if cov and not cov.get("status_notices") else [])
+        [NO_STATUS_LIMIT] if cov and not cov.get("status_notices") and not cov.get("status_covered") else [])
     pack = {
         "shop": shop, "day": day.isoformat(), "posted_hours": posted_hours,
         "made_at": (made_at or datetime.now(tz)).astimezone(tz).isoformat(timespec="seconds"),

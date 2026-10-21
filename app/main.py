@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -26,7 +28,7 @@ from app.config import settings
 from app import coverage, dispute, illustrations, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
-from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
+from app.owner import COOKIE, COOKIE_DAYS, UNSAFE, OwnerGate, PublicDemoGate
 from app.scan_extract import MAX_BYTES as MAX_SCAN_BYTES
 from app.scan_extract import ScanReader, ScanReadError
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
@@ -40,10 +42,25 @@ from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
 from app.ring.webhooks import MAX_BODY as MAX_WEBHOOK_BODY
 from app.ring.webhooks import WebhookStatus
+from app.ring.status import StatusLog, sampler
 from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 from app.store import make_webhook_log
 
-app = FastAPI(title="Shopfront")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """While Ring is live, ask it every SHOPFRONT_STATUS_MINUTES whether the doorbell is online (app/ring/status.py)."""
+    task = asyncio.create_task(sampler(sample_status, settings.status_minutes * 60)) \
+        if settings.status_minutes > 0 else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+
+
+app = FastAPI(title="Shopfront", lifespan=_lifespan)
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
@@ -62,6 +79,7 @@ frames = FrameStore(DATA)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = make_webhook_log(settings, DATA / "ring-webhooks.jsonl")  # file, or the Lambda's DynamoDB table
+status_log = StatusLog(DATA / "ring-status.jsonl")  # Shopfront's own GET /v1/devices/{id}/status samples
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
 scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
@@ -76,6 +94,8 @@ def _ask_state() -> str | None:
 
 
 def make_gate(s, secret_file: Path) -> OwnerGate:
+    if s.public_demo:  # no owner at all; only app/public_demo.py's allowlist admits a request
+        return PublicDemoGate(hosts=s.allowed_hosts.split(","))
     return OwnerGate(secret_file, hosts=s.allowed_hosts.split(","))
 
 
@@ -101,7 +121,7 @@ def _not_owner(request: Request) -> Response:
 async def owner_only(request: Request, call_next):
     """Everything but Ring's webhook and /healthz is the owner's. See app/owner.py."""
     path, headers = request.url.path, request.headers
-    if path == "/webhooks/ring":  # Ring signs it (HMAC) and reaches it under whatever public name the shop uses
+    if path == "/webhooks/ring" and path in gate.public_paths:  # Ring signs it (HMAC), under any public name
         return await call_next(request)
     if not gate.host_ok(headers.get("host")):
         return PlainTextResponse("Shopfront doesn't answer to this address. Open it at http://localhost:<port> "
@@ -111,7 +131,7 @@ async def owner_only(request: Request, call_next):
                              "Shopfront ignored it. Use Shopfront's own pages."}, status_code=403)
     if request.method in UNSAFE and path.startswith("/api/") and not gate.api_body_ok(headers.get("content-type")):
         return JSONResponse({"error": "BAD_CONTENT_TYPE", "detail": "send application/json"}, status_code=415)
-    if path not in PUBLIC_PATHS and not gate.is_owner(request.client.host if request.client else None,
+    if path not in gate.public_paths and not gate.is_owner(request.client.host if request.client else None,
                                                        headers, request.cookies):
         return _not_owner(request)
     await run_in_threadpool(_housekeeping)
@@ -648,12 +668,36 @@ def _local(at: datetime) -> datetime:
 
 
 def _status_notices() -> list[dict]:
-    """The doorbell's device_online / device_offline notifications Ring sent (app/coverage.py)."""
+    """The doorbell's device_online / device_offline notifications Ring sent, and Shopfront's own status
+    samples (app/coverage.py)."""
+    samples = status_log.samples(settings.tz, webhook_log.device_id)
     try:
         rows = webhook_log.recent(1_000_000)
-    except ValueError:  # a damaged log line: no status, so coverage falls back to the door's own events
-        return []
-    return coverage.notices(rows, settings.tz, webhook_log.device_id, webhook_log.account_id)
+    except ValueError:  # a damaged log line: no notices, so coverage falls back to the samples and door events
+        return samples
+    return coverage.notices(rows, settings.tz, webhook_log.device_id, webhook_log.account_id) + samples
+
+
+def sample_status() -> dict | None:
+    """One status sample, when Ring is live (RING_MODE=live or a pasted token): GET /v1/devices/{id}/status,
+    kept in .data/ring-status.jsonl. A check Ring didn't answer is kept as online null, a gap. Synthetic
+    mode samples nothing."""
+    try:
+        ring = source.get()
+    except RingError:
+        return None
+    if not isinstance(ring, RingApiClient):
+        return None
+    every = settings.status_minutes * 60
+    try:
+        device = settings.ring_device_id or ring.device_id
+    except RingError as exc:
+        return status_log.add("", None, every, exc.request_id, exc.status.value)
+    try:
+        online, request_id = ring.device_status(device)
+    except RingError as exc:
+        return status_log.add(device, None, every, exc.request_id, exc.status.value)
+    return status_log.add(device, online, every, request_id)
 
 
 def _check_attempt(at: datetime, claim: str = ATTEMPTED) -> dict:

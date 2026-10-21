@@ -8,3 +8,4 @@ ruff==0.17.1
 mypy==2.4.0
 moto==5.2.4  # DynamoDB and Secrets Manager in-process, for the webhook Lambda and table tests
 PyYAML==6.0.3  # reads infra/template.yaml in tests
+mangum==0.22.0  # the public demo Lambda's handler (infra/public-demo-requirements.txt), for its tests

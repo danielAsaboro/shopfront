@@ -1,0 +1,10 @@
+# The public demo Lambda (app/public_demo.py), installed by infra/package_demo.py for Python 3.12 on arm64.
+# Same pins as requirements.txt for what they share. Not here: boto3 (not imported by the demo; the
+# runtime has it anyway) and strands-agents (Ask is off in the public demo).
+fastapi==0.156.1
+jinja2==3.1.6
+python-multipart==0.0.32
+python-dotenv==1.2.4
+httpx==0.28.1
+mangum==0.22.0  # Lambda Function URL event -> ASGI
+tzdata==2026.5  # zoneinfo data; the Lambda Python runtime doesn't ship /usr/share/zoneinfo

@@ -7,6 +7,9 @@
   "Forget paired devices" on /setup rotates the signing secret, which signs every device out.
 - Everyone else gets the pairing page (HTML) or 403 OWNER_ONLY (API). POST /webhooks/ring (HMAC) and
   /healthz are the only public routes.
+- SHOPFRONT_PUBLIC_DEMO=1 (the hosted demo, app/public_demo.py) uses PublicDemoGate instead: nobody is
+  the owner, nobody can pair, and a request gets through only after the demo's own allowlist admitted it
+  as a read of the made-up shop.
 
 Browser-borne attacks on a localhost app are handled here too:
 - DNS rebinding: the Host header must be localhost, an IP address, or a name in
@@ -24,6 +27,8 @@ import ipaddress
 import secrets
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -59,6 +64,9 @@ def _is_ip(name: str) -> bool:
 
 
 class OwnerGate:
+    public_demo = False
+    public_paths = PUBLIC_PATHS  # answered without the owner check
+
     def __init__(self, secret_file: Path, hosts=(), local_clients=()):
         self.secret_file = secret_file
         self.hosts = LOCAL_HOSTS | {h.strip().lower() for h in hosts if h.strip()}
@@ -157,3 +165,59 @@ class OwnerGate:
         if not 0 <= age <= COOKIE_DAYS * 86400:
             return False
         return hmac.compare_digest(self._sign(device, int(issued)).rsplit(".", 1)[1], sig)
+
+
+# --- the hosted public demo ---------------------------------------------------------------------------------
+_admitted: ContextVar[bool] = ContextVar("public_demo_admitted", default=False)
+
+
+@contextmanager
+def admit_visitor():
+    """The public demo's allowlist (app/public_demo.py) wraps one admitted read in this. Nothing a visitor
+    sends can set it: it is a context variable, not a header or cookie."""
+    token = _admitted.set(True)
+    try:
+        yield
+    finally:
+        _admitted.reset(token)
+
+
+class PublicDemoGate(OwnerGate):
+    """The gate when SHOPFRONT_PUBLIC_DEMO=1. There is no owner: no request is local, no cookie is valid,
+    no code pairs, and nothing is signed, so there is no secret to keep. A request passes only inside
+    admit_visitor(), which the demo's allowlist uses for reads of the made-up shop and nothing else;
+    without that wrapper (app.main:app started with the flag set) every gated route is refused.
+
+    The demo is served from a URL nobody knows in advance (a Lambda Function URL), and holds nothing
+    private, so any Host is accepted; the cross-site check still applies to anything state-changing."""
+
+    public_demo = True
+    public_paths: frozenset[str] = frozenset()  # not even the webhook or /healthz: only what admit_visitor() lets in
+
+    def __init__(self, hosts=()):
+        super().__init__(Path("/nonexistent/public-demo-has-no-owner-secret"), hosts=hosts)
+        self.local_clients = frozenset()
+
+    def host_ok(self, host_header: str | None) -> bool:
+        return bool(host_name(host_header))
+
+    def is_local(self, client_host: str | None, headers) -> bool:
+        return False
+
+    def is_owner(self, client_host: str | None, headers, cookies) -> bool:
+        return _admitted.get()
+
+    def check_cookie(self, value: str | None, now: float | None = None) -> bool:
+        return False
+
+    def pair(self, code: str, now: float | None = None) -> str | None:
+        return None
+
+    def pairing_code(self, now: float | None = None) -> tuple[str, float]:
+        raise PermissionError("the public demo has no owner to pair with")
+
+    def forget_devices(self) -> None:
+        raise PermissionError("the public demo has no paired devices")
+
+    def _secret(self) -> bytes:
+        raise PermissionError("the public demo signs nothing")

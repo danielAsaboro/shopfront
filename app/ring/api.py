@@ -3,6 +3,7 @@
 Calls, all against https://api.amazonvision.com:
   GET  /v1/devices?include=capabilities              find the doorbell when RING_DEVICE_ID is empty
   GET  /v1/users/me                                  the Ring Account ID, to match webhooks' meta.account_id
+  GET  /v1/devices/{id}/status                       online right now (sampled every few minutes, app/ring/status.py)
   GET  /v1/history/devices/{id}/events               the day's dings, motion and live views (on_demand), paged
                                                      newest first, and again with event_types=
                                                      motion.package_delivery to learn which motion events were
@@ -264,14 +265,20 @@ class RingApiClient(RingClient):
         return self._json(self._request("GET", "/v1/devices")).get("data", [])
 
     def online(self, device_id: str | None = None) -> bool:
-        """Whether the doorbell is online right now: GET /v1/devices/{id}/status, `data.attributes.online`
-        (API reference, Device Discovery > Status: "Whether the device is currently online"). Raises RingError;
-        a body without a boolean `online` is MALFORMED_RESPONSE, never a guess."""
-        body = self._json(self._request("GET", f"/v1/devices/{device_id or self.device_id}/status"))
+        return self.device_status(device_id)[0]
+
+    def device_status(self, device_id: str | None = None) -> tuple[bool, str | None]:
+        """Whether the doorbell is online right now, and Ring's X-Request-ID for the answer:
+        GET /v1/devices/{id}/status, `data.attributes.online` (API reference, Device Discovery > Status:
+        "Whether the device is currently online"). Raises RingError; a body without a boolean `online` is
+        MALFORMED_RESPONSE, never a guess."""
+        resp = self._request("GET", f"/v1/devices/{device_id or self.device_id}/status")
+        body = self._json(resp)
         value = ((body.get("data") or {}).get("attributes") or {}).get("online") if isinstance(body, dict) else None
         if not isinstance(value, bool):
-            raise RingError(RingStatus.MALFORMED_RESPONSE, "device status without a boolean `online`")
-        return value
+            raise RingError(RingStatus.MALFORMED_RESPONSE, "device status without a boolean `online`",
+                            resp.status_code, resp.headers.get("X-Request-ID"))
+        return value, resp.headers.get("X-Request-ID")
 
     def _cameras(self) -> list[str]:
         """IDs of devices with a camera, in Ring's order.

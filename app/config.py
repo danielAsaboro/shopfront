@@ -62,6 +62,12 @@ class Settings:
     webhook_table: str = _env("SHOPFRONT_WEBHOOK_TABLE")
     webhook_region: str = _env("SHOPFRONT_WEBHOOK_REGION")  # empty = AWS_REGION
     shop_id: str = _env("SHOPFRONT_SHOP_ID", "shop")
+    # Live Ring only: ask GET /v1/devices/{id}/status this often (minutes) for camera coverage
+    # (app/ring/status.py). 0 turns it off.
+    status_minutes: float = float(_env("SHOPFRONT_STATUS_MINUTES") or 5)
+
+    # The hosted read-only demo (app/public_demo.py, infra/template.yaml): made-up shop, nobody is the owner.
+    public_demo: bool = _env("SHOPFRONT_PUBLIC_DEMO") == "1"
 
     @property
     def tz(self) -> ZoneInfo:
