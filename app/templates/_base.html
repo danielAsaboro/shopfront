@@ -10,7 +10,7 @@
 </head>
 <body>
 <main>
-  {% include "_banner.html" %}
+  {% block banner %}{% include "_banner.html" %}{% endblock %}
   <header class="site">
     <a class="brand" href="/">Shopfront<span> · {{ shop }}</span></a>
     <nav aria-label="Shopfront">

@@ -79,9 +79,12 @@ def test_every_page_has_the_nav_banner_and_the_saved_shop_name(c):
     for path in PAGES:
         page = c.get(path).text
         assert 'nav aria-label="Shopfront"' in page and 'href="/setup"' in page and 'href="/"' in page, path
+        assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
+        if 'class="watermark"' in page:  # round 7: a pack with a watermark says it once, there (test_demo_wording)
+            assert path.startswith("/dispute") and 'class="banner' not in page, path
+            continue
         assert "Demo data: these door events were made up on this computer" in page, path
         assert '<span class="b-short">Demo data, not from Ring.' in page, path  # one line on a phone
-        assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
 
 
 def test_replays_are_named_in_the_banner(c):

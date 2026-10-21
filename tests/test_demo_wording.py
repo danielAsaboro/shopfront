@@ -83,3 +83,14 @@ def test_a_scan_with_no_door_events_near_it_never_shows_a_ring_chip(demo_client)
     verdict = re.search(r'<section class="verdict.*?</section>', page, re.S).group(0)
     assert "b-ring" not in verdict and ">ring<" not in verdict
     assert '<span class="badge b-demo"' in verdict  # the day came from the demo generator
+
+
+def test_the_pack_page_warns_once_in_its_watermark_not_the_banner_too(demo_client):
+    """Round 7: the pack page showed the site banner and the watermark back to back. The watermark (which also
+    prints) stays, with the banner's way out; the desk keeps its banner."""
+    client, q = demo_client
+    page = client.get("/dispute", params={**q, "at": demo.SCAN_AT, "claim": "business_closed"}).text
+    assert 'class="watermark"' in page and 'class="banner' not in page
+    assert "Demo data: don't send this pack as evidence." in page
+    assert '<a class="no-print" href="/connect">Connect Ring</a> to use your doorbell.' in page
+    assert 'class="banner warn-bg"' in client.get("/", params={"date": q["date"]}).text
