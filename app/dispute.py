@@ -170,9 +170,11 @@ def _finding(check: dict, late: dict | None, order: dict | None) -> dict:
 
 def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: FrameStore, posted_hours: str,
                check: dict | None = None, order: Expected | None = None, receipt: dict | None = None,
-               carrier: str = "", tracking: str = "", tz: tzinfo | None = None) -> dict:
+               carrier: str = "", tracking: str = "", tz: tzinfo | None = None,
+               made_at: datetime | None = None) -> dict:
     """`check` is a result of reconcile.check_attempt or check_closed_scan; `receipt` is the order's row
-    from deliveries.receipts; `tz` is the shop's zone. Give a check, an order, or both. Raises ValueError
+    from deliveries.receipts; `tz` is the shop's zone; `made_at` pins the "made" time so the zip downloaded
+    from a pack page has the manifest digest that page showed. Give a check, an order, or both. Raises ValueError
     when the check was refused (a time that hasn't happened, or never existed)."""
     if check is None and order is None:
         raise ValueError("a pack needs a carrier scan to check or an order")
@@ -209,7 +211,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     limits = LIMITS + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else [])
     pack = {
         "shop": shop, "day": day.isoformat(), "posted_hours": posted_hours,
-        "made_at": datetime.now(tz).isoformat(timespec="seconds"),
+        "made_at": (made_at or datetime.now(tz)).astimezone(tz).isoformat(timespec="seconds"),
         "watermark": " · ".join(marks) or None, "demo_data": demo, "replayed": replayed,
         "claim": {"kind": check["claim"], "label": rc.CLAIMS[check["claim"]], "time": check["attempt"],
                   "at": check["attempt_at"], "carrier": carrier, "tracking": tracking} if check else None,
@@ -444,6 +446,8 @@ def _readme(p: dict, frame_name: str | None) -> str:
         f"Shopfront dispute pack for {p['shop']}, {p['day']}. Made {p['made_at']}.", "",
         "pack.txt   the pack to read: the claim, the finding, the door log, the limits and the draft",
         "pack.json  the same facts as data, every event with its source and who labelled it",
+        f"{MANIFEST}  the SHA-256 of every other file; check them with: sha256sum -c {MANIFEST}",
+        f"           (the SHA-256 of {MANIFEST} itself is shown under Details on the pack page)",
     ]
     if frame_name and p["frame"]:
         lines.append(f"{frame_name}  the frame, {p['frame']['provenance']} (SHA-256 in pack.txt)")
@@ -456,18 +460,39 @@ def _readme(p: dict, frame_name: str | None) -> str:
     return "\n".join(lines) + "\n"
 
 
-def as_zip(p: dict, frames: FrameStore) -> bytes:
-    buf = io.BytesIO()
+MANIFEST = "manifest.sha256"
+_ZIP_TIME = (1980, 1, 1, 0, 0, 0)  # fixed entry times: the same pack always zips to the same bytes
+
+
+def zip_files(p: dict, frames: FrameStore) -> list[tuple[str, bytes]]:
+    """Every file in the pack's zip except the manifest, in order, as (name, bytes)."""
     name = None
     if p["frame"]:
         prefix = "live-view-frame" if p["frame"].get("live_view") else "ring-frame"
         name = f"{prefix}-{p['frame']['time'].replace(':', '')}.jpg"
+    files = [("README.txt", _readme(p, name).encode()), ("pack.txt", as_text(p).encode()),
+             ("pack.json", json.dumps(p, indent=1).encode())]
+    path = frames.path(p["frame"]["event_id"]) if p["frame"] and name else None
+    if path and name:
+        files.append((name, path.read_bytes()))
+    return files
+
+
+def manifest(files: list[tuple[str, bytes]]) -> str:
+    """`sha256sum -c` format: one "<hex>  <name>" line per file, so anyone can check nothing in the zip was
+    changed after Shopfront made it."""
+    return "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in files)
+
+
+def manifest_digest(p: dict, frames: FrameStore) -> str:
+    """The SHA-256 of the zip's manifest.sha256: the one number the pack page shows for the whole zip."""
+    return hashlib.sha256(manifest(zip_files(p, frames)).encode()).hexdigest()
+
+
+def as_zip(p: dict, frames: FrameStore) -> bytes:
+    buf = io.BytesIO()
+    files = zip_files(p, frames)
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("README.txt", _readme(p, name))
-        z.writestr("pack.txt", as_text(p))
-        z.writestr("pack.json", json.dumps(p, indent=1))
-        if p["frame"] and name:
-            path = frames.path(p["frame"]["event_id"])
-            if path:
-                z.write(path, name)
+        for name, data in files + [(MANIFEST, manifest(files).encode())]:
+            z.writestr(zipfile.ZipInfo(name, _ZIP_TIME), data, zipfile.ZIP_DEFLATED)
     return buf.getvalue()

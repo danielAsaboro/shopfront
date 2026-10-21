@@ -38,7 +38,7 @@
   </section>
 
   <div class="actions">
-    <a class="primary" href="/dispute.zip?{{ query }}" download>Download the pack (.zip)</a>
+    <a class="primary" href="/dispute.zip?{{ zip_query }}" download>Download the pack (.zip)</a>
     <button type="button" class="secondary" onclick="window.print()">Print</button>
     <a href="/?date={{ p.day }}">Back to the dashboard</a>
   </div>
@@ -102,6 +102,7 @@
   <footer class="proof">
     Made {{ p.made_at|local_stamp }} (shop time) from the door data on this computer. Ring has no "door answered" signal; see what this does not show, above.
     <details class="tech no-print"><summary>Details</summary>Door event sources: {{ p.event_sources|join(', ') or 'none' }} · <a href="/api/dispute?{{ query }}">pack JSON</a></details>
+    <details class="tech"><summary>Zip fingerprint</summary><p style="margin:4px 0 0">The zip holds manifest.sha256, the SHA-256 of every other file in it; running "sha256sum -c manifest.sha256" in the unzipped folder checks them. The manifest's own SHA-256, for the zip made {{ p.made_at|local_stamp }}:</p><p class="hash" style="margin:2px 0 0" id="manifest">{{ manifest_sha256 }}</p></details>
   </footer>
 {% endblock %}
 {% block scripts %}

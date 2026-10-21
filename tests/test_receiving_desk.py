@@ -301,7 +301,7 @@ def test_pack_with_a_frame_carries_its_hash(tmp_path):
     assert "nearest that time, at 19:34, was not a courier" in p["draft"]["body"]
     assert p["frame"]["sha256"] == hashlib.sha256(b"\xff\xd8frame-c2").hexdigest()
     z = zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, f)))
-    assert sorted(z.namelist()) == ["README.txt", "pack.json", "pack.txt", "ring-frame-1934.jpg"]
+    assert sorted(z.namelist()) == ["README.txt", "manifest.sha256", "pack.json", "pack.txt", "ring-frame-1934.jpg"]
     assert p["frame"]["sha256"] in z.read("pack.txt").decode()
     assert json.loads(z.read("pack.json"))["draft"]["subject"].startswith("Missed delivery scan")
 

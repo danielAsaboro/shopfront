@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -647,7 +647,21 @@ def api_attempt(at: str = Query(..., description="carrier's scan time, YYYY-MM-D
     return _check_attempt(when, _claim(claim))
 
 
-def _pack(day: date, at: str | None, claim: str | None, order: str | None, carrier: str, tracking: str) -> dict:
+def _made(value: str | None) -> datetime | None:
+    """The "made" time a pack page passes to its zip link, so the zip matches the manifest digest the page
+    showed. Only a time in the last day counts; anything else (or nothing) means now."""
+    try:
+        made = datetime.fromisoformat(value or "")
+    except ValueError:
+        return None
+    now = datetime.now(settings.tz)
+    if made.tzinfo is None or not now - timedelta(days=1) <= made <= now + timedelta(minutes=1):
+        return None
+    return made
+
+
+def _pack(day: date, at: str | None, claim: str | None, order: str | None, carrier: str, tracking: str,
+          made: str | None = None) -> dict:
     visits = _visits(day)
     e = book.get(order) if order else None
     if order and not e:
@@ -669,7 +683,7 @@ def _pack(day: date, at: str | None, claim: str | None, order: str | None, carri
     try:
         return dispute.build_pack(profile.get().name, day, visits, frames,
                                   f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if oh else "closed", check, e, receipt,
-                                  carrier.strip()[:40], tracking.strip()[:60], tz=settings.tz)
+                                  carrier.strip()[:40], tracking.strip()[:60], tz=settings.tz, made_at=_made(made))
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -681,7 +695,11 @@ def dispute_page(request: Request, date: str | None = Query(None), at: str | Non
     day = _parse_day(date)
     p = _pack(day, at, claim, order, carrier, tracking)
     query = request.url.query
-    return _page(request, "dispute.html", {"p": p, "query": query, "status_text": STATUS_TEXT,
+    zip_query = urlencode([(k, v) for k, v in request.query_params.multi_items() if k != "made"]
+                          + [("made", p["made_at"])])
+    return _page(request, "dispute.html", {"p": p, "query": query, "zip_query": zip_query,
+                                           "manifest_sha256": dispute.manifest_digest(p, frames),
+                                           "status_text": STATUS_TEXT,
                                            "replayed": "ring-webhook-replay" in p["event_sources"]})
 
 
@@ -694,11 +712,12 @@ def api_dispute(date: str | None = Query(None), at: str | None = Query(None), cl
 @app.get("/dispute.zip")
 def dispute_zip(request: Request, date: str | None = Query(None), at: str | None = Query(None),
                 claim: str | None = Query(None), order: str | None = Query(None),
-                carrier: str = Query(""), tracking: str = Query("")):
-    p = _pack(_parse_day(date), at, claim, order, carrier, tracking)
+                carrier: str = Query(""), tracking: str = Query(""), made: str | None = Query(None)):
+    p = _pack(_parse_day(date), at, claim, order, carrier, tracking, made)
     name = f"shopfront-dispute-{p['day']}" + (f"-{p['claim']['time'][-5:].replace(':', '')}" if p["claim"] else "")
     return Response(dispute.as_zip(p, frames), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"'})
+                    headers={"Content-Disposition": f'attachment; filename="{name}.zip"',
+                             "X-Manifest-SHA256": dispute.manifest_digest(p, frames)})
 
 
 @app.post("/orders/import")

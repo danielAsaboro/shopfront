@@ -234,3 +234,71 @@ def test_live_frames_are_never_called_ring_frames(tmp_path):
         assert "captured in the owner's browser from a Ring live-view session" in p["draft"]["body"]
         assert "doorbell frame" not in p["draft"]["body"]
     assert any(n.startswith("live-view-frame-") for n in zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, f))).namelist())
+
+
+# ---- tamper-evident zip ----------------------------------------------------------------------------
+
+def _verify(blob: bytes) -> tuple[dict[str, str], str]:
+    """Check the zip the way `sha256sum -c manifest.sha256` would, with hashlib; return the manifest and
+    its own digest."""
+    import hashlib
+    z = zipfile.ZipFile(io.BytesIO(blob))
+    text = z.read("manifest.sha256").decode()
+    listed = {}
+    for line in text.splitlines():
+        digest, name = line.split("  ", 1)  # sha256sum's text-mode separator: two spaces
+        assert len(digest) == 64 and int(digest, 16) >= 0
+        listed[name] = digest
+    assert set(listed) == set(z.namelist()) - {"manifest.sha256"}  # every other file, nothing else
+    for name, digest in listed.items():
+        assert hashlib.sha256(z.read(name)).hexdigest() == digest, name
+    return listed, hashlib.sha256(text.encode()).hexdigest()
+
+
+def test_zip_manifest_covers_every_file_and_verifies(tmp_path):
+    frames = FrameStore(tmp_path)
+    frames.save("pkg", b"\xff\xd8frame-pkg")
+    vs = pitch_day()
+    check = rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW)
+    p = pack(vs, check, FLOUR, "Swift Parcel", "SP123", frames=frames)
+    blob = dispute.as_zip(p, frames)
+    listed, digest = _verify(blob)
+    assert {"README.txt", "pack.txt", "pack.json"} < set(listed) and any(n.startswith("ring-frame-") for n in listed)
+    assert digest == dispute.manifest_digest(p, frames)
+    assert "sha256sum -c manifest.sha256" in zipfile.ZipFile(io.BytesIO(blob)).read("README.txt").decode()
+    assert dispute.as_zip(p, frames) == blob  # same pack, same bytes
+
+
+def test_a_changed_file_fails_the_manifest(tmp_path):
+    import hashlib
+    vs = confirmed_lunch()
+    p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
+    z = zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, NO_FRAMES)))
+    listed = dict(reversed(line.split("  ", 1)) for line in z.read("manifest.sha256").decode().splitlines())
+    edited = z.read("pack.txt").replace(b"Corner Bakery", b"Corner Bakery (edited)")
+    assert hashlib.sha256(edited).hexdigest() != listed["pack.txt"]
+
+
+def test_pack_page_shows_the_digest_of_the_zip_it_links_to(monkeypatch):
+    from urllib.parse import unquote
+    vs = confirmed_lunch()
+    monkeypatch.setattr(main, "_visits", lambda d: vs)
+    c = TestClient(main.app)
+    page = c.get("/dispute", params={"date": DAY.isoformat(), "at": "12:40", "claim": "business_closed"}).text
+    shown = page.split('id="manifest">', 1)[1].split("<", 1)[0]
+    link = unquote(page.split('href="/dispute.zip?', 1)[1].split('"', 1)[0]).replace("&amp;", "&")
+    assert len(shown) == 64 and "made=" in link
+    import time as _time
+    _time.sleep(1.1)  # the zip is made a second later; the link's "made" keeps it the same pack
+    z = c.get("/dispute.zip?" + link.replace("+", "%2B"))
+    assert _verify(z.content)[1] == shown == z.headers["X-Manifest-SHA256"]
+
+
+def test_zip_made_time_only_from_the_last_day(monkeypatch):
+    monkeypatch.setattr(main, "_visits", lambda d: confirmed_lunch())
+    c = TestClient(main.app)
+    q = {"date": DAY.isoformat(), "at": "12:40", "claim": "business_closed"}
+    for made in ("2020-01-01T09:00:00-08:00", "2999-01-01T09:00:00-08:00", "nonsense", "2026-10-14T09:00:00"):
+        p = json.loads(zipfile.ZipFile(io.BytesIO(c.get("/dispute.zip", params={**q, "made": made}).content))
+                       .read("pack.json"))
+        assert p["made_at"] != made and not p["made_at"].startswith(("2020", "2999"))
