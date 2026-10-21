@@ -129,8 +129,14 @@ def test_an_unexpected_failure_is_a_page(c, monkeypatch):
 def test_first_run_panel_until_there_are_orders(c):
     page = c.get(f"/?date={WEDNESDAY}").text
     assert "What Shopfront does" in page and 'href="/setup#orders"' in page and 'href="#atth"' in page
+    # one glance: what it does in one short line, then the next step as the page's one primary button
+    panel = page.split('class="first-run"')[1].split("</section>")[0]
+    assert '<p class="first">Check every delivery against your Ring doorbell.</p>' in panel
+    assert '<a class="primary" href="/setup#orders">Add your orders</a>' in panel
+    assert 'class="figures"' not in page  # "— / 0 / 07:55" means nothing before the first order
     main.book.add(WEDNESDAY, "Bay Mills")
-    assert "What Shopfront does" not in c.get(f"/?date={WEDNESDAY}").text
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert "What Shopfront does" not in page and 'class="figures"' in page
 
 
 def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
@@ -350,3 +356,18 @@ def test_demo_pack_says_demo_once_on_the_page(c):
     assert subject.startswith("[DEMO] ") and subject.count("DEMO") == 1
     body = page.split('id="draft">')[1].split("</div>")[0]
     assert body.count("DEMO") == 1 and body.startswith("DEMO DATA, not from a camera: don&#39;t send this.")
+
+
+def test_the_desk_says_which_day_it_shows():
+    today = date(2026, 10, 21)
+    assert pages.relative_day("2026-10-20", today) == "yesterday"
+    assert pages.relative_day("2026-10-21", today) == "today" and pages.relative_day("2026-10-07", today) == ""
+
+
+def test_the_desk_opens_on_today_once_today_has_orders(c):
+    """The bakery owner at 7am adds today's flour order: the desk must open on today, not yesterday's door."""
+    today = datetime.now(main.settings.tz).date()
+    assert "Receiving desk · yesterday" in c.get("/").text
+    main.book.add(today, "Hillside Mill", order_ref="PO-1")
+    page = c.get("/").text
+    assert "Receiving desk · today" in page and "Hillside Mill" in page

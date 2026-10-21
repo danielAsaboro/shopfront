@@ -7,7 +7,7 @@
 {% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
   <div class="page-head">
     <div>
-      <div class="eyebrow">Receiving desk</div>
+      <div class="eyebrow">Receiving desk{% if b.date|relative_day %} · {{ b.date|relative_day }}{% endif %}</div>
       <h1>{{ b.date|long_date }}</h1>
     </div>
     <form method="get" class="no-print">
@@ -21,17 +21,21 @@
   <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif st == "RATE_LIMITED" %}Ring asked Shopfront to slow down{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until {% if st == "RATE_LIMITED" %}you reload in {{ ring_down.retry_after ~ ' seconds' if ring_down.retry_after else 'a minute' }}{% else %}you <a href="/connect">reconnect Ring</a>{% endif %}. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
-  {% if first_run %}
+  {% if first_run and not lead_is_scan %}
   <section class="first-run" aria-label="What Shopfront does">
-    <p>Shopfront checks your deliveries against your Ring doorbell: it ticks off each order when the doorbell sees the courier, and when a carrier scans "business closed" while you were open, it builds the dispute pack for you to send.</p>
-    <ul>
-      <li><a href="/setup#orders">Import your orders or invoices</a> (a CSV from your POS, accountant or Amazon Business)</li>
-      <li><a href="#atth">Check a "business closed" scan</a> against your posted hours and the door</li>
-      <li>From that check, <a href="#atth">build a dispute pack</a>: the door log, the Ring frame and a draft message</li>
-    </ul>
+    <p class="first">Check every delivery against your Ring doorbell.</p>
+    <p class="reason">When a carrier scans "business closed" while you were open, Shopfront shows what the door saw and drafts the message for you to send.</p>
+    <ol class="next">
+      <li><a class="primary" href="/setup#orders">Add your orders</a> <span class="why">a CSV from your till, accountant or supplier, or one by hand</span></li>
+      <li>When a tracking page says "business closed", <a href="#atth">check the scan</a> below.</li>
+    </ol>
+  </section>
+  {% if lead %}
+  <section class="lead">
+    <ul>{% for line in lead %}<li>{{ line }}</li>{% endfor %}</ul>
   </section>
   {% endif %}
-
+  {% else %}
   <section class="lead">
     {% if lead %}
     <p class="first{{ ' warn' if lead_is_scan }}">{{ lead[0] }}</p>
@@ -46,12 +50,15 @@
     {% endif %}
     {% if money %}<p class="money">{{ money }}</p>{% elif not profile.redelivery_cost %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
   </section>
+  {% endif %}
 
+  {% if not first_run %}
   <section class="figures" aria-label="The day in three numbers">
     <div><span class="v {% if not ring_down and r.expected|selectattr('status', 'equalto', 'not_seen')|list %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
     <div><span class="v {% if b.deliveries_while_closed %}warn{% endif %}">{{ b.deliveries_while_closed|length }}</span><span class="l">Couriers while closed</span></div>
     <div><span class="v">{{ b.first_activity or '—' }}</span><span class="l">Staff first at the door</span></div>
   </section>
+  {% endif %}
 
   <section class="block" aria-labelledby="dlv">
     <h2 id="dlv">Deliveries</h2>

@@ -65,7 +65,7 @@ def test_nothing_in_the_window_is_not_seen_and_an_order_not_due_yet_is_expected(
     r = receipts(rows, [RULES.classify(ev(10, 15), OPEN)], OPEN, NO_FRAMES, now=now)
     by = {x["supplier"]: x["status"] for x in r["expected"]}
     assert by == {"Dairy Co": "not_seen", "Bay Mills": "expected"}
-    assert headline(r) == ["No courier seen for Dairy Co."]
+    assert headline(r) == ["No courier seen for Dairy Co.", "Still to come: Bay Mills (15:00–17:00)."]
 
 
 def test_staff_at_the_door_means_a_courier_before_opening_was_not_missed():

@@ -49,7 +49,8 @@ templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label,
-    illustration=illustrations.url_for, illustration_alt=illustrations.alt_for, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
+    illustration=illustrations.url_for, illustration_alt=illustrations.alt_for,
+    relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
 templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(illustrations.FAVICON)
@@ -305,6 +306,10 @@ def _claim(value: str | None) -> str:
 def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None),
               claim: str | None = Query(None), carrier: str = Query(""), tracking: str = Query("")):
     day = _parse_day(date)
+    if not date:  # the receiving desk opens on today once today has orders to watch for; else yesterday's door
+        today = datetime.now(settings.tz).date()
+        if book.for_day(today):
+            day = today
     claim = _claim(claim)
     when = None
     if attempt:

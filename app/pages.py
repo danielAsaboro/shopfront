@@ -92,6 +92,15 @@ def visit_label(visit_type: str | None, confirmed: bool = True) -> str:
     return TYPE_LABEL.get(t, t.replace("_", " ")) + ("" if confirmed else " (guess)")
 
 
+def relative_day(value, today: date) -> str:
+    """'today' / 'yesterday' / '' for a 'YYYY-MM-DD', so a morning visit knows which day it's looking at."""
+    try:
+        d = date.fromisoformat(str(value))
+    except ValueError:
+        return ""
+    return {0: "today", 1: "yesterday"}.get((today - d).days, "")
+
+
 def long_date(value) -> str:
     """'Wednesday 14 October 2026' from '2026-10-14'."""
     try:

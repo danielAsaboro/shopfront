@@ -414,6 +414,10 @@ def headline(r: dict, scan: str | None = None, scan_first: bool = False) -> list
     lines = ([scan] if scan and scan_first else []) + confirmed + ([scan] if scan and not scan_first else [])
     if missing:
         lines.append(f"No courier seen for {_and(missing)}.")
+    due = [x["supplier"] + (f" ({x['window_start']}–{x['window_end']})" if x.get("window_start") else "")
+           for x in rows if x["status"] == "expected"]
+    if due:
+        lines.append(f"Still to come: {_and(due)}.")
     lines += [_possible_line(x) for x in rows if x["status"] == "possible" and x["possible"]]
     return lines
 
