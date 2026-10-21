@@ -107,6 +107,7 @@
       <label class="field grow">Tracking no. (optional)<input name="tracking" value="{{ tracking }}" maxlength="60"></label>
       <button type="submit">Check the door</button>
     </form>
+    {% include "_scan_upload.html" %}
     {% if attempt %}
     <div role="status" style="margin-top:14px">
       <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>

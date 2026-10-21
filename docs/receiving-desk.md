@@ -88,6 +88,17 @@ scan makes the answer unverified. The activity counts give Ring's event kinds ("
 only camera-confirmed customers; rule-guessed customers are kept apart. A hand-worked day in
 `tests/test_scan_checks.py` pins every outcome, and a property test checks them against the evidence.
 
+**From a screenshot** (`app/scan_extract.py`, `POST /scan/extract`, `_scan_upload.html`). The owner can
+upload a photo or screenshot of the carrier's tracking page (JPEG or PNG by its own bytes, up to
+3.75 MB, Bedrock's Converse image limit) instead of typing. Bedrock Converse reads it through one forced
+tool, `read_tracking_page` (carrier, tracking number, status text and scan time verbatim, scan date),
+with the same injection guard as the frame classifier; free text is never parsed. The page shows each
+value as read next to what goes into the form; "Put these in the form" fills the typed form and
+nothing is checked until the owner presses "Check the door". The picture isn't kept. Without AWS
+credentials the section says, in plain words, that reading a screenshot needs an AWS sign-in, and the
+typed form works as before. Owner-only and same-site, like every other write (`app/owner.py`).
+Tested against botocore's Stubber in `tests/test_scan_extract.py`; **not run against live Bedrock yet**.
+
 ## 4. Staff tap (`/deliveries/{id}/received`)
 
 Optional. Once the door has seen a courier for an order, staff can tap **All there**, **Short** or

@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -26,6 +26,8 @@ from app import dispute, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
+from app.scan_extract import MAX_BYTES as MAX_SCAN_BYTES
+from app.scan_extract import ScanReader, ScanReadError
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
                             receipts)
@@ -56,6 +58,7 @@ cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = make_webhook_log(settings, DATA / "ring-webhooks.jsonl")  # file, or the Lambda's DynamoDB table
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
+scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
 
 
 def make_gate(s, secret_file: Path) -> OwnerGate:
@@ -320,7 +323,8 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "status_text": STATUS_TEXT,
         "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
         "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE,
-        "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region)})
+        "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region),
+        "can_read_scan": scan_reader.available()})
 
 
 def _desk(day: date, when: datetime | None, claim: str) -> dict:
@@ -755,6 +759,24 @@ async def delivery_received(request: Request, expected_id: str):
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return RedirectResponse(f"/?date={e.day}#dlv", status_code=303)
+
+
+@app.post("/scan/extract")
+def scan_extract(request: Request, shot: UploadFile = File(...)):
+    """Read a carrier tracking-page screenshot (JPEG or PNG) into values for the scan form.
+
+    Owner-only and same-site like every other write (app/owner.py middleware). The answer is a prefill
+    the page shows for the owner to confirm; nothing is checked or submitted here, and the picture
+    isn't kept. Errors are JSON with a plain sentence in `detail`."""
+    if int(request.headers.get("content-length") or 0) > MAX_SCAN_BYTES + 64 * 1024:
+        return JSONResponse({"error": "TOO_BIG", "detail": "That picture is over 3.75 MB. Crop it to the "
+                             "tracking details, or save it smaller, and try again."}, status_code=413)
+    data = shot.file.read(MAX_SCAN_BYTES + 1)
+    try:
+        out = scan_reader.read(data, today=datetime.now(settings.tz).date())
+    except ScanReadError as exc:
+        return JSONResponse({"error": exc.code, "detail": exc.detail}, status_code=exc.http_status)
+    return {"ok": True, "source": "bedrock", **out}
 
 
 @app.get("/frames/{name}")

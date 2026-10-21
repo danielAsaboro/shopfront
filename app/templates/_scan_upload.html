@@ -1,0 +1,62 @@
+{# Read the carrier's scan from a screenshot of its tracking page. Included inside "The carrier's tracking says".
+   Fills the typed form above for the owner to check; never submits it. #}
+<details class="scan-upload no-print" style="margin-top:12px">
+  <summary>Read it from a screenshot of the tracking page</summary>
+  {% if can_read_scan %}
+  <form id="scan-form" class="fields" method="post" action="/scan/extract" enctype="multipart/form-data" style="margin-top:10px">
+    <label class="field grow">Photo or screenshot (JPEG or PNG, up to 3.75 MB)<input type="file" name="shot" accept="image/jpeg,image/png" required></label>
+    <button type="submit">Read the screenshot</button>
+  </form>
+  <p class="why" style="margin:6px 0 0">Bedrock reads the picture; Shopfront doesn't keep it. You check what it read before anything is checked against the door.</p>
+  <div id="scan-result" role="status" aria-live="polite" style="margin-top:10px"></div>
+  <noscript><p class="why">Reading a screenshot needs JavaScript. The form above works without it.</p></noscript>
+  {% else %}
+  <p class="why" style="margin:8px 0 0">Reading a screenshot needs an AWS sign-in with Bedrock access, and this computer doesn't have one. Type what the tracking page says in the form above instead; it works the same.</p>
+  {% endif %}
+</details>
+{% if can_read_scan %}
+<script>
+(() => {
+  const form = document.getElementById('scan-form'), out = document.getElementById('scan-result');
+  const scan = document.querySelector('form[action="/#atth"]');
+  if (!form || !out || !scan) return;
+  const el = (tag, text, cls) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (cls) n.className = cls; return n; };
+  const claimLabel = v => { const o = scan.querySelector(`select[name="claim"] option[value="${v}"]`); return o ? o.textContent : ''; };
+  form.addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const btn = form.querySelector('button');
+    btn.disabled = true; out.replaceChildren(el('p', 'Reading the screenshot…', 'why'));
+    try {
+      const r = await fetch('/scan/extract', {method: 'POST', body: new FormData(form), credentials: 'same-origin'});
+      let j = {};
+      try { j = await r.json(); } catch (e) { j = {detail: 'Shopfront answered with something it could not read.'}; }
+      if (!r.ok || !j.ok) { out.replaceChildren(el('p', j.detail || 'That screenshot could not be read. Type the values in the form instead.', 'warn')); return; }
+      const read = j.as_read || {};
+      const rows = [
+        ['Carrier', read.carrier, j.carrier],
+        ['Tracking no.', read.tracking_number, j.tracking],
+        ['Status', read.status_text, j.claim ? claimLabel(j.claim) : 'not one of the scans Shopfront checks: pick it yourself'],
+        ['Scan time', read.scan_time, j.attempt || 'not clear: type it yourself'],
+        ['Scan date', read.scan_date, j.date || 'not shown: the form keeps the day you picked'],
+      ];
+      const table = el('table'); const head = el('tr');
+      ['', 'As read from your screenshot', 'Goes into the form as'].forEach(h => head.append(el('th', h)));
+      table.append(head);
+      rows.forEach(([k, a, b]) => { const tr = el('tr'); tr.append(el('td', k), el('td', a || '(not shown)'), el('td', b || '')); table.append(tr); });
+      const use = el('button', 'Put these in the form'); use.type = 'button';
+      use.addEventListener('click', () => {
+        const set = (name, v) => { const f = scan.querySelector(`[name="${name}"]`); if (f && v) f.value = v; };
+        set('carrier', j.carrier); set('tracking', j.tracking); set('claim', j.claim); set('attempt', j.attempt); set('date', j.date);
+        out.replaceChildren(el('p', 'Filled in. Check each value against the tracking page, then press "Check the door".', 'why'));
+        (scan.querySelector('[name="attempt"]') || scan).focus();
+      });
+      out.replaceChildren(
+        el('p', 'Check these against the screenshot. Nothing is checked until you press "Check the door".', 'warn'),
+        table, use);
+    } catch (e) {
+      out.replaceChildren(el('p', 'Couldn’t reach Shopfront. Is it still running?', 'warn'));
+    } finally { btn.disabled = false; }
+  });
+})();
+</script>
+{% endif %}
