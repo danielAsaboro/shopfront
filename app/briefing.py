@@ -9,9 +9,10 @@ from app.classify.base import Classifier
 from app.classify.bedrock import BedrockClassifier
 from app.deliveries import is_seen_courier, staff_in
 from app.hours import posted_hours
-from app.models import Briefing, ClassifiedVisit, VisitType
+from app.models import Briefing, ClassifiedVisit, DoorEvent, VisitType
 from app.ring.api import RingApiClient, RingError
 from app.ring.base import RingClient
+from app.ring.webhooks import ring_alert, stage0_route
 
 SAME_EVENT = timedelta(seconds=5)  # a webhook and its Event History record name the same press or motion
 
@@ -32,22 +33,32 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
                  cache: ClassificationCache | None = None, live=None, frames=None,
                  webhooks=None, stats: dict | None = None) -> list[ClassifiedVisit]:
-    """Every door visit that day, labelled. Stages follow Ring's CV guidelines: webhook sub_type first
-    (free), then the rules or Bedrock. Pass `stats` to get the funnel counts back."""
+    """Every door visit that day, labelled. Stages follow Ring's CV guidelines: Ring's motion sub_type
+    first (free; from a webhook or from the Event History composite filter), then the rules or Bedrock. Pass `stats` to get the funnel counts back."""
     open_hours = posted_hours(hours, day)
     tz = getattr(ring, "tz", None)
     stage0 = webhooks.day(day, tz) if webhooks is not None and tz is not None else None
     visits: list[ClassifiedVisit] = []
     if live is not None and isinstance(ring, RingApiClient):  # live-view sessions from the same Ring source
         visits.extend(live.visits_for_day(day))
-    for v in (stage0 or {}).get("ring_labelled", []):
+    events: list[DoorEvent] = []
+    skipped: list[DoorEvent] = []
+    ring_labelled: list[ClassifiedVisit] = list((stage0 or {}).get("ring_labelled", []))
+    for e in _door_events(ring, day, stage0):  # Event History events get the same stage 0 as webhooks
+        route = stage0_route(e)
+        if route == "skip":
+            skipped.append(e)
+        elif route == "ring":
+            ring_labelled.append(ring_alert(e))
+        else:
+            events.append(e)
+    for v in ring_labelled:
         if frames is not None and isinstance(ring, RingApiClient) and not frames.path(v.event.id):
             try:  # keep Ring's frame as the receipt; no Bedrock call, Ring already said what it was
                 frames.save(v.event.id, ring.snapshot(v.event))
             except RingError as exc:
                 v.reason += f" (no Ring frame: {exc.status.value})"
         visits.append(v)
-    events = _door_events(ring, day, stage0)
     for e in events:
         if not isinstance(classifier, BedrockClassifier):
             visits.append(classifier.classify(e, open_hours))
@@ -72,7 +83,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
                              "model": classifier.model_id, "request_id": v.request_id})
         visits.append(v)
     if stats is not None:
-        stats.update(funnel(visits, stage0))
+        stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped}))
     return sorted(visits, key=lambda v: v.event.timestamp)
 
 

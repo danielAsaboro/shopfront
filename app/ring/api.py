@@ -3,7 +3,9 @@
 Calls, all against https://api.amazonvision.com:
   GET  /v1/devices?include=capabilities              find the doorbell when RING_DEVICE_ID is empty
   GET  /v1/users/me                                  the Ring Account ID, to match webhooks' meta.account_id
-  GET  /v1/history/devices/{id}/events               the day's dings and motion events (paged, newest first)
+  GET  /v1/history/devices/{id}/events               the day's dings and motion events (paged, newest first),
+                                                     and again with event_types=motion.package_delivery to
+                                                     learn which motion events were Ring's courier alerts
   POST /v1/devices/{id}/media/image/download         the frame at an event's start time (303 -> pre-signed GET)
   POST /v1/devices/{id}/media/streaming/whep/sessions live view (the Developer Playground's simulator), + DELETE
 Tokens come from POST https://oauth.ring.com/oauth/token (refresh_token grant), or are a
@@ -47,6 +49,7 @@ MAX_CACHED_DAYS = 120
 TODAY_TTL = 60.0  # seconds today's Event History is reused for
 MAX_RETRY_WAIT = 2  # seconds: a longer Retry-After is reported, not waited out in a page load
 REMEMBERED_FRAME_ERRORS = {403, 416, 422}
+TAGGED_SUBTYPES = ("package_delivery",)  # motion subtypes asked for by composite filter, for stage 0
 
 
 class RingStatus(str, Enum):
@@ -172,6 +175,7 @@ class RingApiClient(RingClient):
         self._account_asked = False
         self._history: dict[tuple, tuple[float, list[DoorEvent]]] = {}  # (day, event_types) -> (fetched, events)
         self._no_frame: dict[tuple, RingError] = {}  # (device, ms) -> the error Ring gave for that frame
+        self._refused_filters: set[str] = set()  # composite subtypes Ring answered 400 to
         self._lock = threading.Lock()
         self.sleep = _time.sleep  # tests swap it
 
@@ -270,11 +274,47 @@ class RingApiClient(RingClient):
         return [replace(e) for e in events]
 
     def _fetch_day(self, day: date) -> list[DoorEvent]:
+        """The day's events, each motion event carrying the Smart Alert subtype Ring filtered it by.
+
+        API reference, Event History > Event type filtering: an Event History item has no sub_type field,
+        but `event_types` takes dot-delimited composite values ("motion.vehicle filters by event type AND
+        detection subtype", combined with OR). So the subtype is read from the filter that returned the
+        event: when the only motion filter is one composite value, every motion event has that subtype;
+        otherwise motion events are asked for again as `motion.<subtype>` for each subtype stage 0 acts on
+        (`TAGGED_SUBTYPES`), and the events in that answer, by Ring's event ID, get the subtype.
+        `package_delivery` is a detection subtype in the API reference (Notifications > Motion Detection,
+        Smart Alerts enabled); the Event History table lists human, vehicle, animal and other_motion.
+        If Ring refuses a composite filter (400, "malformed query parameters"), it isn't asked again and
+        those events go to the classifier untagged, as with Smart Alerts off.
+        """
+        events = self._fetch_filtered(day, self.event_types)
+        motion = [f.strip() for f in (self.event_types or "ding,motion").split(",") if f.strip().startswith("motion")]
+        if len(motion) == 1 and "." in motion[0]:
+            only = motion[0].split(".", 1)[1]
+            return [replace(e, ring_subtype=only) if e.kind == "motion" else e for e in events]
+        if not any(e.kind == "motion" for e in events):
+            return events
+        for sub in TAGGED_SUBTYPES:
+            if sub in self._refused_filters:
+                continue
+            try:
+                ids = {e.id for e in self._fetch_filtered(day, f"motion.{sub}")}
+            except RingError as exc:
+                if exc.http_status != 400:
+                    raise
+                log.warning("Ring Event History refused event_types=motion.%s; those events go untagged", sub)
+                self._refused_filters.add(sub)
+                continue
+            events = [replace(e, ring_subtype=sub) if e.kind == "motion" and e.id in ids and not e.ring_subtype
+                      else e for e in events]
+        return events
+
+    def _fetch_filtered(self, day: date, event_types: str) -> list[DoorEvent]:
         start = datetime.combine(day, time.min, tzinfo=self.tz)
         end = start + timedelta(days=1)
         start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
         path: str | None = f"/v1/history/devices/{self.device_id}/events"
-        params: dict | None = {"event_types": self.event_types} if self.event_types else None
+        params: dict | None = {"event_types": event_types} if event_types else None
         events: list[DoorEvent] = []
         for _ in range(MAX_PAGES):
             if path is None:

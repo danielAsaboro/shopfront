@@ -46,13 +46,16 @@ def test_history_pages_until_older_than_the_day_and_maps_events():
     def handler(req: httpx.Request):
         calls.append(req)
         assert req.headers["Authorization"] == "Bearer playground-token"
+        if req.url.params.get("event_types") == "motion.package_delivery":
+            return httpx.Response(200, json={"data": [], "links": {}})  # no courier alerts that day
         return httpx.Response(200, json=page2 if "page%5Bkey%5D=x" in str(req.url) or "page[key]=x" in str(req.url) else page1)
 
     ring, _ = client(handler)
     events = ring.events_for_day(DAY)
     assert [(e.kind, e.timestamp.hour) for e in events] == [("motion", 7), ("ding", 11), ("motion", 17)]
     assert all(e.source == "ring" for e in events)
-    assert len(calls) == 2  # stopped at the first event older than the day
+    main = [c for c in calls if c.url.params.get("event_types") != "motion.package_delivery"]
+    assert len(main) == 2  # stopped at the first event older than the day
     assert calls[0].url.params["event_types"] == "ding,motion"
 
 
@@ -355,3 +358,99 @@ def test_rate_limit_page_says_when_to_try_again(monkeypatch):
     assert r.status_code == 200 and "slow down" in r.text and "reload in 30 seconds" in r.text
     page = c.get(f"/dispute?date={DAY.isoformat()}&at=12:00")
     assert page.status_code == 429 and "Try again in 30 seconds" in page.text and page.headers["retry-after"] == "30"
+
+
+# ---- Ring's own package_delivery label from Event History (stage 0, no model call) --------------------
+# API reference, Event History > Event type filtering: event_types takes composite values like
+# motion.vehicle ("filters by event type AND detection subtype"); history items carry no sub_type field.
+# package_delivery is a motion detection subtype (Notifications > Motion Detection, Smart Alerts enabled).
+def _history_handler(calls, main_items, package_items, package_status=200):
+    def handler(req: httpx.Request):
+        calls.append(req)
+        if req.method != "GET":
+            return httpx.Response(416, json={"errors": [{"code": "MEDIA_NOT_FOUND"}]})
+        if req.url.params.get("event_types") == "motion.package_delivery":
+            if package_status != 200:
+                return httpx.Response(package_status, json={"errors": [{"code": "BAD_REQUEST"}]})
+            return httpx.Response(200, json={"data": package_items, "links": {}})
+        return httpx.Response(200, json={"data": main_items, "links": {}})
+    return handler
+
+
+class _Recorder:
+    """A classifier that records what reached it, so a test can show stage 0 kept an event away."""
+    name = "recorder"
+
+    def __init__(self):
+        self.seen = []
+
+    def classify(self, event, open_hours, **kw):
+        from app.models import ClassifiedVisit, VisitType
+        self.seen.append(event)
+        return ClassifiedVisit(event, VisitType.CUSTOMER, 0.5, "recorded", "rules")
+
+
+def test_history_package_delivery_is_a_courier_by_ring_with_no_model_call():
+    from app.briefing import classify_day
+    from app.hours import parse_hours
+    from app.models import VisitType
+
+    pkg, walk, press = hist("motion", ms(10, 12)), hist("motion", ms(11)), hist("ding", ms(12))
+    calls: list = []
+    # newest first, as Ring pages them
+    ring, _ = client(_history_handler(calls, [press, walk, pkg], [pkg]))
+    events = ring.events_for_day(DAY)
+    assert [(e.kind, e.ring_subtype) for e in events] == [("motion", "package_delivery"), ("motion", None), ("ding", None)]
+
+    rec = _Recorder()
+    stats: dict = {}
+    visits = classify_day(ring, rec, DAY, parse_hours(""), stats=stats)
+    courier = next(v for v in visits if v.event.id == pkg["id"])
+    assert courier.source == "ring" and courier.visit_type == VisitType.DELIVERY
+    assert courier.event.source == "ring" and courier.event.ring_subtype == "package_delivery"
+    assert pkg["id"] not in {e.id for e in rec.seen}  # no classifier (and so no Bedrock) call for it
+    assert {e.id for e in rec.seen} == {walk["id"], press["id"]}
+    assert stats["labelled_by_ring"] == 1 and stats["reached_bedrock"] == 0
+
+
+def test_history_package_delivery_never_reaches_bedrock():
+    from app.briefing import classify_day
+    from app.classify.bedrock import BedrockClassifier
+    from app.hours import parse_hours
+
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("Ring already labelled it: no Bedrock call")
+
+    pkg = hist("motion", ms(10, 12))
+    ring, _ = client(_history_handler([], [pkg], [pkg]))
+    [v] = classify_day(ring, BedrockClassifier("us-east-1", "m", client=NoCall()), DAY, parse_hours(""))
+    assert v.source == "ring" and v.reason.startswith("Ring Smart Alert: package_delivery")
+
+
+def test_refused_composite_filter_leaves_motion_untagged_and_is_not_asked_again():
+    calls: list = []
+    walk = hist("motion", ms(11))
+    ring, _ = client(_history_handler(calls, [walk], [], package_status=400))
+    [e] = ring.events_for_day(DAY)
+    assert e.ring_subtype is None  # goes on to the classifier, as with Smart Alerts off
+    ring.events_for_day(date(2026, 10, 6))
+    asked = [c for c in calls if c.url.params.get("event_types") == "motion.package_delivery"]
+    assert len(asked) == 1
+
+
+def test_one_composite_motion_filter_tags_every_motion_event_without_another_call():
+    calls: list = []
+    walk = hist("motion", ms(11))
+    http = httpx.Client(transport=httpx.MockTransport(_history_handler(calls, [walk], [])))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, device_id=DEV,
+                         event_types="ding,motion.human", http=http)
+    [e] = ring.events_for_day(DAY)
+    assert e.ring_subtype == "human" and len(calls) == 1
+
+
+def test_a_day_without_motion_asks_no_composite_query():
+    calls: list = []
+    ring, _ = client(_history_handler(calls, [hist("ding", ms(9))], []))
+    ring.events_for_day(DAY)
+    assert len(calls) == 1

@@ -68,9 +68,62 @@ def verify(raw: bytes, header: str | None, key: str) -> bool:
     return header is not None and hmac.compare_digest(sign(raw, key), header.strip())
 
 
+def stage0_route(e: DoorEvent) -> str:
+    """Where Ring's motion sub_type sends an event, whether it came by webhook or from Event History:
+    "ring" (a courier Ring's package_delivery Smart Alert saw; no model call), "skip" (vehicle,
+    other_motion) or "classify" (human, plain motion, unknown values and doorbell presses).
+
+    API reference, Notifications > Motion Detection: sub_type is an open-ended vocabulary ("handle the
+    values you act on, and pass anything else through rather than dropping it"), so anything not named
+    here goes on to the classifier."""
+    if e.kind == "motion" and e.ring_subtype in SKIP_AT_STAGE0:
+        return "skip"
+    if e.kind == "motion" and e.ring_subtype == "package_delivery":
+        return "ring"
+    return "classify"
+
+
+def ring_alert(e: DoorEvent) -> ClassifiedVisit:
+    """The courier visit for a package_delivery event: Ring's label, not ours."""
+    return ClassifiedVisit(e, VisitType.DELIVERY, 0.8, "Ring Smart Alert: package_delivery", "ring")
+
+
 def replay_key(key: str) -> str:
     """The key Shopfront's own feeder signs with. Ring never uses it, so nothing it signs passes as Ring's."""
     return hmac.new(key.encode(), b"shopfront-replay-v1", hashlib.sha256).hexdigest()
+
+
+def check(raw: bytes, signature: str | None, key: str, replayed: bool = False) -> tuple[WebhookStatus, dict | None]:
+    """Verify Ring's HMAC over the raw body and turn a v1.1 notification into a log row.
+
+    Returns (ACCEPTED, row) or (the reason, None). Storing the row, and deduping on its request_id, is the
+    store's job: the local JSON-lines log below, or DynamoDB from the Lambda in infra/ (app/store/)."""
+    if not key:
+        return WebhookStatus.NOT_CONFIGURED, None
+    if verify(raw, signature, key):
+        pass
+    elif verify(raw, signature, replay_key(key)):
+        replayed = True
+    else:
+        return WebhookStatus.BAD_SIGNATURE, None
+    try:
+        body = json.loads(raw)
+        meta, data = body["meta"], body["data"]
+        attrs = data.get("attributes") or {}
+        row = {"request_id": meta["request_id"], "type": data["type"], "id": data.get("id"),
+               "device": attrs.get("source"), "account": meta.get("account_id"),
+               "timestamp": attrs.get("timestamp"), "sub_type": attrs.get("sub_type"), "sent": meta.get("time")}
+        if replayed or meta.get(REPLAY_MARKER) is True:
+            row["replayed"] = True
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return WebhookStatus.MALFORMED, None
+    return WebhookStatus.ACCEPTED, row
+
+
+def ours(row: dict, device_id: str = "", account_id: str = "") -> bool:
+    """The shop's own doorbell and Ring account; an empty setting accepts any."""
+    return ((not device_id or row.get("device") == device_id)
+            and (not account_id or row.get("account") == account_id))
 
 
 class WebhookLog:
@@ -82,26 +135,10 @@ class WebhookLog:
         self._seen: set[str] = {r.get("request_id", "") for r in read_jsonl(path)}
 
     def handle(self, raw: bytes, signature: str | None, key: str, replayed: bool = False) -> WebhookStatus:
-        if not key:
-            return WebhookStatus.NOT_CONFIGURED
-        if verify(raw, signature, key):
-            pass
-        elif verify(raw, signature, replay_key(key)):
-            replayed = True
-        else:
-            return WebhookStatus.BAD_SIGNATURE
-        try:
-            body = json.loads(raw)
-            meta, data = body["meta"], body["data"]
-            request_id = meta["request_id"]
-            attrs = data.get("attributes") or {}
-            row = {"request_id": request_id, "type": data["type"], "id": data.get("id"),
-                   "device": attrs.get("source"), "account": meta.get("account_id"),
-                   "timestamp": attrs.get("timestamp"), "sub_type": attrs.get("sub_type"), "sent": meta.get("time")}
-            if replayed or meta.get(REPLAY_MARKER) is True:
-                row["replayed"] = True
-        except (ValueError, KeyError, TypeError, AttributeError):
-            return WebhookStatus.MALFORMED
+        status, row = check(raw, signature, key, replayed)
+        if row is None:
+            return status
+        request_id = row["request_id"]
         with self._lock:
             if request_id in self._seen:
                 return WebhookStatus.DUPLICATE
@@ -112,14 +149,17 @@ class WebhookLog:
         return WebhookStatus.ACCEPTED
 
     def _ours(self, r: dict) -> bool:
-        return ((not self.device_id or r.get("device") == self.device_id)
-                and (not self.account_id or r.get("account") == self.account_id))
+        return ours(r, self.device_id, self.account_id)
 
     def recent(self, n: int = 20) -> list[dict]:
         return read_jsonl(self.path)[-n:][::-1]
 
     def _rows(self) -> list[dict]:
         return read_jsonl(self.path)
+
+    def _rows_for(self, day: date, tz: ZoneInfo) -> list[dict]:
+        """Rows that may fall on `day`. The file has to be read whole; a store keyed by day reads less."""
+        return self._rows()
 
     @staticmethod
     def _when(r: dict, tz: ZoneInfo) -> datetime | None:
@@ -130,14 +170,14 @@ class WebhookLog:
 
     def ignored(self, day: date, tz: ZoneInfo) -> int:
         """Door events that day from another device or account: logged, never put on the shop's door."""
-        return sum(1 for r in self._rows() if KINDS.get(str(r.get("type"))) and not self._ours(r)
+        return sum(1 for r in self._rows_for(day, tz) if KINDS.get(str(r.get("type"))) and not self._ours(r)
                    and (ts := self._when(r, tz)) is not None and ts.date() == day)
 
     def day(self, day: date, tz: ZoneInfo) -> dict:
         """Stage 0 for one day: door events that go on, Ring-labelled couriers, and what was skipped."""
         events, ring_labelled, skipped = [], [], []
         seen = set()
-        for r in self._rows():
+        for r in self._rows_for(day, tz):
             kind = KINDS.get(str(r.get("type")))
             ts = self._when(r, tz)
             key = r.get("id") or r.get("request_id")  # Ring's data.id, else the delivery's own request_id
@@ -148,11 +188,11 @@ class WebhookLog:
             e = DoorEvent(id=str(key), device_id=str(r.get("device") or ""),
                           timestamp=ts, kind=kind, ring_subtype=sub,
                           source="ring-webhook-replay" if r.get("replayed") else "ring-webhook")
-            if kind == "motion" and sub in SKIP_AT_STAGE0:
+            route = stage0_route(e)
+            if route == "skip":
                 skipped.append(e)
-            elif kind == "motion" and sub == "package_delivery":
-                ring_labelled.append(ClassifiedVisit(e, VisitType.DELIVERY, 0.8,
-                                                     "Ring Smart Alert: package_delivery", "ring"))
+            elif route == "ring":
+                ring_labelled.append(ring_alert(e))
             else:
                 events.append(e)
         return {"events": events, "ring_labelled": ring_labelled, "skipped": skipped}

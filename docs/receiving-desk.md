@@ -31,7 +31,7 @@ delivery date, Tracking number, …). Rules:
 `UPS(1Z…)`). **Unverified:** these names come from public examples, not a live Amazon Business
 account, and the Ordering/Reconciliation APIs are not connected (developer access unconfirmed).
 
-## 2. Stage 0: Ring's `package_delivery` sub_type (`app/ring/webhooks.py`)
+## 2. Stage 0: Ring's `package_delivery` sub_type (`app/ring/webhooks.py`, `app/ring/api.py`)
 
 Following Ring's [Computer Vision Guidelines](https://developer.amazon.com/docs/ring/computer-vision-guidelines.html),
 the motion `sub_type` (added 2026-10-05, [release notes](https://developer.amazon.com/docs/ring/release-notes.html))
@@ -43,8 +43,20 @@ is a free first filter on signed webhooks:
 | `human`, none (Smart Alerts off), doorbell press | On to the classifier (Bedrock with a frame, else rules) |
 | `vehicle`, `other_motion` | Logged and counted, never classified |
 
+**Event History gets the same stage 0** (`stage0_route`, used by `app/briefing.py`). A history item has
+no sub_type field, but `event_types` takes composite values that filter "by event type AND detection
+subtype" ([API reference](https://developer.amazon.com/docs/ring/api-documentation.html), Event History >
+Event type filtering). So `RingApiClient` asks for the day twice: `ding,motion`, then
+`motion.package_delivery`; motion events in the second answer (by Ring's event ID) get
+`ring_subtype = "package_delivery"` and become couriers **by ring** with no model call. The Event History
+table lists `motion.human`, `.vehicle`, `.animal` and `.other_motion`; `package_delivery` is a detection
+subtype from the Motion Detection webhook section, so whether history honours `motion.package_delivery`
+is **unverified live**. If Ring answers 400, the filter isn't asked again and those events go to the
+classifier untagged, as with Smart Alerts off. When `RING_EVENT_TYPES` has a single composite motion
+value (`ding,motion.human`), every motion event carries that subtype with no extra call.
+
 A webhook and its Event History record of the same press or motion (same kind, within 5 s) count
-once; the webhook copy wins because it carries the sub_type. The dashboard footer shows the funnel:
+once; the webhook copy wins. The dashboard footer shows the funnel:
 events, skipped at stage 0, labelled by Ring, reached Bedrock, labelled by rules.
 
 **Replays.** The Developer Playground sends no webhooks. `scripts/feed_webhook.py` posts signed
