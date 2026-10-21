@@ -213,7 +213,7 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    and a draft you copy and send yourself:
    {pack_url}
 
-Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; your own .data is untouched.
+Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; nothing else in .data is touched.
 """, flush=True)
         server.wait()
     except KeyboardInterrupt:
