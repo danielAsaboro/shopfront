@@ -37,7 +37,7 @@ class Case:
     id: str
     question: str
     kind: str  # yes_time | no | count | time | attempt | refuse
-    expect: str | int | None = None
+    expect: str | int | tuple[str, str | None] | None = None  # attempt: (outcome, visit time)
     note: str = ""
 
 
@@ -124,9 +124,10 @@ def is_correct(c: Case, answer: str) -> bool:
     if c.kind == "time":
         return str(c.expect) in answer
     if c.kind == "attempt":
+        assert isinstance(c.expect, tuple)
         outcome, t = c.expect
         if outcome == "courier_at_door":
-            return t in answer
+            return t is not None and t in answer
         return not answer.lower().startswith("yes") and bool(NEGATIVE.search(answer) or HEDGE.search(answer))
     if c.kind == "refuse":
         return bool(HEDGE.search(answer)) and not CLAIMS_RECEIPT.search(answer)

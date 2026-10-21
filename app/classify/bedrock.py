@@ -68,8 +68,8 @@ class BedrockClassifier(Classifier):
                 ]}],
                 inferenceConfig={"maxTokens": 200, "temperature": 0},
             )
-            rec.update(wall_ms=round((clock.perf_counter() - started) * 1000),
-                       request_id=resp.get("ResponseMetadata", {}).get("RequestId"),
+            request_id = resp.get("ResponseMetadata", {}).get("RequestId")
+            rec.update(wall_ms=round((clock.perf_counter() - started) * 1000), request_id=request_id,
                        latency_ms=resp.get("metrics", {}).get("latencyMs"), usage=resp.get("usage"),
                        stop_reason=resp.get("stopReason"))
             text = resp["output"]["message"]["content"][0]["text"]
@@ -77,7 +77,7 @@ class BedrockClassifier(Classifier):
             data = json.loads(text[text.find("{"): text.rfind("}") + 1])
             visit = ClassifiedVisit(event, VisitType(data["type"]), float(data.get("confidence", 0.5)),
                                     str(data.get("reason", "")), self.name)
-            visit.request_id = rec["request_id"]
+            visit.request_id = request_id
             rec["label"] = visit.visit_type.value
             self._record(rec)
             return visit

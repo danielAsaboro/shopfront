@@ -78,7 +78,7 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 def confusion(truth: list[str], pred: list[str]) -> dict[str, Counter]:
-    m = {t: Counter() for t in CLASSES}
+    m: dict[str, Counter] = {t: Counter() for t in CLASSES}
     for t, p in zip(truth, pred):
         m[t][p] += 1
     return m

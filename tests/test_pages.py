@@ -200,7 +200,7 @@ def test_claim_row_fields_are_labelled_and_the_button_never_wraps(c):
     page = c.get(f"/?date={WEDNESDAY}").text
     form = page.split('id="atth"')[1].split("</form>")[0]
     for label in ("Scan", "At", "Carrier (optional)", "Tracking no. (optional)"):
-        assert f'class="field' in form and f">{label}<" in form
+        assert 'class="field' in form and f">{label}<" in form
     css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
     assert "white-space: nowrap" in css.split("button, .primary, .secondary {")[1].split("}")[0]
     assert ".fields > button, .fields > .btn { flex: none; }" in css
