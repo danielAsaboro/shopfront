@@ -119,10 +119,6 @@
   .receipts td.why:not(.src-cell) { width: 30%; }
   .receipts img, .ask img.frame { display:block; width: 72px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
   .ask img.frame { width: 240px; max-width: 100%; margin: 8px 0; }
-  /* Drawn stills for demo events: same slot as a frame, always captioned as a drawing */
-  figure.still { margin: 0; }
-  figure.still img { display:block; width: 88px; aspect-ratio: 4 / 3; border-radius: 4px; }
-  figure.still figcaption { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .row-ask { display:flex; gap:8px; margin-top: 10px; }
   .row-ask input { flex: 1 1 auto; }
   .ask .said { font-size: 17px; margin: 12px 0 4px; }
@@ -155,7 +151,6 @@
     .receipts td.src-cell details[open] { width: auto; }
     .receipts td.why:empty { display: none; }
     .log tr:first-child { display: none; }
-    figure.still img { width: 64px; }
   }
   @media print {
     .site nav, .no-print { display: none; }

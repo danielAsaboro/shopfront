@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from app import provenance
+from app import illustrations, provenance
 
 # Who labelled a door event, in the owner's words (the API keeps the raw source names)
 BY = {"bedrock": "Bedrock looked at the Ring frame", "ring": "Ring's package alert",
@@ -94,6 +94,23 @@ def badge(source: str | None, event_source: str | None = None) -> str:
     if source not in ("ring", "bedrock", "rules") and event_source not in ("synthetic", "ring-webhook-replay"):
         return "guess"
     return BADGE[provenance.kind(source, event_source)]
+
+
+def pack_stills(p: dict, limit: int = 2) -> list[dict]:
+    """The door log rows to picture on a pack: at most `limit`, nearest the time in question (the scan, or the
+    courier), the ones with a Ring frame first, and never the frame the pack already shows large."""
+    def secs(t: str) -> int:
+        h, m, *rest = (int(x) for x in t.split(":"))
+        return h * 3600 + m * 60 + (rest[0] if rest else 0)
+    centre_at = (p.get("claim") or {}).get("time", "")[-5:] or (p.get("frame") or {}).get("time", "")
+    if not centre_at:
+        return []
+    centre = secs(centre_at)
+    shown = (p.get("frame") or {}).get("event_id")
+    rows = [t for t in p.get("timeline") or [] if t["event_id"] != shown
+            and (t.get("frame_url") or illustrations.url_for(t))]
+    rows.sort(key=lambda t: (not t.get("frame_url"), abs(secs(t["time"]) - centre), t["time"]))
+    return sorted(rows[:limit], key=lambda t: t["time"])
 
 
 # A visit type in the owner's words, where the raw value isn't already one

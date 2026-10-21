@@ -1,6 +1,7 @@
 """Drawn stills for demo door events: always captioned as drawings, never for a real Ring event, never in a zip."""
 
 import io
+import re
 import zipfile
 from datetime import date, datetime
 
@@ -39,29 +40,31 @@ def test_drawings_are_served_and_unknown_names_are_not(c):  # noqa: F811
     assert c.get("/illustrations/nope.svg").status_code == 404
 
 
-def test_desk_rows_show_a_captioned_still_for_demo_events_only(c):  # noqa: F811
+def test_desk_rows_show_no_drawings_only_real_frames(c):  # noqa: F811
+    """Round 2: the 88px drawings beside each delivery row didn't read, so the desk drops them; a frame
+    Shopfront holds still shows there. The drawings stay on the pack, larger."""
     main.book.add(WEDNESDAY, "Hillside Mill", "10:00", "11:00", order_ref="PO-1041")
     replayed_courier(main.webhook_log, datetime(2026, 10, 7, 10, 12, tzinfo=TZ))
     page = c.get(f"/?date={WEDNESDAY}").text
     row = page.split("Hillside Mill</strong>")[1].split("</tr>")[0]
-    assert 'src="/illustrations/courier.svg"' in row and "Illustration, not a camera frame" in row
-    assert "<figcaption>Illustration</figcaption>" in row
-    # the same order, matched to a courier Ring itself announced (no frame): no picture at all
-    main.book.remove(main.book.for_day(WEDNESDAY)[0].id)
-    main.webhook_log.path.unlink()
-    main.book.add(WEDNESDAY, "Bay Mills", "10:00", "11:00")
-    ring_courier(main.webhook_log, datetime(2026, 10, 7, 10, 12, tzinfo=TZ))
-    row = c.get(f"/?date={WEDNESDAY}").text.split("Bay Mills</strong>")[1].split("</tr>")[0]
-    assert "/illustrations/" not in row
+    assert "/illustrations/" not in row and "Illustration" not in row
+    assert "/illustrations/" not in page.split('id="dlv"')[1].split("</table>")[0]
 
 
 def test_pack_strip_shows_the_door_around_the_scan_but_the_zip_holds_no_drawing(c):  # noqa: F811
     e = main.book.add(WEDNESDAY, "Dairy Co", "13:00", "16:00", order_ref="PO-9")
     q = f"date={WEDNESDAY}&order={e.id}&at=15:00&claim=business_closed"
     page = c.get(f"/dispute?{q}").text
-    strip = page.split('class="stills"')[1].split("<table>")[0]
-    assert strip.count("/illustrations/") >= 1 and strip.count("· illustration</figcaption>") >= 1
-    assert "illustrations, not camera frames" in strip and "aren't in the zip" in strip
+    strip = page.split('class="stills"')[1].split("<table")[0]
+    # round 2: one or two larger pictures around the scan, not one per event
+    assert 1 <= strip.count("<figure") <= 2 and strip.count("/illustrations/") == strip.count("<figure")
+    assert strip.count(" · illustration</figcaption>") == strip.count("<figure")
+    note = strip.split("</div>")[1]
+    assert ("not a camera frame" in note or "not camera frames" in note) and "in the zip" in note
+    times = re.findall(r"<figcaption>(\d\d:\d\d)", strip)
+    log = re.findall(r'<td class="t">(\d\d:\d\d):\d\d</td>', page)
+    gap = lambda t: abs(int(t[:2]) * 60 + int(t[3:]) - 15 * 60)  # noqa: E731
+    assert sorted(gap(t) for t in times) == sorted(gap(t) for t in log)[:len(times)]  # the nearest to 15:00
     z = zipfile.ZipFile(io.BytesIO(c.get(f"/dispute.zip?{q}").content))
     assert not [n for n in z.namelist() if n.endswith(".svg") or "illustration" in n.lower()]
     assert "not camera frames, not evidence, and not in this zip" in z.read("README.txt").decode()

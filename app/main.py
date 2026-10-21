@@ -66,6 +66,7 @@ templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, badge=pages.badge,
+    pack_stills=pages.pack_stills,
     illustration=illustrations.url_for, illustration_alt=illustrations.alt_for,
     relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
