@@ -1,0 +1,9 @@
+{# Where the door data comes from, on every page (design.md: Banner). One sentence each. #}
+{% if ring_mode == "synthetic" %}
+<div class="banner warn-bg" role="status">Synthetic demo data: these door events were made up on this computer, not read from a Ring doorbell{% if replayed %}, and some were replayed by Shopfront's demo feeder{% endif %}. <a href="/connect">Connect Ring</a> to use yours.</div>
+{% elif replayed %}
+<div class="banner warn-bg" role="status">Some door events here were replayed by Shopfront's demo feeder, not sent by Ring.</div>
+{% endif %}
+{% if ring_problem %}
+<div class="banner warn-bg" role="alert">{% if ring_problem in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif ring_problem == "NOT_CONFIGURED" %}Ring isn't set up{% else %}Ring isn't answering{% endif %} ({{ ring_problem }}), so Shopfront can't read your door history. <a href="/connect">Reconnect Ring</a>.</div>
+{% endif %}

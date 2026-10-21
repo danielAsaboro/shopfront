@@ -1,0 +1,12 @@
+{% extends "_base.html" %}
+{% block title %}{{ err.title }}{% endblock %}
+{% block main %}
+  <div class="eyebrow">Something's not right</div>
+  <h1>{{ err.title }}</h1>
+  {% if err.text %}<p style="font-size:17px;margin:12px 0 0">{{ err.text }}</p>{% endif %}
+  <p style="margin-top:20px"><a class="primary" href="{{ err.back[0] }}">{{ err.back[1] }}</a></p>
+  <details class="tech block">
+    <summary>Details</summary>
+    <p class="why" style="margin:0">HTTP {{ err.status }}{% if err.detail %} · {{ err.detail }}{% endif %}</p>
+  </details>
+{% endblock %}

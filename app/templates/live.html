@@ -1,48 +1,45 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shopfront · Live door</title>
-{% include "_style.html" %}
+{% extends "_base.html" %}
+{% block title %}Live door{% endblock %}
+{% block head %}
 <style>
   .stage { position: relative; margin-top: 16px; background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9; }
   .stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
   .stage .idle { position: absolute; inset: 0; display: grid; place-items: center; color: #9a9aa1; font-size: 14px; }
   .controls { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
-  .controls button { font: inherit; padding: 8px 14px; border-radius: 6px; border: 0; background: var(--ink); color: var(--bg); cursor: pointer; }
-  .controls button:disabled { opacity: .4; cursor: default; }
   #status { color: var(--muted); font-size: 13px; }
   #label { font-size: 20px; font-weight: 600; margin-top: 14px; min-height: 28px; }
 </style>
-</head>
-<body>
-<main>
-  <div class="eyebrow">Shopfront · {{ shop }}</div>
-  <h1>Live door</h1>
+{% endblock %}
+{% block main %}
+  <div class="eyebrow">Live door</div>
+  <h1>Watch the door now</h1>
   {% if not connected %}
-  <p class="banner warn-bg">Live view needs a Ring token. <a href="/connect">Connect Ring</a> first.</p>
+  <p style="font-size:17px;margin:12px 0 0">Live view needs your Ring doorbell. <a href="/connect">Connect Ring</a> first; with demo data there is no camera to watch.</p>
   {% else %}
-  <p class="proof" style="margin-top:8px">Opens a Ring live-view session (WHEP) on your doorbell, samples a frame every 3 seconds{% if classifier == 'bedrock' %} and asks Amazon Bedrock what it shows{% endif %}, and adds the visit to today's briefing. With the Ring Developer Playground, pick Package, Vehicle or Motion there first to choose what the test doorbell plays.</p>
+  <p class="why" style="margin-top:8px">Opens a live view of your doorbell, takes a still every 3 seconds{% if classifier == 'bedrock' %} and asks Amazon Bedrock what it shows{% endif %}, and adds the visit to today's receiving desk. With the Ring Developer Playground, pick Package, Vehicle or Motion there first to choose what the test doorbell plays.</p>
   <div class="stage"><video id="v" autoplay playsinline muted></video><div class="idle" id="idle">Not streaming</div></div>
   <div class="controls">
     <button id="start">Start live view</button>
-    <button id="stop" disabled>Stop</button>
-    <span id="status"></span>
+    <button id="stop" class="secondary" disabled>Stop</button>
+    <span id="status" role="status"></span>
   </div>
   <div id="label" aria-live="polite"></div>
   {% endif %}
 
-  <section class="block">
-    <h2>Recent live visits</h2>
+  <section class="block" aria-labelledby="recent">
+    <h2 id="recent">Recent live visits</h2>
     <table>
-      <tr><th>Started</th><th>Label</th><th>By</th><th>Why</th></tr>
-      {% for s in sessions %}<tr><td class="t">{{ s.started[11:19] }}</td><td>{{ s.label.type|replace('_', ' ') }}</td><td>{{ s.label.source }}</td><td class="why">{{ s.label.reason }}</td></tr>
-      {% else %}<tr><td colspan="4" class="why">None yet.</td></tr>{% endfor %}
+      <tr><th scope="col">Started</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
+      {% for s in sessions %}<tr><td class="t">{{ s.started|local_stamp }}</td><td>{{ s.label.type|replace('_', ' ') }}</td><td class="why">{{ s.label.source|how(s.label.reason) }}</td></tr>
+      {% else %}<tr><td colspan="3" class="why">None yet.</td></tr>{% endfor %}
     </table>
   </section>
-  <footer class="proof"><a href="/">Back to the briefing</a> · <a href="/api/live/sessions">sessions JSON</a></footer>
-</main>
+  <details class="tech block">
+    <summary>Details</summary>
+    <p class="why" style="margin:0">A Ring live-view session over WHEP (WebRTC), receive-only, up to 60 seconds. The Ring X-Request-ID of each session shows next to Start while it streams. <a href="/api/live/sessions">sessions JSON</a></p>
+  </details>
+{% endblock %}
+{% block scripts %}
 {% if connected %}
 <script>
 (() => {
@@ -63,7 +60,7 @@
         if (!pc) return;
         window.__liveState = { connection: pc.connectionState, ice: pc.iceConnectionState };
         if (pc.connectionState === 'failed') stop('WebRTC connection failed');
-        else if (session) say(`WebRTC ${pc.connectionState} · Ring X-Request-ID ${ridShown}`);
+        else if (session) say(`${pc.connectionState === 'connected' ? 'Streaming' : pc.connectionState} · Ring X-Request-ID ${ridShown}`);
       };
       await pc.setLocalDescription(await pc.createOffer());
       await new Promise((ok) => {
@@ -121,5 +118,4 @@
 })();
 </script>
 {% endif %}
-</body>
-</html>
+{% endblock %}

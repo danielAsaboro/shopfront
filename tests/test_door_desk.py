@@ -103,8 +103,11 @@ def test_setup_saves_profile_and_expected_delivery(isolated):
                                        "window_end": "08:00"}, follow_redirects=False).status_code == 303
     page = c.get("/setup").text
     assert "Flour" in page and "Corner Bakery" in page
-    bad = c.post("/setup", data={**form, "h0": "18-8"}, follow_redirects=False)
-    assert "error=" in bad.headers["location"]
+    # A refused save shows the error next to the form and keeps what the owner typed
+    bad = c.post("/setup", data={**form, "name": "Renamed Bakery", "h0": "18-8"}, follow_redirects=False)
+    assert bad.status_code == 400 and 'role="alert"' in bad.text
+    assert 'value="18-8"' in bad.text and 'value="Renamed Bakery"' in bad.text
+    assert main.profile.get().name == "Corner Bakery"
 
 
 def test_dashboard_shows_receipt_and_money_line(isolated):

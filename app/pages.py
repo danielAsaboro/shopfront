@@ -1,0 +1,153 @@
+"""Small helpers the HTML pages share: shop-local times, plain-language labels and verdicts.
+
+Kept out of the templates so they can be tested, and out of the data modules so a page's wording
+never changes what the API returns.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+# Who labelled a door event, in the owner's words (the API keeps the raw source names)
+BY = {"bedrock": "Bedrock looked at the Ring frame", "ring": "Ring's package alert",
+      "rules": "Guess from the time of day"}
+
+# One line for each outcome of reconcile.check_attempt / check_closed_scan. The full reasoning
+# (reconcile's text) is shown under it; an outcome this map doesn't know falls back to its first sentence.
+VERDICT = {
+    "open_no_courier": "You were open, and the doorbell saw no courier near the scan.",
+    "open_courier_came": "You were open, and a courier was at the door near the scan.",
+    "open_by_hours_only": "Your hours say you were open, but the door recorded nothing to back that up.",
+    "posted_closed": "Your posted hours say you were closed then, so the scan matches.",
+    "courier_at_door": "The door agrees with the carrier: a courier was there.",
+    "door_activity_unverified": "Something was at the door then, but nothing confirmed it was a courier.",
+    "someone_not_a_courier": "Someone was at the door then, but not a courier.",
+    "nothing_recorded": "The doorbell recorded nothing near that time.",
+    "no_door_data": "Shopfront has no door events for that day.",
+}
+
+
+def _parse(value) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def local_time(value, tz: ZoneInfo, day: str | date | None = None) -> str:
+    """'09:12' in the shop's time zone, with the date in front when it isn't `day`.
+    Naive times are taken as shop-local already."""
+    at = _parse(value)
+    if at is None:
+        return str(value or "")
+    at = at.replace(tzinfo=tz) if at.tzinfo is None else at.astimezone(tz)
+    same_day = day is None or at.date().isoformat() == str(day)
+    return at.strftime("%H:%M") if same_day else at.strftime("%Y-%m-%d %H:%M")
+
+
+def local_stamp(value, tz: ZoneInfo) -> str:
+    """'2026-10-21 at 07:30' in the shop's time zone, for a 'made at' line."""
+    at = _parse(value)
+    if at is None:
+        return str(value or "")
+    at = at.replace(tzinfo=tz) if at.tzinfo is None else at.astimezone(tz)
+    return f"{at:%Y-%m-%d} at {at:%H:%M}"
+
+
+def how(source: str | None, reason: str | None) -> str:
+    """'Guess from the time of day: doorbell press during open hours'. Ring's own reasons already say Ring."""
+    reason = reason or ""
+    if source == "ring" and reason.lower().startswith("ring"):
+        return reason
+    return f"{by(source)}: {reason}" if reason else by(source)
+
+
+def long_date(value) -> str:
+    """'Wednesday 14 October 2026' from '2026-10-14'."""
+    try:
+        d = date.fromisoformat(str(value))
+    except ValueError:
+        return str(value)
+    return f"{d:%A} {d.day} {d:%B %Y}"
+
+
+def by(source: str | None) -> str:
+    return BY.get(source or "", source or "")
+
+
+def verdict(finding: dict | None) -> str:
+    if not finding:
+        return ""
+    if finding.get("outcome") in VERDICT:
+        return VERDICT[finding["outcome"]]
+    text = str(finding.get("text", ""))
+    return text.split(". ")[0].rstrip(".") + "." if text else ""
+
+
+def labelled_by_text(funnel: dict, classifier: str) -> str:
+    """What actually labelled the day's door events, from the funnel counts (never from the
+    classifier's name alone: 'bedrock' mode with no frames means Bedrock labelled nothing)."""
+    if not funnel or not funnel.get("events"):
+        return "Bedrock vision, rules when there is no frame" if classifier == "bedrock" else "time-of-day rules"
+    parts = []
+    if funnel.get("labelled_by_ring"):
+        parts.append(f"{funnel['labelled_by_ring']} by Ring's package alert")
+    if funnel.get("reached_bedrock"):
+        parts.append(f"{funnel['reached_bedrock']} by Bedrock from a Ring frame")
+    if funnel.get("labelled_by_rules"):
+        parts.append(f"{funnel['labelled_by_rules']} by time-of-day rules")
+    if funnel.get("skipped_stage0"):
+        parts.append(f"{funnel['skipped_stage0']} skipped (Ring said not a person)")
+    return ", ".join(parts) or "none"
+
+
+def desk_rows(r: dict) -> list[dict]:
+    """Expected deliveries and couriers nobody listed, in one list ordered by the time on the row:
+    the courier's time when seen, else the start of the window, else at the end."""
+    rows = [{"kind": "expected", **x} for x in r.get("expected", [])]
+    rows += [{"kind": "unexpected", "visit": u} for u in r.get("unexpected", [])]
+
+    def key(x: dict) -> str:
+        if x.get("visit"):
+            return x["visit"]["time"]
+        return x.get("window_start") or "99:99"
+    return sorted(rows, key=key)
+
+
+def plain_error(status: int, detail: str, path: str) -> dict:
+    """An error page in the owner's words: a title, one sentence, and a way back.
+    The raw status and detail stay available under Details."""
+    d = (detail or "").lower()
+    back = ("/", "Back to the receiving desk")
+    if status == 404 and ("order" in d or "delivery" in d):
+        title, text, back = "That order isn't here", "It may have been removed on Set up, or the link is old.", \
+            ("/setup#orders", "See your orders")
+    elif status == 404:
+        title, text = "Page not found", "There's nothing at this address."
+    elif "pack needs" in d or (path == "/dispute" and status == 400 and "must be" not in d):
+        title = "A dispute pack needs something to dispute"
+        text = ("Start from a carrier's scan (check it on the receiving desk) or from an order that never came, "
+                "or that staff marked short or damaged.")
+        back = ("/#atth", "Check a carrier's scan")
+    elif "pick a date" in d or "date must be" in d or "use yyyy-mm-dd" in d:
+        title, text = "That date doesn't look right", "Pick a day with the date picker, between 2000 and a year from today."
+    elif "hh:mm" in d:
+        title, text = "That time doesn't look right", "Write the time like 12:40, on the 24-hour clock."
+    elif "future" in d or "hasn't happened" in d:
+        title, text = "That time hasn't happened yet", "Shopfront can only check a scan against door events it has."
+    elif "claim must be" in d:
+        title, text = "Shopfront can't check that scan", "It checks \"Delivery attempted\" and \"Business closed\" scans."
+    elif status == 403:
+        title, text = "Not available here", (detail[:1].upper() + detail[1:] + ".") if detail else \
+            "This page only opens for the shop's owner."
+    elif status == 422:
+        title, text = "Something in that request was missing", "Go back and fill in the form again."
+    elif status >= 500:
+        title, text = "Something went wrong on Shopfront's side", "Nothing was changed. Try again, and if it keeps " \
+                                                                  "happening, check the terminal Shopfront runs in."
+    else:
+        title, text = "That didn't work", (detail[:1].upper() + detail[1:].rstrip(".") + ".") if detail else ""
+    return {"status": status, "title": title, "text": text, "detail": detail, "back": back}

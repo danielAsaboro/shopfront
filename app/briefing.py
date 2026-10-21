@@ -56,7 +56,8 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             visits.append(ClassifiedVisit(e, VisitType(hit["type"]), hit["confidence"], hit["reason"],
                                           "bedrock", hit.get("request_id")))
             continue
-        no_frame = "synthetic event has no frame"
+        no_frame = {"ring-webhook-replay": "replayed Ring event, no frame",
+                    "ring-webhook": "Ring webhook event, no frame"}.get(e.source, "synthetic event has no frame")
         if isinstance(ring, RingApiClient):
             try:
                 e.snapshot = ring.snapshot(e)
