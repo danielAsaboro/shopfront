@@ -3,9 +3,10 @@
 The Function URL handler (app/store/lambda_webhook.py) answers Ring as soon as a checked row is on the SQS
 queue. This function takes the rows off in batches and, for each one:
 
-- keeps it only if it is from the shop's own doorbell and Ring account (`app.ring.webhooks.ours`, the same
-  filter as the app's local log); anything else is IGNORED, logged and deleted from the queue;
-- stores it with `EventTable.put`: the event and a `meta.request_id` marker in one transaction, each with
+- names the shop it belongs to from the shop map in config (app/store/shops.py): by default the stack's one
+  ShopId, RingDeviceId and RingAccountId (the same filter as the app's local log), or, for several shops, the
+  map in the SSM parameter SHOP_MAP_PARAMETER. A row no shop claims is IGNORED, logged and deleted;
+- stores it in that shop's partition (`pk` = `<shop_id>#<UTC day>`) with `EventTable.put`: the event and a `meta.request_id` marker in one transaction, each with
   `attribute_not_exists(pk)`, so Ring's retries and SQS's at-least-once redelivery store it once (DUPLICATE).
 
 A record that fails (unreadable body, DynamoDB error) is reported back in `batchItemFailures` (the event
@@ -15,8 +16,10 @@ it to the dead-letter queue, where the DlqDepth alarm sees it. The rest of the b
 Replays stay replays: the row carries `"replayed": true` from the Function URL handler, and a `replayed=1`
 message attribute marks it too, in case a row ever arrives without the field.
 
-Configuration (environment, set by the template): TABLE_NAME, SHOP_ID, EVENT_DAYS, RING_DEVICE_ID,
-RING_ACCOUNT_ID. Logs one JSON line per record (status, request_id, type, replayed), never IDs of people.
+Configuration (environment, set by the template): TABLE_NAME, EVENT_DAYS, SHOP_ID, RING_DEVICE_ID,
+RING_ACCOUNT_ID, and SHOP_MAP_PARAMETER (empty: the single shop). A shop map that can't be read or is
+ambiguous fails the whole batch, so nothing is misfiled; SQS retries it and then dead-letters it.
+Logs one JSON line per record (status, shop, request_id, type, replayed), never IDs of people.
 
 Like the Function URL handler, it imports only the standard library and app modules that do; boto3 comes
 from the Lambda runtime, imported inside the entry point.
@@ -27,11 +30,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
-from app.ring.webhooks import ours
 from app.store.dynamodb import ACCEPTED, DEFAULT_KEEP_DAYS, DUPLICATE, IGNORED, EventTable
+from app.store.shops import ShopMap
+
+MAP_TTL = 300  # seconds a shop map read from SSM is reused; a new shop is picked up within five minutes
 
 log = logging.getLogger("shopfront.webhook.consumer")
 log.setLevel(logging.INFO)
@@ -72,18 +78,19 @@ def consume(event: dict, *, shop_for: Callable[[dict], str | None],
                                   "error": type(exc).__name__}))
             failures.append({"itemIdentifier": message_id})
             continue
-        log.info(json.dumps({"status": outcome, "request_id": row["request_id"], "type": row["type"],
+        log.info(json.dumps({"status": outcome, "shop": shop, "request_id": row["request_id"], "type": row["type"],
                              "replayed": bool(row.get("replayed"))}))
     return {"batchItemFailures": failures}
 
 
 def single_shop(shop_id: str, device_id: str = "", account_id: str = "") -> Callable[[dict], str | None]:
     """The one-shop default: every row from the shop's doorbell and account is that shop's."""
-    return lambda row: shop_id if ours(row, device_id, account_id) else None
+    return ShopMap.single(shop_id, device_id, account_id).shop_for
 
 
 # ---- the Lambda entry point ---------------------------------------------------------------------------
 _clients: dict[str, Any] = {}
+_map: dict[str, Any] = {"value": None, "at": 0.0}
 
 
 def _client(name: str) -> Any:
@@ -94,10 +101,22 @@ def _client(name: str) -> Any:
     return _clients[name]
 
 
+def shop_map(ssm: Any, env: Any, now: float | None = None) -> ShopMap:
+    """The shop map: from the SSM parameter SHOP_MAP_PARAMETER (cached MAP_TTL seconds), or the single shop
+    in SHOP_ID / RING_DEVICE_ID / RING_ACCOUNT_ID when that is empty."""
+    name = env.get("SHOP_MAP_PARAMETER", "")
+    if not name:
+        return ShopMap.single(env.get("SHOP_ID", "shop"), env.get("RING_DEVICE_ID", ""), env.get("RING_ACCOUNT_ID", ""))
+    now = time.time() if now is None else now
+    if _map["value"] is None or now - _map["at"] >= MAP_TTL:
+        text = ssm().get_parameter(Name=name, WithDecryption=True)["Parameter"]["Value"]
+        _map.update(value=ShopMap.parse(text), at=now)
+    return _map["value"]
+
+
 def handler(event: dict, context: Any) -> dict:
     env = os.environ
     keep = float(env.get("EVENT_DAYS") or DEFAULT_KEEP_DAYS)
-    return consume(event,
-                   shop_for=single_shop(env.get("SHOP_ID", "shop"), env.get("RING_DEVICE_ID", ""),
-                                        env.get("RING_ACCOUNT_ID", "")),
+    shops = shop_map(lambda: _client("ssm"), env)  # unreadable or ambiguous: raise, the whole batch retries
+    return consume(event, shop_for=shops.shop_for,
                    table_for=lambda shop: EventTable(_client("dynamodb"), env["TABLE_NAME"], shop, keep))

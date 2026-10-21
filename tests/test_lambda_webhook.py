@@ -251,13 +251,14 @@ def deployed(ddb, sqs, monkeypatch):
     arn = sm.create_secret(Name="shopfront-hmac", SecretString='{"RING_HMAC_KEY": ""}')["ARN"]
     ingest = {"HMAC_SECRET_ARN": arn, "QUEUE_URL": sqs[1]}
     consume = {"TABLE_NAME": TABLE, "SHOP_ID": "corner-bakery", "EVENT_DAYS": "90",
-               "RING_DEVICE_ID": SHOP_DEVICE, "RING_ACCOUNT_ID": SHOP_ACCOUNT}
+               "RING_DEVICE_ID": SHOP_DEVICE, "RING_ACCOUNT_ID": SHOP_ACCOUNT, "SHOP_MAP_PARAMETER": ""}
     assert set(env_of("RingWebhookFunction")) == set(ingest)  # each handler reads exactly what the template sets
     assert set(env_of("WebhookConsumerFunction")) == set(consume)
     for k, v in (ingest | consume).items():
         monkeypatch.setenv(k, v)
     monkeypatch.setattr(lw, "_clients", {})
     monkeypatch.setattr(lc, "_clients", {})
+    monkeypatch.setattr(lc, "_map", {"value": None, "at": 0.0})
     monkeypatch.setattr(lw, "_key", {"value": "", "at": 0.0})
     return sm, arn
 

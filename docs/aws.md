@@ -44,7 +44,7 @@ S3 bucket for door frames (private, encrypted, expires)      CloudWatch log grou
 | Lambda function (Python 3.12, arm64) with a Function URL | Ring needs HTTPS and an answer in under 5 s; a Function URL is HTTPS with nothing in front, and the function costs nothing while the door is quiet. API Gateway would add a service and a bill for one POST route that authenticates by HMAC anyway. | 256 MB, 4 s timeout. `AuthType: NONE`, because Ring can't sign AWS requests; the HMAC over the body is the authentication, and anything unsigned gets 401 before it reaches the queue. It does only the size cap, the HMAC and one `SendMessage`, so a slow or throttled table never delays Ring's answer. |
 | SQS queue and dead-letter queue | Decouples Ring's 5-second answer from storage. A write that fails is retried by SQS instead of by Ring, and an event that can't be stored lands somewhere visible instead of being lost. A standard queue, not FIFO: FIFO's deduplication only covers 5 minutes, and the table's conditional write already dedupes on `meta.request_id` for as long as the event is kept. | SSE with SQS-managed keys on both, TLS-only queue policy. Visibility timeout 180 s (6 × the consumer's 30 s timeout). `maxReceiveCount` 5, then the dead-letter queue, which keeps a message 14 days. |
 | Lambda consumer (Python 3.12, arm64) | Stores what the queue holds. | 256 MB, 30 s timeout, batches of up to 10, `ReportBatchItemFailures` so only the failed records are retried, at most 2 concurrent pollers (one door's events). |
-| DynamoDB table | Ring retries a delivery with the same `meta.request_id` (API reference, Notifications > Webhook Response Handling), and SQS can deliver a message more than once. A conditional write makes either a no-op, durably, with no server to run. TTL bounds how long door events are kept. | On-demand. `pk` = `<ShopId>#<UTC day>`, `sk` = `<timestamp ms>#<request_id>`, `expires_at` TTL (EventDays, default 90). Encrypted at rest with a DynamoDB-owned key. |
+| DynamoDB table | Ring retries a delivery with the same `meta.request_id` (API reference, Notifications > Webhook Response Handling), and SQS can deliver a message more than once. A conditional write makes either a no-op, durably, with no server to run. TTL bounds how long door events are kept. | On-demand. `pk` = `<shop_id>#<UTC day>`, `sk` = `<timestamp ms>#<request_id>`, `expires_at` TTL (EventDays, default 90). Encrypted at rest with a DynamoDB-owned key. `shop_id` is ShopId, or the shop the shop map names (below). |
 | Secrets Manager secret | The HMAC key never appears in the template, its parameters, the function's environment, or logs, and can be changed without a redeploy. | Created as an empty slot `{"RING_HMAC_KEY": ""}`; you set the value once after deploy. Until then the function answers 503, which Ring retries. |
 | S3 bucket for frames | Door frames are pictures of people. If they move off the laptop, they need a private place that deletes them on schedule. | SSE-S3, all public access blocked, bucket-owner-enforced, TLS-only policy, lifecycle expiry after FrameDays (default 30, matching `SHOPFRONT_FRAME_DAYS`). **The app doesn't write to it yet**: frames stay in `.data/frames/` with the same 30-day limit. |
 | CloudWatch log groups | One JSON line per request from the Function URL handler (status, request_id, event type, replayed) and one per record from the consumer, never the body. | Retention LogRetentionDays (default 30). |
@@ -71,7 +71,7 @@ The consumer, [app/store/lambda_consumer.py](../app/store/lambda_consumer.py), l
 
 | Record | Outcome |
 |---|---|
-| From a device or Ring account other than RingDeviceId / RingAccountId | `IGNORED`, deleted from the queue, not stored (Ring already had its 200, so it neither retries nor disables the endpoint) |
+| From a device or Ring account other than RingDeviceId / RingAccountId (or that no shop in the shop map claims) | `IGNORED`, deleted from the queue, not stored (Ring already had its 200, so it neither retries nor disables the endpoint) |
 | A `meta.request_id` already stored (Ring's retry, or SQS delivering twice) | `DUPLICATE`, deleted |
 | Otherwise | `ACCEPTED`, stored |
 | Body unreadable, or DynamoDB fails | `FAILED`, reported in `batchItemFailures`: only this record is retried, and after 5 receives SQS moves it to the dead-letter queue |
@@ -113,6 +113,51 @@ All three functions run with X-Ray active tracing. The Function URL handler pass
 that message joins the same trace: Ring's request, the HMAC check, `SendMessage`, the queue wait and the
 DynamoDB transaction show as one trace. The X-Ray write permission is a separate policy on the three roles,
 because `xray:PutTraceSegments` takes no resource-level permissions; it is the only `*` in the stack.
+
+### Several shops
+
+The template serves one shop by default, and nothing about that changes. Every event is stored under
+its shop: `pk` = `<shop_id>#<UTC day>`. The consumer takes `shop_id` from a map held in config, never from
+the request: by default the stack's `ShopId`, `RingDeviceId` and `RingAccountId`; for several shops on
+one stack, an SSM parameter (String or SecureString) that names each shop's Ring Account ID
+(`meta.account_id`) and doorbells (`data.attributes.source`, API reference, Notifications):
+
+```sh
+cat > shops.json <<'JSON'
+{"shops": [{"shop_id": "corner-bakery", "account_id": "<Ring Account ID>", "device_ids": ["<doorbell ID>"]},
+           {"shop_id": "rose-florist",  "account_id": "<Ring Account ID>"}]}
+JSON
+aws ssm put-parameter --name /shopfront/shops --type SecureString --value file://shops.json   # --overwrite later
+cd infra && sam deploy --parameter-overrides ShopMapParameter=/shopfront/shops
+```
+
+The consumer rereads the map within five minutes and may read only that one parameter
+(`ssm:GetParameter` on its ARN). A map that could put one shop's event in another shop's partition (two
+shops on one Ring account without separate doorbells, or a shop with no account) is refused: the batch
+fails, is retried, and reaches the dead-letter queue and its alarm instead of being misfiled. An event no
+shop claims is `IGNORED`. [tests/test_shops.py](../tests/test_shops.py) runs three shops through the
+Function URL, SQS and the consumer with the map in moto's SSM, and checks each shop reads only its own events.
+
+**The rest of the multi-shop path (not built: Shopfront is one shop per install).** Today each shop runs
+the app on its own computer, signed in to AWS as itself. A hosted, multi-shop Shopfront would sign owners in
+with a Cognito user pool (email and password, MFA) and give them AWS credentials through a Cognito
+identity pool whose "attributes for access control" turn the user's `custom:shop_id` into the session tag
+`shop_id`. Each shop's own secrets would be one Secrets Manager secret per shop
+(`shopfront/<shop_id>/ring`, holding that owner's Ring OAuth tokens), tagged `shop_id`, so a rotation or a
+leak touches one shop. The webhook HMAC key stays one secret per stack, because Ring issues it to the
+partner app, not to each account. The consumer keeps writing with its own role, and adding a shop is one
+entry in the shop map.
+
+Tenant isolation would be IAM's job, not the app's. The owners' role allows `dynamodb:Query`,
+`GetItem` and `PutItem` on the table only with the condition `ForAllValues:StringLike` on
+`dynamodb:LeadingKeys` = `${aws:PrincipalTag/shop_id}#*`. Every partition key starts with the shop's
+own ID (no `#` is allowed inside one), so a signed-in owner can't read or write another shop's day, even
+through a bug in the app. Their secret is readable only where `secretsmanager:ResourceTag/shop_id` equals
+`${aws:PrincipalTag/shop_id}`. Frames would sit under `frames/<shop_id>/`, with the S3 resource
+`frames/${aws:PrincipalTag/shop_id}/*`. One thing in the app has to change first. `LeadingKeys` can't
+scope a `Scan`, and the DynamoDB log reads the whole table with one today (`recent()` and the "any
+replays?" check), so those reads become per-day `Query` calls over the last `EventDays` before the app
+could run under that role.
 
 ## 2. The public demo
 
@@ -189,6 +234,7 @@ sam build && sam deploy --guided
 | Parameter | Default | What it is |
 |---|---|---|
 | ShopId | `shop` | Partition prefix. Use the same value as `SHOPFRONT_SHOP_ID` in the app. |
+| ShopMapParameter | empty | Several shops on one stack: the SSM parameter holding the shop map (section 1, "Several shops"). Empty: the one shop above. |
 | RingDeviceId | empty | The doorbell's Ring device ID (`data.attributes.source`). Empty accepts every device on the account. |
 | RingAccountId | empty | The owner's Ring Account ID (`meta.account_id`, `GET /v1/users/me`). Empty accepts any account. |
 | EventDays | 90 | Days a webhook event is kept. |

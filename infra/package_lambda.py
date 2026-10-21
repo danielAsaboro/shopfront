@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ["app/__init__.py", "app/files.py", "app/models.py", "app/ring/webhooks.py",
          "app/store/__init__.py", "app/store/dynamodb.py", "app/store/lambda_webhook.py",
-         "app/store/lambda_consumer.py"]
+         "app/store/lambda_consumer.py", "app/store/shops.py"]
 EMPTY = ["app/ring/__init__.py"]
 
 

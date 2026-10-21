@@ -11,7 +11,9 @@ Parameters:
     Type: String
     Default: shop
     AllowedPattern: "^[a-z0-9-]{1,40}$"
-    Description: Partition prefix for this shop's events. Set SHOPFRONT_SHOP_ID to the same value in the app.
+    Description: >-
+      The shop's ID, the partition prefix of its events (pk = ShopId#day). Set SHOPFRONT_SHOP_ID to the same
+      value in the app. Ignored when ShopMapParameter names a shop map.
   RingDeviceId:
     Type: String
     Default: ""
@@ -20,6 +22,15 @@ Parameters:
     Type: String
     Default: ""
     Description: The owner's Ring Account ID (webhook meta.account_id). Empty accepts any account.
+  ShopMapParameter:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^/[a-zA-Z0-9_./-]{1,1000}$"
+    Description: >-
+      Optional, for several shops on one stack. The name (starting with /) of an SSM parameter, String or
+      SecureString, holding {"shops": [{"shop_id": ..., "account_id": ..., "device_ids": [...]}]}: which Ring
+      account and doorbells are which shop (app/store/shops.py). Empty: the single shop in ShopId,
+      RingDeviceId and RingAccountId.
   EventDays:
     Type: Number
     Default: 90
@@ -73,6 +84,7 @@ Globals:
 Conditions:
   CapDemoConcurrency: !Not [!Equals [!Ref DemoConcurrency, -1]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  HasShopMap: !Not [!Equals [!Ref ShopMapParameter, ""]]
 
 Resources:
   # The key Ring signs webhooks with (partner onboarding). The template only creates the empty slot; the
@@ -295,6 +307,23 @@ Resources:
                 Action: dynamodb:PutItem
                 Resource: !GetAtt WebhookTable.Arn
 
+  # Several shops: the consumer may read the one SSM parameter that maps Ring accounts and doorbells to shops.
+  # A SecureString under the AWS managed key aws/ssm needs no KMS grant here: that key's policy lets the
+  # account's principals decrypt through SSM. Under a customer managed key, add kms:Decrypt on that key.
+  ShopMapReadPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasShopMap
+    Properties:
+      PolicyName: read-shop-map
+      Roles: [!Ref WebhookConsumerRole]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadShopMap
+            Effect: Allow
+            Action: ssm:GetParameter
+            Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ShopMapParameter}"
+
   WebhookConsumerFunction:
     Type: AWS::Serverless::Function
     DependsOn: TracingPolicy # Lambda refuses active tracing until the role may write traces
@@ -323,6 +352,7 @@ Resources:
           EVENT_DAYS: !Ref EventDays
           RING_DEVICE_ID: !Ref RingDeviceId
           RING_ACCOUNT_ID: !Ref RingAccountId
+          SHOP_MAP_PARAMETER: !Ref ShopMapParameter
       Events:
         Queue:
           Type: SQS
