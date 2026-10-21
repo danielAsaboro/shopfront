@@ -88,7 +88,24 @@
   .verdict .next .primary { margin: 0; }
   .verdict .thumb img { width: 160px; }
   .verdict form.keep { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
-  .try-demo { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 16px 0 0; }
+  /* The desk's top: title and date picker side by side; the verdict or the three steps under both.
+     On a phone the date picker drops below them, so the answer is in the first screen. */
+  .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; align-items: end; }
+  .desk-top > .head-text { grid-column: 1; grid-row: 1; }
+  .desk-top > .day-pick { grid-column: 2; grid-row: 1; }
+  .desk-top > section { grid-column: 1 / -1; }
+  .steps3 { margin: 20px 0 4px; }
+  .steps3 ol { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+               border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); counter-reset: step; }
+  .steps3 li { padding: 12px 14px 12px 0; counter-increment: step; position: relative; }
+  .steps3 li + li { padding-left: 14px; border-left: 1px solid var(--line); }
+  .steps3 li::before { content: counter(step); display: block; font-size: 12px; color: var(--muted);
+                       letter-spacing: .05em; margin-bottom: 2px; }
+  .steps3 li strong { display: block; font-size: 16px; line-height: 1.3; font-weight: 600; }
+  .steps3 li .why { display: block; margin-top: 4px; }
+  .try-check { margin: 14px 0 0; }
+  .try-check .primary { margin: 0; }
+  .try-demo { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 14px 0 0; }
   .try-demo button { margin: 0; }
   .record ul { margin: 6px 0 0; padding-left: 18px; }
   .record li { margin: 4px 0; }
@@ -183,6 +200,11 @@
   .facts3 .no .mk { color: var(--muted); }
   .verdict-src { margin: 8px 0 0; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   @media (max-width: 560px) {
+    .desk-top { display: flex; flex-direction: column; align-items: stretch; }
+    .desk-top > .day-pick { order: 3; margin-top: 16px; align-self: flex-start; }
+    .value-quiet { display: none; }
+    .steps3 li { padding: 10px 8px 10px 0; } .steps3 li + li { padding-left: 8px; }
+    .steps3 li strong { font-size: 14px; } .steps3 li .why { display: none; }
     .banner { padding: 6px 12px; } .banner .b-long { display: none; } .banner .b-short { display: inline; }
     .strip-row { flex-direction: column; gap: 8px; }
     .axis span:nth-child(odd) { visibility:hidden; }

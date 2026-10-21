@@ -193,3 +193,26 @@ def test_pack_page_has_the_same_picture_and_prints_its_words(client):
     assert ".strip-words { display: block;" in css.split("@media print")[1]  # the words print under the picture
     p = client.get(f"/api/dispute?date={DAY}&at=14:30&claim=business_closed").json()
     assert p["finding"]["text"] in dispute.as_text(p)  # the zip keeps the whole reasoning
+
+
+# ---- the landing fold (round 4) -----------------------------------------------------------------------------
+
+def test_landing_leads_with_three_steps_and_the_check_then_the_deliveries(client):
+    main.book.add(DAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042")
+    page = client.get(f"/?date={DAY}").text
+    steps = page.split('<section class="steps3"')[1].split("</section>")[0]
+    assert [re.sub(r"<[^>]+>", "", x) for x in re.findall(r"<strong>(.*?)</strong>", steps)] == [
+        "Carrier says closed", "Shopfront checks hours and the door", "You send the pack"]
+    assert '<a class="primary" href="#atth">Check a carrier\'s scan</a>' in steps  # not a demo install
+    assert page.index('class="steps3"') < page.index('<section class="lead">')  # the summary comes after
+
+
+def test_on_a_phone_the_verdict_comes_before_the_date_picker(client):
+    page = client.get(f"/?date={DAY}&attempt=14:30&claim=business_closed").text
+    top = page.split('<div class="desk-top">')[1]
+    assert top.index('class="no-print day-pick"') < top.index('<section class="verdict')  # side by side on desktop
+    css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
+    phone = css.split("@media (max-width: 560px) {")[1].split("@media print")[0]
+    assert ".desk-top > .day-pick { order: 3;" in phone and ".value-quiet { display: none; }" in phone
+    assert ".banner .b-long { display: none; }" in phone  # the banner is one line
+    assert '<p class="value value-quiet">' in page and 'class="steps3"' not in page
