@@ -1,9 +1,13 @@
 """Expected deliveries, matched against the couriers the doorbell actually saw.
 
 The owner lists what should arrive (supplier, day, optional window), by hand or by importing the
-shop's purchase orders and invoices (`app/orders.py`). Each delivery-labelled visit that day is
-matched to the closest expected one. A match keeps the time, who labelled it and why,
-and the Ring frame when there is one: a timestamped receipt the owner can show a supplier.
+shop's purchase orders and invoices (`app/orders.py`). Each courier that something looked at (Ring's
+package_delivery alert, or Bedrock on the Ring frame) is matched to the closest expected delivery. A
+match keeps the time, who labelled it and why, and the Ring frame when there is one: a timestamped
+receipt the owner can show a supplier.
+
+A doorbell press the time-of-day rules call "delivery" is a guess: it is listed as a *possible*
+courier, never a receipt, never counted as seen and never priced in the money line.
 
 Ring has no "door answered" signal, so a receipt says a courier was at the door, never that the
 parcel was handed over.
@@ -15,10 +19,10 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
-from app.models import ClassifiedVisit, VisitType
+from app.models import SEEN_SOURCES, ClassifiedVisit, VisitType
 
 
 @dataclass
@@ -55,7 +59,7 @@ def make_expected(day: date, supplier: str, window_start: str = "", window_end: 
     ws, we = (window_start or "").strip() or None, (window_end or "").strip() or None
     if bool(ws) != bool(we):
         raise ValueError("give both ends of the window, or neither")
-    if ws:
+    if ws and we:
         try:
             lo, hi = time.fromisoformat(ws), time.fromisoformat(we)
         except ValueError:
@@ -162,30 +166,57 @@ class FrameStore:
 
 def _is_open(t: datetime, open_hours: tuple[time, time] | None) -> bool:
     tt = t.timetz().replace(tzinfo=None)
-    return bool(open_hours) and open_hours[0] <= tt < open_hours[1]
+    return open_hours is not None and open_hours[0] <= tt < open_hours[1]
+
+
+def _utc(t: datetime) -> datetime:
+    return t.astimezone(UTC)
 
 
 def _distance(v: ClassifiedVisit, e: Expected) -> timedelta:
+    """Real time outside the window (zero inside it), measured between instants so a window on a
+    daylight-saving day is the right length."""
     w = e.window()
     if not w:
         return timedelta(0)
     t = v.event.timestamp
-    lo, hi = (datetime.combine(t.date(), x, tzinfo=t.tzinfo) for x in w)
-    return max(lo - t, t - hi, timedelta(0))
+    lo, hi = (_utc(datetime.combine(t.date(), x, tzinfo=t.tzinfo)) for x in w)
+    return max(lo - _utc(t), _utc(t) - hi, timedelta(0))
 
 
-def _visit_row(v: ClassifiedVisit, frames: FrameStore, open_hours) -> dict:
-    return {"time": v.event.timestamp.strftime("%H:%M"), "event_id": v.event.id,
-            "event_source": v.event.source, "labelled_by": v.source, "confidence": v.confidence,
+def is_seen_courier(v: ClassifiedVisit) -> bool:
+    """A courier something looked at: Ring's package_delivery alert or Bedrock on the frame."""
+    return v.visit_type == VisitType.DELIVERY and v.source in SEEN_SOURCES
+
+
+def staff_in(t: datetime, visits: list[ClassifiedVisit], open_hours) -> bool:
+    """Staff were at the door by `t` and still around: a staff visit at or before it, and either another at
+    or after it, or `t` before opening (they came in early to open up)."""
+    staff = [_utc(v.event.timestamp) for v in visits if v.visit_type == VisitType.STAFF]
+    u = _utc(t)
+    if not any(s <= u for s in staff):
+        return False
+    before_opening = open_hours is not None and t.timetz().replace(tzinfo=None) < open_hours[0]
+    return before_opening or any(s >= u for s in staff)
+
+
+def _visit_row(v: ClassifiedVisit, frames: FrameStore, open_hours, visits: list[ClassifiedVisit] | None = None) -> dict:
+    return {"time": v.event.timestamp.strftime("%H:%M"), "at": v.event.timestamp.isoformat(timespec="seconds"),
+            "event_id": v.event.id, "ring_event": v.event.kind,
+            "event_source": v.event.source, "labelled_by": v.source, "confirmed": v.source in SEEN_SOURCES,
+            "confidence": v.confidence,
             "reason": v.reason, "bedrock_request_id": v.request_id, "frame_url": frames.url(v.event.id),
-            "shop_open": _is_open(v.event.timestamp, open_hours)}
+            "shop_open": _is_open(v.event.timestamp, open_hours),
+            "staff_in": staff_in(v.event.timestamp, visits or [], open_hours)}
 
 
 def _assign(cost: list[list[int]]) -> list[int]:
     """Minimum-cost assignment (Hungarian method) for n rows into m >= n columns; returns each row's column."""
     n, m = len(cost), len(cost[0]) if cost else 0
     INF = float("inf")
-    u, v, p, way = [0] * (n + 1), [0] * (m + 1), [0] * (m + 1), [0] * (m + 1)
+    u: list[float] = [0] * (n + 1)
+    v: list[float] = [0] * (m + 1)
+    p, way = [0] * (m + 1), [0] * (m + 1)
     for i in range(1, n + 1):
         p[0], j0 = i, 0
         minv, used = [INF] * (m + 1), [False] * (m + 1)
@@ -238,43 +269,72 @@ def _costs(expected: list[Expected], couriers: list[ClassifiedVisit]) -> list[li
     return [[cost(i, v, e) for v in couriers] + [not_seen] * n for i, e in enumerate(expected)]
 
 
+def _due_by(e: Expected, tz) -> datetime:
+    """When an expected delivery stops being "on its way": its window's end, or the end of its day."""
+    d = date.fromisoformat(e.day)
+    if e.window_end:
+        return datetime.combine(d, time.fromisoformat(e.window_end), tzinfo=tz)
+    return datetime.combine(d + timedelta(days=1), time(0), tzinfo=tz)
+
+
 def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours,
-             frames: FrameStore) -> dict:
-    """Match expected deliveries to delivery-labelled visits, one visit per delivery at most.
+             frames: FrameStore, now: datetime | None = None) -> dict:
+    """Match expected deliveries to couriers Ring or Bedrock saw, one visit per delivery at most.
 
     The assignment is chosen as a whole, not supplier by supplier: first as many suppliers matched as
     there are couriers, then as many of those inside their window as possible, then the closest
-    times. List the couriers nobody expected separately."""
-    couriers = [v for v in visits if v.visit_type == VisitType.DELIVERY]
+    times. Couriers nobody expected are listed separately. Rule-guessed couriers are only ever
+    "possible". Pass `now` (aware) so an order whose window hasn't ended yet is "expected", not
+    "not seen"."""
+    couriers = [v for v in visits if is_seen_courier(v)]
+    guessed = [v for v in visits if v.visit_type == VisitType.DELIVERY and not is_seen_courier(v)]
     pick = _assign(_costs(expected, couriers)) if expected else []
     used: set[str] = set()
     rows = []
     for e, j in zip(expected, pick):
         if j >= len(couriers):
-            rows.append({**asdict(e), "status": "not_seen", "also_fits": [], "visit": None})
+            possible = [_visit_row(v, frames, open_hours, visits) for v in guessed if _distance(v, e) == timedelta(0)]
+            if possible:
+                status = "possible"
+            elif now is not None and _utc(now) < _utc(_due_by(e, now.tzinfo)):
+                status = "expected"
+            else:
+                status = "not_seen"
+            rows.append({**asdict(e), "status": status, "also_fits": [], "visit": None, "possible": possible})
             continue
         best = couriers[j]
         used.add(best.event.id)
         in_window = _distance(best, e) == timedelta(0)
-        status = "seen" if _is_open(best.event.timestamp, open_hours) else "seen_while_closed"
+        t = best.event.timestamp
+        status = "seen" if _is_open(t, open_hours) or staff_in(t, visits, open_hours) else "seen_while_closed"
         if not in_window:
             status += "_outside_window"
         # Ring frames don't say whose courier it was; name the other suppliers this visit also fits
         also = [o.supplier for o in expected if o is not e and _distance(best, o) == timedelta(0)]
         rows.append({**asdict(e), "status": status, "also_fits": also,
-                     "visit": _visit_row(best, frames, open_hours)})
-    unexpected = [_visit_row(v, frames, open_hours) for v in couriers if v.event.id not in used]
+                     "visit": _visit_row(best, frames, open_hours, visits), "possible": []})
+    unexpected = [_visit_row(v, frames, open_hours, visits) for v in couriers if v.event.id not in used]
+    closed = sum(1 for v in couriers if not _is_open(v.event.timestamp, open_hours)
+                 and not staff_in(v.event.timestamp, visits, open_hours))
     return {"expected": rows, "unexpected": unexpected,
-            "seen": sum(1 for r in rows if r["status"] != "not_seen"), "total": len(rows)}
+            "unconfirmed": [_visit_row(v, frames, open_hours, visits) for v in guessed],
+            "closed_couriers": closed,
+            "seen": sum(1 for r in rows if r["visit"]), "total": len(rows)}
 
 
 STATUS_TEXT = {
     "seen": "Courier at the door",
     "seen_outside_window": "Courier at the door, outside the window",
-    "seen_while_closed": "Courier rang while you were closed",
-    "seen_while_closed_outside_window": "Courier rang while closed, outside the window",
+    "seen_while_closed": "Courier came while you were closed",
+    "seen_while_closed_outside_window": "Courier came while closed, outside the window",
+    "possible": "Possible courier, not confirmed by a camera frame",
+    "expected": "Not due yet",
     "not_seen": "No courier seen",
 }
+
+
+def _what(row: dict) -> str:
+    return "a doorbell press" if row.get("ring_event") == "ding" else "a door event"
 
 
 def headline(r: dict) -> list[str]:
@@ -284,22 +344,27 @@ def headline(r: dict) -> list[str]:
     closed = [x for x in r["expected"] if x["status"].startswith("seen_while_closed")]
     if missing:
         lines.append(f"No courier seen for {', '.join(missing)}.")
+    for x in r["expected"]:
+        if x["status"] == "possible":
+            what = " and ".join(f"{_what(p)} at {p['time']}" for p in x["possible"])
+            lines.append(f"Possible courier for {x['supplier']}: {what}, not confirmed by a camera frame.")
     for x in closed:
-        lines.append(f"{x['supplier']}'s courier rang at {x['visit']['time']}, while the shop was closed.")
-    if r["total"] and not missing and not closed:
+        lines.append(f"{x['supplier']}'s courier was at the door at {x['visit']['time']}, while the shop was closed.")
+    if r["total"] and all(x["visit"] for x in r["expected"]) and not closed:
         lines.append(f"All {r['total']} expected deliveries reached the door.")
     return lines
 
 
 def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str) -> str | None:
-    """The owner's own redelivery cost times what the door saw. No cost set means no line."""
+    """The owner's own redelivery cost times what the door saw. No cost set means no line. Both counts
+    must come from couriers Ring or Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows)."""
     n = closed_attempts + missing
     if cost is None or n == 0:
         return None
     parts = []
     if closed_attempts:
-        parts.append(f"{closed_attempts} courier{'s' if closed_attempts != 1 else ''} rang while you were closed")
+        parts.append(f"{closed_attempts} courier{'s' if closed_attempts != 1 else ''} came while you were closed")
     if missing:
-        parts.append(f"{missing} expected deliver{'ies' if missing != 1 else 'y'} never reached the door")
+        parts.append(f"{missing} expected deliver{'ies' if missing != 1 else 'y'} with no courier seen at the door")
     amount = f"{currency}{cost * n:,.2f}".replace(".00", "")
     return f"Last 7 days: {' and '.join(parts)}. At your {currency}{cost:g} per redelivery, that's {amount}."

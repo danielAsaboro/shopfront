@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 
-import app.main as main
+from app import main
 from app.briefing import build_briefing, classify_day
 from app.classify.bedrock import BedrockClassifier
 from app.classify.rules import RulesClassifier
@@ -52,10 +52,12 @@ def test_weekday_briefing():
     assert sum(b.hourly_customers) == b.customers and b.headline and b.ring_source == "synthetic"
 
 
-def test_sunday_delivery_is_flagged_while_closed():
+def test_sunday_press_is_flagged_while_closed_as_a_press():
+    """Was: a rules-labelled press counted as a delivery attempt while closed. The rules only know a button
+    was pressed, so it's flagged as a press, and only a Ring/Bedrock courier counts as a courier."""
     b = build_briefing(RING, RulesClassifier(), date(2026, 10, 11), "Test Shop", HOURS)
-    assert b.customers == 0 and len(b.deliveries_while_closed) == 1
-    assert "while the shop was closed" in b.headline[0]
+    assert b.customers == 0 and b.deliveries_while_closed == [] and len(b.presses_while_closed) == 1
+    assert b.headline[0].startswith("Doorbell pressed while closed")
 
 
 def test_bedrock_without_a_frame_says_so():
@@ -129,3 +131,78 @@ def test_connect_refuses_remote_clients():
     c = TestClient(main.app, client=("203.0.113.9", 5000))
     assert c.get("/connect").status_code == 403
     assert c.post("/connect", data={"token": "x"}).status_code == 403
+
+
+# ---- closed-time doorbell: a guess stays a guess, staff in means not missed ----------------------
+
+def _v(hh, mm, kind, vt, source, src="ring", day=date(2026, 10, 7)):
+    from datetime import datetime
+
+    from app.models import ClassifiedVisit, DoorEvent
+    e = DoorEvent(f"{kind}-{hh:02d}{mm:02d}", "d", datetime(day.year, day.month, day.day, hh, mm, tzinfo=TZ), kind, src)
+    return ClassifiedVisit(e, vt, 0.9, "why", source)
+
+
+class _Fixed:
+    """A Ring source that returns a fixed day; the classifier labels by a lookup."""
+    name, tz = "fixed", TZ
+
+    def __init__(self, visits):
+        self.visits = visits
+
+    def events_for_day(self, day):
+        return [v.event for v in self.visits if v.event.timestamp.date() == day]
+
+
+class _Lookup:
+    name = "lookup"
+
+    def __init__(self, visits):
+        self.by_id = {v.event.id: v for v in visits}
+
+    def classify(self, e, open_hours, **kw):
+        return self.by_id[e.id]
+
+
+def _brief(visits, day=date(2026, 10, 7)):
+    return build_briefing(_Fixed(visits), _Lookup(visits), day, "Test Shop", HOURS)
+
+
+def test_rules_press_while_closed_is_a_doorbell_press_not_a_missed_delivery():
+    b = _brief([_v(19, 30, "ding", VisitType.DELIVERY, "rules")])
+    assert b.deliveries_while_closed == [] and len(b.presses_while_closed) == 1
+    assert b.presses_while_closed[0]["what"] == "Doorbell pressed while closed"
+    line = next(x for x in b.headline if "19:30" in x)
+    assert line.startswith("Doorbell pressed while closed, at 19:30") and "courier" not in line.split(";")[0]
+    assert "delivery attempt" not in " ".join(b.headline) and "missed" not in " ".join(b.headline)
+
+
+def test_confirmed_courier_while_closed_is_flagged():
+    b = _brief([_v(19, 30, "motion", VisitType.DELIVERY, "ring")])
+    assert [m["time"] for m in b.deliveries_while_closed] == ["19:30"] and b.presses_while_closed == []
+    assert b.deliveries_while_closed[0]["what"] == "Courier at the door while closed"
+    assert "1 courier at the door while the shop was closed, at 19:30." in b.headline
+
+
+def test_staff_at_the_door_before_opening_suppresses_the_closed_flag():
+    """The bakery: staff in from 07:45, a courier at 07:47, opening at 08:00."""
+    b = _brief([_v(7, 45, "motion", VisitType.STAFF, "bedrock"), _v(7, 47, "ding", VisitType.DELIVERY, "bedrock")])
+    assert b.deliveries_while_closed == [] and b.presses_while_closed == []
+    assert not any("closed" in x for x in b.headline)
+
+
+def test_bedrock_without_a_frame_names_a_replayed_webhook_as_replayed():
+    from app.classify.bedrock import BedrockClassifier
+
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("must not call Bedrock without a frame")
+
+    vs = [_v(9, 0, "ding", VisitType.DELIVERY, "rules", src="ring-webhook-replay"),
+          _v(9, 5, "ding", VisitType.DELIVERY, "rules", src="ring-webhook")]
+    clf = BedrockClassifier(region="us-east-1", model_id="m", client=NoCall())
+    out = classify_day(_Fixed(vs), clf, date(2026, 10, 7), HOURS)
+    reasons = {v.event.source: v.reason for v in out}
+    assert "replayed Ring event, no frame" in reasons["ring-webhook-replay"]
+    assert "Ring webhook event, no frame downloaded" in reasons["ring-webhook"]
+    assert not any("synthetic" in r for r in reasons.values())

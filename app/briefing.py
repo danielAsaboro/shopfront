@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import date, time, timedelta
+from datetime import UTC, date, time, timedelta
 
 from app.cache import ClassificationCache
 from app.classify.base import Classifier
 from app.classify.bedrock import BedrockClassifier
+from app.deliveries import is_seen_courier, staff_in
 from app.hours import posted_hours
 from app.models import Briefing, ClassifiedVisit, VisitType
 from app.ring.api import RingApiClient, RingError
 from app.ring.base import RingClient
-
 
 SAME_EVENT = timedelta(seconds=5)  # a webhook and its Event History record name the same press or motion
 
@@ -22,8 +22,9 @@ def _door_events(ring: RingClient, day: date, stage0: dict | None) -> list:
         return history
     pushed = stage0["events"] + [v.event for v in stage0["ring_labelled"]] + stage0["skipped"]
 
-    def dup(e):
-        return any(p.kind == e.kind and abs(p.timestamp - e.timestamp) <= SAME_EVENT for p in pushed)
+    def dup(e):  # instants, not wall-clock readings, so a press at 01:30 PDT isn't the one at 01:30 PST
+        return any(p.kind == e.kind and abs(p.timestamp.astimezone(UTC) - e.timestamp.astimezone(UTC)) <= SAME_EVENT
+                   for p in pushed)
     return [e for e in history if not dup(e)] + stage0["events"]  # the webhook copy carries the sub_type
 
 
@@ -56,8 +57,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             visits.append(ClassifiedVisit(e, VisitType(hit["type"]), hit["confidence"], hit["reason"],
                                           "bedrock", hit.get("request_id")))
             continue
-        no_frame = {"ring-webhook-replay": "replayed Ring event, no frame",
-                    "ring-webhook": "Ring webhook event, no frame"}.get(e.source, "synthetic event has no frame")
+        no_frame = NO_FRAME.get(e.source, f"{e.source} event, no frame")
         if isinstance(ring, RingApiClient):
             try:
                 e.snapshot = ring.snapshot(e)
@@ -74,6 +74,14 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
     if stats is not None:
         stats.update(funnel(visits, stage0))
     return sorted(visits, key=lambda v: v.event.timestamp)
+
+
+NO_FRAME = {  # why an event reached the classifier without a Ring frame, by where the event came from
+    "synthetic": "synthetic event has no frame",
+    "ring-webhook-replay": "replayed Ring event, no frame",
+    "ring-webhook": "Ring webhook event, no frame downloaded",
+    "ring": "no Ring frame downloaded",
+}
 
 
 def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
@@ -107,7 +115,7 @@ def _fmt_hour(h: int | None) -> str:
 
 def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
     t = v.event.timestamp.timetz().replace(tzinfo=None)
-    return bool(open_hours) and open_hours[0] <= t < open_hours[1]
+    return open_hours is not None and open_hours[0] <= t < open_hours[1]
 
 
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
@@ -123,8 +131,17 @@ def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_nam
     peak_lw_h, peak_lw_n = _peak(hourly_lw)
 
     deliveries = [v for v in today if v.visit_type == VisitType.DELIVERY]
-    closed_deliveries = [{"time": v.event.timestamp.strftime("%H:%M"), "id": v.event.id, "reason": v.reason}
-                         for v in deliveries if not _is_open(v, open_hours)]
+    # Closed and nobody in. Staff at the door (in early to open up, or still there) means it wasn't missed.
+    closed = [v for v in deliveries if not _is_open(v, open_hours)
+              and not staff_in(v.event.timestamp, today, open_hours)]
+
+    def row(v: ClassifiedVisit, what: str) -> dict:
+        return {"time": v.event.timestamp.strftime("%H:%M"), "id": v.event.id, "reason": v.reason, "what": what,
+                "labelled_by": v.source, "confirmed": is_seen_courier(v), "ring_event": v.event.kind}
+    # Only a courier Ring or Bedrock saw is a courier; a rules "delivery" is a doorbell press and stays one
+    closed_deliveries = [row(v, "Courier at the door while closed") for v in closed if is_seen_courier(v)]
+    presses = [row(v, "Doorbell pressed while closed" if v.event.kind == "ding" else "Door event while closed")
+               for v in closed if not is_seen_courier(v)]
     after = [{"time": v.event.timestamp.strftime("%H:%M"), "id": v.event.id, "reason": v.reason}
              for v in today if v.visit_type == VisitType.AFTER_HOURS]
     staff = [v for v in today if v.visit_type == VisitType.STAFF]
@@ -143,6 +160,7 @@ def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_nam
         busiest_hour_last_week_count=peak_lw_n,
         deliveries=len(deliveries),
         deliveries_while_closed=closed_deliveries,
+        presses_while_closed=presses,
         after_hours=after,
         first_activity=staff[0].event.timestamp.strftime("%H:%M") if staff else None,
         last_activity=staff[-1].event.timestamp.strftime("%H:%M") if len(staff) > 1 else None,
@@ -164,7 +182,11 @@ def _headline(b: Briefing, hours: tuple[time, time] | None, has_last_week: bool)
     lines: list[str] = []
     if b.deliveries_while_closed:
         times = ", ".join(m["time"] for m in b.deliveries_while_closed)
-        lines.append(f"{_n(len(b.deliveries_while_closed), 'delivery attempt')} while the shop was closed, at {times}.")
+        n = len(b.deliveries_while_closed)
+        lines.append(f"{n} courier{'' if n == 1 else 's'} at the door while the shop was closed, at {times}.")
+    if b.presses_while_closed:  # a guess from the clock: say what Ring recorded, not who it was
+        times = ", ".join(m["time"] for m in b.presses_while_closed)
+        lines.append(f"Doorbell pressed while closed, at {times}; no camera frame confirmed who it was.")
     if b.first_activity:
         lines.append(f"Staff activity at the door from {b.first_activity}"
                      + (f" until {b.last_activity}." if b.last_activity else "."))

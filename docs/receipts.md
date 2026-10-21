@@ -8,14 +8,23 @@ Everything below is about keeping that sentence true.
 | It proves | It doesn't prove |
 |---|---|
 | The doorbell recorded an event at that time (Ring X-Request-ID on the call that returned it) | That the parcel was handed over. Ring has no "door answered" signal |
-| Bedrock, looking at the Ring frame, called the person a courier (Bedrock RequestId) | Whose courier it was. A frame shows a uniform or a parcel, not a supplier, so a receipt lists the other expected suppliers the visit also fits |
+| Bedrock, looking at the Ring frame, called the person a courier (Bedrock RequestId), or Ring's own `package_delivery` alert did | Whose courier it was. A frame shows a uniform or a parcel, not a supplier, so a receipt lists the other expected suppliers the visit also fits |
 | Nothing was recorded near a carrier's "attempted" time | That nobody came. Motion detection can miss people, so this outcome is worded as support, not proof |
 
-Labels made by the time-of-day rules (no frame looked at) are never called a courier in an attempt check.
+Labels made by the time-of-day rules (no frame looked at) are guesses. A rules "delivery" (the rules call
+every doorbell press one) is never a receipt, never counts as "seen", never feeds the money line and is
+never called a courier: an order with one in its window is **possible** ("Possible courier, not confirmed
+by a camera frame"), and every such press is listed under `unconfirmed`. An order whose window hasn't
+ended yet is **expected** ("Not due yet"), not "not seen".
+
+Staff at the door turn "while closed" off: a courier before opening, after a staff visit that morning,
+or between two staff visits, wasn't missed (the bakery whose staff are in from 07:45 and whose flour
+comes at 07:47).
 
 ## Matching expected deliveries to couriers
 
-All of a day's expected deliveries are assigned at once (Hungarian method, `app/deliveries.py`), in this
+All of a day's expected deliveries are assigned at once to the couriers Ring or Bedrock saw (Hungarian
+method, `app/deliveries.py`), in this
 order of priority: match as many suppliers as there are couriers; then as many of those inside their
 window as possible; then the closest times; then the earliest courier. The earlier one-supplier-at-a-time
 matcher failed two cases that property tests found (`tests/test_matcher_properties.py`):
@@ -23,8 +32,9 @@ matcher failed two cases that property tests found (`tests/test_matcher_properti
 - a wide window took the only courier that fitted a narrower one, pushing that supplier outside its window;
 - a windowed supplier took a courier outside its window while a supplier with no window went unmatched.
 
-Properties checked on random days: one door visit never backs two receipts; only courier-labelled visits
-become receipts; every courier is either a receipt or listed as unexpected; nobody is "not seen" while a
+Properties checked on random days (with rules-labelled visits mixed in): one door visit never backs two
+receipts; only Ring- or Bedrock-confirmed couriers become receipts, and a rules guess makes an unmatched
+order "possible", never "seen"; every courier is either a receipt or listed as unexpected; nobody is "not seen" while a
 courier is unmatched; the in-window count equals the best possible (brute force); the result doesn't
 depend on the order events arrive in.
 
@@ -32,15 +42,22 @@ depend on the order events arrive in.
 
 `GET /api/attempt?at=YYYY-MM-DDTHH:MM` (shop local time), and the agent's `check_attempt` tool, compare a
 carrier's "delivery attempted" time with door events within ±10 minutes (`app/reconcile.py`). Attempts
-near midnight also look at the neighbouring day.
+near midnight also look at the neighbouring day. Outcomes, first match wins:
 
 | Outcome | When | What the owner reads |
 |---|---|---|
-| `courier_at_door` | A Bedrock-labelled courier within ±10 min | Time, gap to the carrier's time, frame |
-| `someone_not_a_courier` | Bedrock saw a visit near then and labelled it something else | What Bedrock called them |
-| `door_activity_unverified` | A press or motion near then with no frame confirming who | That Shopfront can't say it was a courier |
-| `nothing_recorded` | Door events that day, none near then | Supports the owner's account, doesn't prove it |
+| `not_happened_yet` | The time is later than now at the shop | "That time hasn't happened yet"; nothing is checked, no pack |
+| `no_such_local_time` | The clocks skipped that time (02:30 on a spring-forward night) | That the time didn't exist; no pack |
 | `no_door_data` | No door events at all that day | Can't check |
+| `courier_at_door` | A Ring- or Bedrock-labelled courier within ±10 min | Time, gap to the carrier's time, frame |
+| `courier_came_later` | No such courier near then, but one later the same day | It may have arrived late; Shopfront can't tell whose it was |
+| `door_activity_unverified` | Any press or motion near then that nothing looked at | That Shopfront can't say it was a courier, or that it wasn't |
+| `someone_not_a_courier` | Everything near then was looked at, none a courier | What Bedrock called the nearest one |
+| `nothing_recorded` | Door events that day, none near then | Supports the owner's account, doesn't prove it |
+
+Gaps are measured between instants (UTC), never wall-clock readings: on a fall-back night 01:58 PDT and
+01:03 PST are five minutes apart, not 55. A time that happened twice is read as the first, and the text
+says so.
 
 ## Named failure states beyond the Ring client
 
@@ -48,7 +65,8 @@ near midnight also look at the neighbouring day.
 |---|---|---|
 | Matcher | Two expected deliveries fit one courier | Receipt names the other supplier ("could also be …") |
 | Matcher | Fewer couriers than expected deliveries | Remaining suppliers are `not_seen`; never a duplicate receipt |
-| Attempt check | Time in the future or unparseable | 400 `BAD_TIME` |
+| Attempt check | Unparseable, or a future date (`/api/attempt`) | 400 `BAD_TIME` |
+| Attempt check | A time later today, or one the clocks skipped | Outcome `not_happened_yet` / `no_such_local_time`; a pack for it is a 400 |
 | Bedrock | Call fails (throttled, no access, network) | Rules label with "Bedrock error: …" in the reason, and the error is written to `.data/bedrock-calls.jsonl` |
 | Live view | Rules classifier active | Frames are `unknown` with the reason; never guessed from the clock |
 | Agent | No credentials, no model access, network | 503 `AGENT_UNAVAILABLE` with the cause; no answer is made up |

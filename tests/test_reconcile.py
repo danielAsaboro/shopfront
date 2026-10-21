@@ -7,10 +7,18 @@ from fastapi.testclient import TestClient
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-import app.main as main
+from app import main
 from app.models import ClassifiedVisit, DoorEvent, VisitType
-from app.reconcile import (COURIER_AT_DOOR, NO_DOOR_DATA, NOTHING_RECORDED, SOMEONE_NOT_COURIER, TOLERANCE,
-                           UNVERIFIED, check_attempt)
+from app.reconcile import (
+    COURIER_AT_DOOR,
+    COURIER_LATER,
+    NO_DOOR_DATA,
+    NOTHING_RECORDED,
+    SOMEONE_NOT_COURIER,
+    TOLERANCE,
+    UNVERIFIED,
+    check_attempt,
+)
 
 TZ = ZoneInfo("Africa/Lagos")
 DAY = date(2026, 10, 7)
@@ -67,14 +75,21 @@ def test_outcome_matches_the_evidence(attempt_min, raw):
     r = check_attempt(a, vs)
     near = [v for v in vs if abs(v.event.timestamp - a) <= TOLERANCE]
     seen_courier = [v for v in near if v.visit_type == VisitType.DELIVERY and v.source in ("bedrock", "ring")]
+    later = [v for v in vs if v.event.timestamp - a > TOLERANCE and v.visit_type == VisitType.DELIVERY
+             and v.source in ("bedrock", "ring")]
+    guessed = [v for v in near if v.source == "rules" or v.visit_type == VisitType.UNKNOWN]
     if not vs:
         assert r["outcome"] == NO_DOOR_DATA
-    elif not near:
-        assert r["outcome"] == NOTHING_RECORDED
     elif seen_courier:
         assert r["outcome"] == COURIER_AT_DOOR
+    elif later:
+        assert r["outcome"] == COURIER_LATER
+    elif not near:
+        assert r["outcome"] == NOTHING_RECORDED
+    elif guessed:
+        assert r["outcome"] == UNVERIFIED
     else:
-        assert r["outcome"] in (UNVERIFIED, SOMEONE_NOT_COURIER)
+        assert r["outcome"] == SOMEONE_NOT_COURIER
     if r["outcome"] == COURIER_AT_DOOR:  # the cited visit really is a Bedrock courier inside the tolerance
         cited = next(v for v in vs if v.event.id == r["visit"]["event_id"])
         assert cited in seen_courier
