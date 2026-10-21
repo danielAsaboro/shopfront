@@ -1,10 +1,13 @@
-"""Guided live proof: a Ring Developer Playground frame, labelled by Bedrock, with every request ID.
+"""Guided live proof: a Ring Developer Playground scene, end to end, with every request ID.
+
+Event History (on_demand) -> the scene's frame (whole-second at_timestamp) -> Bedrock's label -> a "business
+closed" check at that time -> a signed dispute pack zip.
 
 Run it on the shop's Mac with a fresh Playground access token (they last about 30 minutes):
 
     RING_ACCESS_TOKEN=<token> .venv/bin/python -m scripts.ring_proof
 
-It walks through five steps and tells you when to act:
+It walks through seven steps and tells you when to act:
 
 1. Devices and status: GET /v1/devices (the camera), GET /v1/devices/{id}/status, GET /v1/users/me.
 2. A new door event: it reads Event History, asks you to press a scene (Package, Vehicle or Motion) for the
@@ -19,10 +22,17 @@ It walks through five steps and tells you when to act:
    is a JWT, else the moment the script started, which is no earlier) and never asks for a frame before it.
 4. The label: the frame goes to Amazon Bedrock through the same forced-tool classifier the app uses
    (app/classify/bedrock.py). Skip with --no-bedrock.
-5. The record: evidence/ring-proof-<utc>.json holds every call's HTTP status and X-Request-ID, the frame's
-   size, sha256 and Ring media headers, and Bedrock's RequestId. Tokens are never written; device, account
-   and event IDs are short sha256 hashes. The frame itself goes to evidence/raw/, which git ignores: never
-   commit it.
+5. The check: a carrier's "business closed" scan at the scene's minute, checked the way the desk checks it.
+   The day is read again through classify_day in Playground mode (docs/ring.md, section 11), so the scene is a
+   door visit labelled "Playground scene (Ring simulator)", or what Bedrock said from its frame (the label from
+   step 4, reused from the cache; other scenes that day aren't sent to Bedrock), then reconcile.check_closed_scan
+   against the posted hours (SHOP_HOURS).
+6. The pack: dispute.build_pack and as_zip on that check, with the scene's frame, signed (manifest.sig) with the
+   app's pack key (app/pack_signing.py). The zip holds the frame and raw IDs, so it goes to evidence/raw/ too.
+7. The record: evidence/ring-proof-<utc>.json holds every call's HTTP status and X-Request-ID, the frame's
+   size, sha256 and Ring media headers, Bedrock's RequestId, the check's outcome and the pack's SHA-256s, and a
+   `chain` naming the request ID behind each link. Tokens are never written; device, account and event IDs
+   are short sha256 hashes. The frame itself goes to evidence/raw/, which git ignores: never commit it.
 
 --dry-run runs the same steps against an httpx MockTransport built from the API reference's documented
 response shapes and a fake Bedrock, without prompts or waiting, and writes its record to a temporary
@@ -36,10 +46,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import re
 import sys
 import tempfile
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -109,10 +121,52 @@ def say(text: str = "") -> None:
     print(text, flush=True)
 
 
+def _last_history_rid(calls: CallLog) -> str | None:
+    """The X-Request-ID of the latest Event History call: the one whose answer held the new event."""
+    return next((c["x_request_id"] for c in reversed(calls.calls) if "/v1/history/" in c["url"]), None)
+
+
+def check_and_pack(ring: RingApiClient, classifier, event, frame_bytes: bytes, label, *, work: Path, signer,
+                   now: datetime, playground: bool) -> tuple[dict, dict, bytes]:
+    """Steps 5 and 6: the day through classify_day (the scene's label reused from the cache, no second Bedrock
+    call), a "business closed" check at the scene's minute, and the signed pack zip. Returns (check, pack, zip)."""
+    from app import dispute, pack_signing
+    from app import reconcile as rc
+    from app.briefing import classify_day
+    from app.cache import ClassificationCache
+    from app.classify.rules import RulesClassifier
+    from app.deliveries import FrameStore
+    from app.hours import parse_hours, posted_hours
+
+    hours = parse_hours(settings.shop_hours)
+    local = event.timestamp.astimezone(settings.tz)
+    day = local.date()
+    cache = ClassificationCache(work / "classifications.json")
+    frames = FrameStore(work)
+    if label is not None and label.source == "bedrock":  # what Bedrock said in step 4, as the app would cache it
+        cache.put(event.id, {"type": label.visit_type.value, "confidence": label.confidence, "reason": label.reason,
+                             "model": classifier.model_id, "request_id": label.request_id})
+        frames.save(event.id, frame_bytes)
+    clf = classifier if classifier is not None else RulesClassifier()
+    visits = classify_day(ring, clf, day, hours, cache, frames=frames, playground=playground,
+                          focus=lambda e: "the scene this proof pressed" if e.id == event.id else None)
+    if not frames.path(event.id):
+        frames.save(event.id, frame_bytes)  # the pack's receipt: the frame Ring sent for this scene
+    oh = posted_hours(hours, day)
+    scan = local.replace(second=0, microsecond=0)
+    check = rc.check_closed_scan(scan, visits, oh, now=now)
+    pack = dispute.build_pack(settings.shop_name, day, visits, frames,
+                              f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if oh else "closed", check, tz=settings.tz, made_at=now)
+    body = pack_signing.sign_zip(dispute.as_zip(pack, frames), signer,
+                                 f"shopfront-dispute-{day.isoformat()}-{scan:%H%M}.zip")
+    return check, pack, body
+
+
 def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str], str],
         sleep: Callable[[float], None], clock: Callable[[], float], raw_dir: Path | None,
-        wait_for: float = WAIT_FOR_EVENT, poll_every: float = POLL_EVERY) -> dict:
-    """The five steps. Returns the record (with an "error" key when a step failed)."""
+        wait_for: float = WAIT_FOR_EVENT, poll_every: float = POLL_EVERY, signer=None,
+        pack_dir: Path | None = None, playground: bool = True) -> dict:
+    """The steps before the record. Returns the record (with an "error" key when a step failed)."""
     red = calls.redactor
     record: dict = {"captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "auth_mode": ring.auth.mode}
@@ -121,7 +175,7 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
             timespec="seconds")
         record["token_issued_from"] = ring.auth.issued_from
     try:
-        say("Step 1 of 5: your Ring devices")
+        say("Step 1 of 7: your Ring devices")
         devices = ring.list_devices()
         for d in devices:
             red.add(d.get("id"), "device")
@@ -138,7 +192,7 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
             say(f"  This Playground token can download frames recorded from {floor:%H:%M:%S} UTC "
                 f"({ring.auth.issued_from}); the scene you press next is after that.")
 
-        say("\nStep 2 of 5: a new event in Ring's Event History")
+        say("\nStep 2 of 7: a new event in Ring's Event History")
         start = datetime.fromtimestamp(clock(), timezone.utc)
         before = {e.id for e in ring.recent_events(start - LOOKBACK)}
         say(f"  Event History has {len(before)} event(s) from the last few minutes.")
@@ -169,7 +223,7 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
         say(f"  Found it: {'an' if event.kind[0] in 'aeiou' else 'a'} {event.kind} event at {event.timestamp:%H:%M:%S} "
             f"({'a live view: what a Playground scene files' if event.kind == 'on_demand' else 'a door event'}).")
 
-        say("\nStep 3 of 5: the frame")
+        say("\nStep 3 of 7: the frame")
         frame = ring.frame(event, retry_for=FRAME_RETRY)
         record["frame"] = {"requested_utc": datetime.fromtimestamp(frame.requested_ms / 1000, timezone.utc)
                            .isoformat(timespec="seconds"),
@@ -177,7 +231,9 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
                            "bytes": len(frame.content), "sha256": hashlib.sha256(frame.content).hexdigest(),
                            "content_type": frame.content_type, "x_media_timestamp": frame.media_timestamp,
                            "x_media_origin": frame.media_origin, "x_request_id": frame.request_id,
-                           "attempts": frame.attempts}
+                           "attempts": frame.attempts, "whole_second": frame.requested_ms % 1000 == 0}
+        chain = record["chain"] = {"event_history_x_request_id": _last_history_rid(calls),
+                                   "frame_x_request_id": frame.request_id}
         if raw_dir is not None:
             raw_dir.mkdir(parents=True, exist_ok=True)
             path = raw_dir / f"ring-frame-{pressed:%Y%m%dT%H%M%SZ}.jpg"
@@ -186,7 +242,8 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
         else:
             say(f"  Got {len(frame.content)} bytes (dry run: not saved).")
 
-        say("\nStep 4 of 5: Bedrock's label")
+        say("\nStep 4 of 7: Bedrock's label")
+        v = None
         if classifier is None:
             say("  Skipped (--no-bedrock).")
         else:
@@ -199,11 +256,53 @@ def run(ring: RingApiClient, classifier, *, calls: CallLog, ask: Callable[[str],
                                  "label": v.visit_type.value if v.source == "bedrock" else None,
                                  "confidence": v.confidence if v.source == "bedrock" else None,
                                  "reason": v.reason, "request_id": v.request_id}
+            chain["bedrock_request_id"] = v.request_id
             if v.source != "bedrock":
                 record["error"] = {"status": "BEDROCK_NO_LABEL", "detail": v.reason}
                 say(f"  Bedrock didn't label it: {v.reason}")
-            else:
-                say(f"  {v.visit_type.value} ({v.confidence:.2f}): {v.reason}  [RequestId {v.request_id}]")
+                return record
+            say(f"  {v.visit_type.value} ({v.confidence:.2f}): {v.reason}  [RequestId {v.request_id}]")
+
+        say('\nStep 5 of 7: a "business closed" check at that time')
+        if signer is None:
+            from app.pack_signing import MemorySigner
+
+            signer = MemorySigner()
+        history_calls = sum(1 for c in calls.calls if "/v1/history/" in c["url"])
+        with tempfile.TemporaryDirectory(prefix="ring-proof-pack-") as work:
+            check, pack, body = check_and_pack(ring, classifier, event, frame.content, v, work=Path(work),
+                                               signer=signer, now=datetime.fromtimestamp(clock(), settings.tz),
+                                               playground=playground)
+        visit = check.get("visit") or {}
+        record["check"] = {"claim": check["claim"], "scan_local": check["attempt"], "posted_hours": check["posted_hours"],
+                           "playground_mode": playground, "outcome": check["outcome"], "text": check["text"],
+                           "activity": check.get("activity"),
+                           "cited": {"label": visit.get("type"), "labelled_by": visit.get("labelled_by"),
+                                     "event_source": visit.get("event_source"),
+                                     "bedrock_request_id": visit.get("bedrock_request_id"),
+                                     "is_this_scene": visit.get("event_id") == event.id} if visit else None,
+                           "event_history_x_request_ids": [c["x_request_id"] for c in calls.calls
+                                                           if "/v1/history/" in c["url"]][history_calls:]}
+        chain["check_outcome"] = check["outcome"]
+        say(f"  {check['outcome']}: {check['text']}")
+
+        say("\nStep 6 of 7: the dispute pack")
+        names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        record["pack"] = {"zip_sha256": hashlib.sha256(body).hexdigest(), "zip_bytes": len(body),
+                          "manifest_sha256": hashlib.sha256(zipfile.ZipFile(io.BytesIO(body)).read(
+                              "manifest.sha256")).hexdigest(), "files": names,
+                          "key_id": signer.jwk()["kid"], "signer": signer.name, "watermark": pack["watermark"],
+                          "event_sources": pack["event_sources"],
+                          "frame_sha256": (pack["frame"] or {}).get("sha256"),
+                          "frame_is_step_3s": (pack["frame"] or {}).get("sha256") == record["frame"]["sha256"]}
+        chain["pack_zip_sha256"] = record["pack"]["zip_sha256"]
+        if pack_dir is not None:
+            pack_dir.mkdir(parents=True, exist_ok=True)
+            path = pack_dir / f"ring-proof-pack-{pressed:%Y%m%dT%H%M%SZ}.zip"
+            path.write_bytes(body)
+            say(f"  Saved the signed pack ({len(body)} bytes) to {path}"
+                + (": it holds the frame and raw IDs, so it stays out of git." if raw_dir is not None else "."))
+
     except RingError as exc:
         record["error"] = _error(exc)
         if exc.status == RingStatus.BEFORE_TOKEN:  # never asked: say why in words
@@ -220,9 +319,17 @@ DRY_ACCOUNT = "ava1.ring.account.DRYRUN"
 CLIP_S = 45.0  # a Playground scene's clip, played between the prompt and Enter
 
 
+def dry_start() -> float:
+    """The dry run's clock: 12:40 shop time on the latest Wednesday before today, inside the default posted
+    hours, so the check's outcome doesn't depend on when the test runs."""
+    today = datetime.now(settings.tz).date()
+    wed = today - timedelta(days=(today.weekday() - 2) % 7 or 7)
+    return datetime.combine(wed, datetime.min.time(), settings.tz).replace(hour=12, minute=40).timestamp()
+
+
 class FakeClock:
-    def __init__(self) -> None:
-        self.now = datetime.now(timezone.utc).timestamp()
+    def __init__(self, start: float | None = None) -> None:
+        self.now = datetime.now(timezone.utc).timestamp() if start is None else start
 
     def time(self) -> float:
         return self.now
@@ -324,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
     redactor = Redactor()
     calls = CallLog(redactor)
     if args.dry_run:
-        clock = FakeClock()
+        clock = FakeClock(dry_start())
         handler, ask, _ = dry_world(clock)
         http = httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True,
                             event_hooks={"response": [calls]})
@@ -333,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         sleep, now = clock.sleep, clock.time
         out = args.out or Path(tempfile.mkdtemp(prefix="ring-proof-dry-run-"))
         raw_dir = None
+        pack_dir = out
         bedrock_client = DryBedrock()
     else:
         access = _token()
@@ -353,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         sleep, now, ask = _time.sleep, _time.time, input
         out = args.out or OUT
-        raw_dir = out / "raw"
+        raw_dir = pack_dir = out / "raw"
         bedrock_client = None
 
     ring = RingApiClient(auth=auth, tz=settings.tz, device_id="" if args.dry_run else settings.ring_device_id,
@@ -367,14 +475,23 @@ def main(argv: list[str] | None = None) -> int:
                                        record_path=None if args.dry_run
                                        else Path(settings.data_dir) / "bedrock-calls.jsonl")
 
+    from app.briefing import playground_mode
+    from app.pack_signing import MemorySigner, make_signer
+
+    try:  # the app's own pack key (a KMS key when SHOPFRONT_SIGNING=kms), so the pack checks against its URL
+        signer = MemorySigner() if args.dry_run else make_signer(settings, Path(settings.data_dir))
+    except ValueError as exc:
+        say(f"Pack signing isn't configured: {exc}")
+        return 2
     record = run(ring, classifier, calls=calls, ask=ask, sleep=sleep, clock=now, raw_dir=raw_dir,
-                 wait_for=args.wait)
+                 wait_for=args.wait, signer=signer, pack_dir=pack_dir,
+                 playground=playground_mode(ring, settings.ring_playground))
     record["calls"] = calls.redacted()
     if args.dry_run:
         record = {"dry_run": True, "note": "MockTransport and a fake Bedrock: not evidence of anything live",
                   **record}
 
-    say("\nStep 5 of 5: the record")
+    say("\nStep 7 of 7: the record")
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.fromtimestamp(now(), timezone.utc)
     path = out / f"ring-proof-{stamp:%Y%m%dT%H%M%SZ}.json"
@@ -388,6 +505,8 @@ def main(argv: list[str] | None = None) -> int:
     say(f"  Wrote {path}: {len(record['calls'])} Ring calls, {len(ids)} X-Request-IDs"
         + (f", Bedrock RequestId {record['bedrock']['request_id']}" if (record.get("bedrock") or {}).get("request_id")
            else "") + ".")
+    for link, value in (record.get("chain") or {}).items():
+        say(f"    {link}: {value}")
     if "error" in record:
         say(f"  Not complete: {record['error']['status']}.")
         return 1

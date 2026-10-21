@@ -4,11 +4,12 @@ The dry run proves the script's steps and its record format, nothing about the l
 """
 
 import json
+import zipfile
 from pathlib import Path
 
 import httpx
 
-from scripts import ring_proof
+from scripts import ring_proof, verify_pack
 
 
 def run_dry(tmp_path: Path, *extra: str) -> tuple[int, dict]:
@@ -21,7 +22,8 @@ def test_dry_run_walks_every_step_and_records_every_request_id(tmp_path, capsys)
     code, rec = run_dry(tmp_path)
     out = capsys.readouterr().out
     assert code == 0
-    for step in ("Step 1 of 5", "Step 2 of 5", "press a scene", "Step 3 of 5", "Step 4 of 5", "Step 5 of 5"):
+    for step in ("Step 1 of 7", "Step 2 of 7", "press a scene", "Step 3 of 7", "Step 4 of 7", "Step 5 of 7",
+                 "Step 6 of 7", "Step 7 of 7"):
         assert step in out
     assert rec["dry_run"] is True and "not evidence" in rec["note"]
     assert rec["online"] is True
@@ -35,6 +37,43 @@ def test_dry_run_walks_every_step_and_records_every_request_id(tmp_path, capsys)
     assert all(c["x_request_id"] for c in rec["calls"])
     statuses = [(c["method"], c["status"]) for c in rec["calls"] if "image/download" in c["url"]]
     assert statuses == [("POST", 425), ("POST", 303)]
+
+
+def test_one_run_captures_the_whole_chain_from_event_to_signed_pack(tmp_path):
+    code, rec = run_dry(tmp_path)
+    assert code == 0
+    chain = rec["chain"]
+    rids = {c["x_request_id"]: c for c in rec["calls"]}
+    # Event History (on_demand) -> frame (whole-second at_timestamp) -> Bedrock -> check -> pack, each with its ID
+    assert "/v1/history/" in rids[chain["event_history_x_request_id"]]["url"] and rec["event"]["event_type"] == "on_demand"
+    assert rec["frame"]["whole_second"] and chain["frame_x_request_id"] == rec["frame"]["x_request_id"]
+    assert chain["bedrock_request_id"] == rec["bedrock"]["request_id"] == "dry-run-bedrock-0001"
+    check = rec["check"]
+    assert check["claim"] == "business_closed" and check["playground_mode"] and check["outcome"] == "open_courier_came"
+    assert check["cited"] == {"label": "delivery", "labelled_by": "bedrock", "event_source": "ring-playground",
+                              "bedrock_request_id": "dry-run-bedrock-0001", "is_this_scene": True}
+    assert "Playground scene (Ring simulator)" in check["text"] and check["event_history_x_request_ids"]
+    assert all(r in rids for r in check["event_history_x_request_ids"])  # the check re-read the day, logged too
+    assert sum(1 for c in rec["calls"] if "image/download" in c["url"]) == 2  # no second frame for the check
+    # the pack: saved beside the dry-run record, signed, its frame is step 3's, and it verifies offline
+    pack = rec["pack"]
+    [zpath] = tmp_path.glob("ring-proof-pack-*.zip")
+    body = zpath.read_bytes()
+    assert ring_proof.hashlib.sha256(body).hexdigest() == pack["zip_sha256"] == chain["pack_zip_sha256"]
+    assert pack["frame_is_step_3s"] and "ring-frame-1240.jpg" in pack["files"] and "manifest.sig" in pack["files"]
+    assert pack["event_sources"] == ["ring-playground"] and "PLAYGROUND" in pack["watermark"]
+    problems, _ = verify_pack.verify(body, kid=pack["key_id"])
+    assert problems == []
+    inner = json.loads(zipfile.ZipFile(zpath).read("pack.json"))
+    assert inner["finding"]["outcome"] == "open_courier_came" and inner["playground"]
+
+
+def test_without_bedrock_the_scene_is_a_playground_visit_and_still_checked(tmp_path):
+    code, rec = run_dry(tmp_path, "--no-bedrock")
+    assert code == 0 and rec["check"]["outcome"] == "door_activity_unverified"
+    assert "a Playground scene (Ring simulator) at 12:40" in rec["check"]["text"]
+    assert rec["check"]["cited"]["labelled_by"] == "ring-playground" and "bedrock_request_id" not in rec["chain"]
+    assert rec["pack"]["frame_is_step_3s"] and rec["pack"]["zip_sha256"] == rec["chain"]["pack_zip_sha256"]
 
 
 def test_dry_run_hashes_every_ring_id_and_keeps_no_presigned_query(tmp_path):
