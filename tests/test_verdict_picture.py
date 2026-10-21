@@ -215,4 +215,20 @@ def test_on_a_phone_the_verdict_comes_before_the_date_picker(client):
     phone = css.split("@media (max-width: 560px) {")[1].split("@media print")[0]
     assert ".desk-top > .day-pick { order: 3;" in phone and ".value-quiet { display: none; }" in phone
     assert ".banner .b-long { display: none; }" in phone  # the banner is one line
-    assert '<p class="value value-quiet">' in page and 'class="steps3"' not in page
+    # round 6: with a verdict up, the desk's tagline gives way to it on every screen
+    assert 'class="value' not in page.split("</style>")[-1] and 'class="steps3"' not in page
+
+
+def test_the_answer_is_one_sentence_and_one_supporting_line(client):
+    """Round 6: the demo's answer was ~90 words. The desk and the demo say one plain sentence and one line of
+    facts; reconcile's full reasoning stays in the API's text and under Details."""
+    c = client.get("/api/attempt", params={"at": f"{DAY}T14:30", "claim": "business_closed"}).json()
+    a = pages.answer(c)
+    assert a["sentence"] == pages.verdict(c) and a["sentence"].count(". ") == 0
+    assert "\n" not in a["support"] and len(a["support"].split()) <= 20
+    assert len((a["sentence"] + " " + a["support"]).split()) < len(c["text"].split()) // 2
+    page = client.get(f"/?date={DAY}&attempt=14:30&claim=business_closed").text
+    verdict = page.split('<section class="verdict')[1].split("</section>")[0]
+    assert verdict.count('<p class="facts1"') == 1 and "facts3" not in verdict
+    assert c["text"].split(" (")[0].replace('"', "&#34;") in verdict.split('class="tech why-verdict"')[1]
+    assert pages.answer(None) == {"sentence": "", "support": ""}

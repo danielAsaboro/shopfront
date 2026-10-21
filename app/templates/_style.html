@@ -200,6 +200,22 @@
   ul.facts3 li { display: flex; margin: 0; gap: 8px; align-items: baseline; }
   .facts3 .mk { flex: none; width: 1.1em; text-align: center; font-weight: 700; }
   .facts3 .no .mk { color: var(--muted); }
+  /* The verdict's one supporting line: a tick or a cross before each fact, a dot between them */
+  .facts1 { margin: 2px 0 0; font-size: 15px; }
+  .facts1 > span + span::before { content: "·"; color: var(--muted); margin: 0 8px; }
+  .facts1 .mk { font-weight: 700; } .facts1 .no .mk { color: var(--muted); }
+  /* The carrier record's one line, second after the verdict */
+  .record-line { margin: 22px 0 0; padding-top: 12px; border-top: 1px solid var(--line); }
+  .record-line h2 { display: block; margin: 0 0 2px; }
+  .record-line p { margin: 0; font-size: 16px; line-height: 1.4; }
+  .record-line .report-link { white-space: nowrap; margin-left: 4px; }
+  /* Everything below the verdict: named folds, one rule each */
+  details.fold { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 14px; }
+  details.fold > summary { padding: 4px 0; }
+  details.fold > summary h2 { margin: 0; }
+  details.fold > summary .badge { margin-left: 6px; vertical-align: 1px; }
+  .lead + details.fold, .record-line + details.fold { margin-top: 22px; }
+  .src .how { font-size: 12px; color: var(--muted); text-decoration: underline; text-decoration-color: var(--line); }
   .verdict-src { margin: 8px 0 0; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   @media (max-width: 560px) {
     .desk-top { display: flex; flex-direction: column; align-items: stretch; }

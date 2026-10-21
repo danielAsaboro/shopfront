@@ -149,12 +149,14 @@ def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
 
 def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
     """Round 2: the scan check sits right under the lead, above the figures and the deliveries, so the story
-    is on screen in the first 30 seconds on a phone too."""
+    is on screen in the first 30 seconds on a phone too. Round 6: the deliveries, with their figures, are a named
+    fold under it, like the rest of the day."""
     main.book.add(WEDNESDAY, "Bay Mills")
     page = c.get(f"/?date={WEDNESDAY}").text
-    assert page.index('class="lead"') < page.index('id="atth"') < page.index('class="figures"') \
-        < page.index('id="dlv"') < page.index("Customers by hour")
-    assert re.search(r"<details class=\"block\">\s*<summary><h2>The rest of the day", page)
+    assert page.index('class="lead"') < page.index('id="atth"') < page.index('id="dlv"') \
+        < page.index('class="figures"') < page.index('class="receipts"') < page.index("Customers by hour")
+    assert re.search(r'<details class="block fold" id="deliveries">\s*<summary><h2 id="dlv">Deliveries', page)
+    assert re.search(r"<details class=\"block fold\">\s*<summary><h2>The rest of the day", page)
 
 
 def test_staff_tap_undo_label_and_shop_local_time(c):
@@ -474,8 +476,12 @@ def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
     page = c.get(f"/?date={SUNDAY}").text
     row = page.split(f'action="/deliveries/{e.id}/received"')[0].rsplit("<tr>", 1)[1] + \
         page.split(f'action="/deliveries/{e.id}/received"')[1].split("</tr>")[0]
-    assert '<span class="badge b-demo">demo</span>' in row
     assert '<details class="src"><summary title="Demo event; guess from the time of day' in row
+    # round 6: a demo or replay badge is said once, on the deliveries fold, not on every row
+    assert '<span class="how">How we know</span>' in row and "b-demo" not in row
+    fold = page.split('id="deliveries"')[1].split("</details>\n\n")[0]
+    assert fold.split("</summary>")[0].count('<span class="badge b-demo">demo</span>') == 1
+    assert fold.count("b-demo") == 1
 
 
 def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypatch):

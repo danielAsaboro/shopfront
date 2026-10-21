@@ -279,6 +279,7 @@ def main() -> None:
     ap.add_argument("--data-dir", default=".data/demo", help="wiped and refilled on every run")
     a = ap.parse_args()
 
+    from app import pages
     from app.config import settings  # reads .env, so the demo uses the owner's time zone
 
     tz = settings.tz
@@ -307,6 +308,7 @@ def main() -> None:
             feed_package_alert(client, day, tz, key)
             story = walk(client, day, tz, orders_csv.read_text())
         hours, scan, order, check, q = (story[k] for k in ("hours", "scan", "order", "check", "query"))
+        answer = pages.answer(check)  # one sentence and one supporting line; the full reasoning is on the page
         desk = f"{base}/?{urlencode({'date': day.isoformat()})}"
         check_url = f"{base}/?{urlencode({**q, 'attempt': scan, 'claim': 'business_closed'})}"
         pack_url = f"{base}/dispute?{urlencode({**q, 'at': scan, 'claim': 'business_closed'})}"
@@ -321,7 +323,8 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
 1. {CARRIER} scanned the dairy order {SCAN_ORDER} (tracking {order['tracking']}) "business closed" at {scan}.
    The link above checks that scan against the posted hours and the door; the desk's
    "Try the business-closed check" button opens the same check.
-   Shopfront's answer: {check.get('text') or check}
+   Shopfront's answer: {answer['sentence'] or check.get('text') or check}
+   {answer['support']}
    "Keep in {CARRIER}'s record" adds it to the {len(past)} earlier demo checks of {CARRIER}
    ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}) on the desk's carrier record.
 

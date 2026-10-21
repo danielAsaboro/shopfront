@@ -72,7 +72,7 @@ templates.env.filters.update(
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, badge=pages.badge,
     pack_stills=pages.pack_stills, month_name=lambda v: date.fromisoformat(str(v)[:10]).strftime("%B %Y"),
     relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label,
-    verdict_facts=pages.verdict_facts, chip=pages.chip, strip=pages.door_strip, pack_check=pages.pack_check)
+    verdict_facts=pages.verdict_facts, answer=pages.answer, chip=pages.chip, strip=pages.door_strip, pack_check=pages.pack_check)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
 templates.env.globals.update(cost_source=COST_SOURCE, default_cost=default_cost)
@@ -390,7 +390,10 @@ def _record(day: date) -> dict:
     """The kept checks' carrier record and the month's money, for the desk."""
     kept = checks.all()
     cost, default = _cost()
-    return {"record": kept_checks.carrier_record(kept, day, cost, profile.get().currency, dispute.DISPUTE),
+    record = kept_checks.carrier_record(kept, day, cost, profile.get().currency, dispute.DISPUTE)
+    for c in record:  # the desk's one-line summary: the pattern without the money, which sits with its source
+        c["summary"] = c["headline"].removesuffix(f", about {c['at_stake']} at stake") if c["at_stake"] else c["headline"]
+    return {"record": record,
             "perishable_at_risk": kept_checks.perishable_at_risk(kept, day, dispute.DISPUTE),
             "month_money": kept_checks.month_money(kept, day, _month_confirmed(day), cost, profile.get().currency,
                                                    default, dispute.DISPUTE)}

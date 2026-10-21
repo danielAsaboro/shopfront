@@ -412,6 +412,16 @@ def verdict_facts(c: dict | None) -> list[dict]:
     return [f for f in facts if f]
 
 
+def answer(c: dict | None) -> dict:
+    """A checked scan's answer as one plain sentence and at most one supporting line: {"sentence", "support"}.
+    Round 6: the demo's answer was ~90 words. The full reasoning stays in reconcile's text (the API's `text`,
+    and under Details on the page). A refused check has no facts, so no supporting line."""
+    if not c or not c.get("outcome"):
+        return {"sentence": "", "support": ""}
+    facts = verdict_facts(c)
+    return {"sentence": verdict(c), "support": " · ".join(f["text"] for f in facts) + "." if facts else ""}
+
+
 def pack_check(p: dict) -> dict | None:
     """A pack's finding in the shape verdict_facts() and door_strip() read (a reconcile check)."""
     f, c = p.get("finding"), p.get("claim")

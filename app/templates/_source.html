@@ -1,3 +1,5 @@
 {# What a door label rests on, as a small badge (ring / bedrock / guess / replay / demo); the full sentence opens
-   under it on a tap, and is the badge's title on hover (pages.badge, pages.how). #}
-{% macro source(labelled_by, reason, event_source, frame_url=none) %}{% set full = labelled_by|how(reason, event_source, frame_url) %}<details class="src"><summary title="{{ full }}"><span class="badge b-{{ labelled_by|badge(event_source) }}">{{ labelled_by|badge(event_source) }}</span><span class="sr"> How we know</span></summary><span class="why">{{ full }}</span></details>{% endmacro %}
+   under it on a tap, and is the badge's title on hover (pages.badge, pages.how). `said` lists the badges the
+   section already shows once (round 6: one DEMO/REPLAY badge per section, not per row): those rows get a plain
+   "How we know" instead of repeating it. #}
+{% macro source(labelled_by, reason, event_source, frame_url=none, said=()) %}{% set full = labelled_by|how(reason, event_source, frame_url) %}{% set k = labelled_by|badge(event_source) %}<details class="src"><summary title="{{ full }}">{% if k in said %}<span class="how">How we know</span>{% else %}<span class="badge b-{{ k }}">{{ k }}</span><span class="sr"> How we know</span>{% endif %}</summary><span class="why">{{ full }}</span></details>{% endmacro %}

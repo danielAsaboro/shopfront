@@ -61,13 +61,16 @@ def test_desk_leads_with_the_record_linking_to_every_check_and_the_report(monkey
     keep_three(main.checks)
     monkeypatch.setattr(main, "_visits", lambda d: busy(d))
     page = TestClient(main.app).get("/", params={"date": "2026-10-14"}).text
-    record = page.split('<section class="block record"')[1].split("</section>")[0]
-    assert 'Northline Parcel: 3 &#34;business closed&#34; scans in October, all during posted hours' in record \
-        or 'Northline Parcel: 3 "business closed" scans in October, all during posted hours' in record
+    # round 6: the record is one line near the top, with the report link; the checks open below it
+    line = html.unescape(page.split('<section class="record-line"')[1].split("</section>")[0])
+    assert 'Northline Parcel: 3 "business closed" scans in October, all during posted hours; 1 more carrier.' in line
+    assert "at stake" not in line and 'href="/report?month=2026-10"' in line
+    record = page.split('<section class="record">')[1].split("</section>")[0]
+    assert 'Northline Parcel: 3 "business closed" scans in October, all during posted hours' in html.unescape(record)
     links = re.findall(r'<a href="(/\?[^"]+)">', record)
     assert len(links) == 4 and all("attempt=" in x and "claim=business_closed" in x for x in links)
-    assert 'href="/report?month=2026-10"' in record
-    assert page.index('<section class="block record"') < page.index('<section class="lead">')  # near the top
+    assert page.index('<section class="record-line"') < page.index('<section class="lead">')  # near the top
+    assert page.index('<section class="lead">') < page.index('<details class="block fold" id="record-more">')
 
 
 def test_report_is_one_printable_page_of_the_month(monkeypatch):
