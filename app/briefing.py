@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, time, timedelta
 
+from app.bedrock_budget import HELD_REASON
 from app.cache import ClassificationCache
 from app.classify.base import Classifier
 from app.classify.bedrock import BedrockClassifier
@@ -32,9 +33,12 @@ def _door_events(ring: RingClient, day: date, stage0: dict | None) -> list:
 def classify_day(ring: RingClient, classifier: Classifier, day: date,
                  hours: dict[int, tuple[int, int] | None],
                  cache: ClassificationCache | None = None, live=None, frames=None,
-                 webhooks=None, stats: dict | None = None) -> list[ClassifiedVisit]:
+                 webhooks=None, stats: dict | None = None, focus=None) -> list[ClassifiedVisit]:
     """Every door visit that day, labelled. Stages follow Ring's CV guidelines: Ring's motion sub_type
-    first (free; from a webhook or from the Event History composite filter), then the rules or Bedrock. Pass `stats` to get the funnel counts back."""
+    first (free; from a webhook or from the Event History composite filter), then the rules or Bedrock. Pass `stats` to get the funnel counts back.
+
+    `focus(event)` (app/bedrock_budget.py) says why Bedrock may look at an event, or None: then no frame is
+    downloaded and the rules label it, saying it was held back. Without `focus`, every event may go."""
     open_hours = posted_hours(hours, day)
     tz = getattr(ring, "tz", None)
     stage0 = webhooks.day(day, tz) if webhooks is not None and tz is not None else None
@@ -45,6 +49,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
     skipped: list[DoorEvent] = []
     ring_labelled: list[ClassifiedVisit] = list((stage0 or {}).get("ring_labelled", []))
     live_views: list[DoorEvent] = []
+    held = 0
     for e in _door_events(ring, day, stage0):  # Event History events get the same stage 0 as webhooks
         route = stage0_route(e)
         if e.kind == "on_demand":
@@ -74,6 +79,10 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
             visits.append(ClassifiedVisit(e, VisitType(hit["type"]), hit["confidence"], hit["reason"],
                                           "bedrock", hit.get("request_id")))
             continue
+        if focus is not None and not focus(e):  # not near an order or a checked scan: no frame, no call
+            held += 1
+            visits.append(ring_person(classifier.fallback.classify(e, open_hours, note=HELD_REASON), HELD_REASON))
+            continue
         no_frame = NO_FRAME.get(e.source, f"{e.source} event, no frame")
         if isinstance(ring, RingApiClient):
             try:
@@ -90,7 +99,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
         visits.append(ring_person(v, no_frame))  # Bedrock's label stands; a rules fallback defers to Ring's alert
     if stats is not None:
         stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped,
-                                     "live_views": live_views}))
+                                     "live_views": live_views}), held_from_bedrock=held)
     return sorted(visits, key=lambda v: v.event.timestamp)
 
 
@@ -153,9 +162,10 @@ def _is_open(v: ClassifiedVisit, open_hours: tuple[time, time] | None) -> bool:
 def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_name: str,
                    hours: dict[int, tuple[int, int] | None],
                    cache: ClassificationCache | None = None, live=None, frames=None, webhooks=None,
-                   stats: dict | None = None) -> Briefing:
-    today = classify_day(ring, classifier, day, hours, cache, live, frames, webhooks, stats)
-    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames, webhooks)
+                   stats: dict | None = None, focus=None) -> Briefing:
+    today = classify_day(ring, classifier, day, hours, cache, live, frames, webhooks, stats, focus)
+    last_week = classify_day(ring, classifier, day - timedelta(days=7), hours, cache, live, frames, webhooks,
+                             focus=focus)
     open_hours = posted_hours(hours, day)
 
     hourly, hourly_lw = _hourly(today), _hourly(last_week)

@@ -51,6 +51,11 @@ class Settings:
     classifier: str = _env("CLASSIFIER", "auto")
     aws_region: str = _env("AWS_REGION", "us-east-1")
     bedrock_model_id: str = _env("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+    # USD per million tokens, for the footer's cost estimate (app/bedrock_budget.py). The defaults are Claude
+    # Haiku 4.5's list price, not verified against the AWS Bedrock pricing page: set both to make it verified.
+    bedrock_price_in: float = float(_env("BEDROCK_PRICE_INPUT_PER_MTOK") or 1.0)
+    bedrock_price_out: float = float(_env("BEDROCK_PRICE_OUTPUT_PER_MTOK") or 5.0)
+    bedrock_price_set: bool = bool(_env("BEDROCK_PRICE_INPUT_PER_MTOK") and _env("BEDROCK_PRICE_OUTPUT_PER_MTOK"))
 
     # Dispute packs are signed (app/pack_signing.py): "local" (default, an Ed25519 key made in the data folder)
     # or "kms" with SHOPFRONT_SIGNING_KEY_ARN (an ECC_NIST_P256 key; infra/template.yaml's PackSigningKey).

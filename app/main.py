@@ -27,7 +27,7 @@ from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
 from app import checks as kept_checks
-from app import coverage, dispute, pack_signing, pages, provenance
+from app import bedrock_budget, coverage, dispute, pack_signing, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, RING_SERVER_PATHS, UNSAFE, OwnerGate, PublicDemoGate
@@ -92,6 +92,7 @@ ring_link = RingLink(DATA, client_id=settings.ring_client_id, client_secret=sett
                      hmac_key=settings.ring_hmac_key)
 source = RingSource(settings, DATA / "ring-access-token", ring_link)
 live = LiveLog(DATA, settings.tz)
+label_requests = bedrock_budget.LabelRequests(DATA / "bedrock-requests.json")  # days the owner asked Bedrock about
 pack_signer = pack_signing.make_signer(settings, DATA)  # dispute packs are signed (app/pack_signing.py)
 scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
 ask_probe = AskProbe(settings.aws_region, settings.bedrock_model_id)  # can Ask reach Bedrock from here?
@@ -195,10 +196,44 @@ def _ring():
 
 def _briefing(day: date, stats: dict | None = None):
     return build_briefing(_ring(), classifier, day, profile.get().name, profile.hours(), cache, live, frames,
-                          webhook_log, stats)
+                          webhook_log, stats, _focus())
 
 
 _request_visits: ContextVar[dict | None] = ContextVar("request_visits", default=None)
+_scan_focus: ContextVar[list | None] = ContextVar("scan_focus", default=None)
+
+
+def _kept_scans() -> list[datetime]:
+    out = []
+    for c in checks.all():
+        try:
+            out.append(datetime.combine(date.fromisoformat(c["day"]), datetime.strptime(c["at"], "%H:%M").time(),
+                                        settings.tz))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return out
+
+
+def _focus() -> bedrock_budget.Focus:
+    """Which events Bedrock may look at (app/bedrock_budget.py): near an order's window, a scan being checked
+    (this request's or one the owner kept), or on a day the owner asked about."""
+    return bedrock_budget.Focus(settings.tz, book.for_day, lambda: (_scan_focus.get() or []) + _kept_scans(),
+                                label_requests.asked)
+
+
+def _focus_scan(at: datetime) -> None:
+    """A scan is being checked: Bedrock may look at the door around it, so the days it touches are labelled
+    again in this request (the cache keeps what Bedrock already said)."""
+    at = _local(at)
+    scans = _scan_focus.get()
+    if scans is None:
+        scans = []
+        _scan_focus.set(scans)
+    scans.append(at)
+    memo = _request_visits.get()
+    if memo is not None:
+        for d in {(at - bedrock_budget.REACH).date(), at.date(), (at + bedrock_budget.REACH).date()}:
+            memo.pop(d, None)
 
 
 def _visits(day: date):
@@ -206,7 +241,7 @@ def _visits(day: date):
     memo = _request_visits.get()
     if memo is not None and day in memo:
         return list(memo[day])
-    vs = classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
+    vs = classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log, focus=_focus())
     if memo is not None:
         memo[day] = vs
     return list(vs)
@@ -448,7 +483,27 @@ def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> di
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
             "money": _week_money(day), "attempt": checked, "funnel": stats,
             "labels": pages.labelled_by_text(stats, b.classifier), "first_run": not book._all(),
+            "bedrock_cost": _bedrock_cost(day, b.classifier),
+            "bedrock_held": stats.get("held_from_bedrock", 0) if b.classifier == "bedrock" else 0,
             "replayed": bool(stats.get("replayed")), **_record(day)}
+
+
+def _bedrock_cost(day: date, labeller: str) -> str | None:
+    """The footer's Bedrock line for `day`: calls, tokens and the estimated cost (app/bedrock_budget.py)."""
+    calls = DATA / "bedrock-calls.jsonl"
+    if labeller != "bedrock" and not calls.exists():
+        return None
+    c = bedrock_budget.day_cost(calls, day, settings.bedrock_price_in, settings.bedrock_price_out, settings.tz)
+    return bedrock_budget.cost_line(c, settings.bedrock_price_set)
+
+
+@app.post("/bedrock/label")
+async def bedrock_label(request: Request):
+    """The owner asks Bedrock to label the rest of a day's door events (owner-only and same-site, app/owner.py)."""
+    form = await request.form()
+    day = _parse_day(str(form.get("date") or "") or None)
+    label_requests.ask(day)
+    return RedirectResponse(f"/?{urlencode({'date': day.isoformat()})}#events", status_code=303)
 
 
 @app.get("/connect", response_class=HTMLResponse)
@@ -913,6 +968,7 @@ def sample_status() -> dict | None:
 
 def _check_attempt(at: datetime, claim: str = ATTEMPTED) -> dict:
     at = _local(at)
+    _focus_scan(at)
     status = _status_notices(at)
     if claim == BUSINESS_CLOSED:
         return check_closed_scan(at, _around(at, dispute.WINDOW), posted_hours(profile.hours(), at.date()),
@@ -955,6 +1011,11 @@ def _made(value: str | None) -> datetime | None:
 
 def _pack(day: date, at: str | None, claim: str | None, order: str | None, carrier: str, tracking: str,
           made: str | None = None) -> dict:
+    try:
+        if at:  # the scan is being checked: Bedrock may look around it before the pack reads the door
+            _focus_scan(datetime.combine(day, datetime.strptime(at, "%H:%M").time()))
+    except ValueError:
+        pass  # refused below with a plain message
     visits = _visits(day)
     e = book.get(order) if order else None
     if order and not e:

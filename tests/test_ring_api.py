@@ -314,6 +314,9 @@ def test_one_dashboard_load_asks_ring_once_per_day_and_a_reload_asks_nothing(mon
     monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
     monkeypatch.setattr(main, "classifier", BedrockClassifier("us-east-1", "m", client=NoCall()))
     main.profile.save(Profile("Shop", "", 15.0, "$"))
+    # An order with no window: Bedrock may look at the whole day, so its frames are asked for (app/bedrock_budget.py
+    # sends no frame for events away from any order or checked scan)
+    main.book.add(DAY, "Bay Mills")
     c = TestClient(main.app)
     assert c.get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
     days = {DAY - timedelta(days=i) for i in range(8)}  # the day, the week for the money line, last week

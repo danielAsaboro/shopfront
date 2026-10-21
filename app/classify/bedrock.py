@@ -195,6 +195,7 @@ class BedrockClassifier(Classifier):
             return self.fallback.classify(event, open_hours, note=no_frame_reason)
 
         rec = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event_id": event.id,
+               "event_day": event.timestamp.date().isoformat(),  # the shop-local day the cost is counted on
                "model_id": self.model_id, "frame_bytes": len(event.snapshot)}
         started = clock.perf_counter()
         resp: dict = {}

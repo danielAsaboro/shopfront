@@ -33,6 +33,7 @@ import pytest  # noqa: E402
 from hypothesis import settings as hypothesis_settings  # noqa: E402
 
 import app.main as main  # noqa: E402
+from app.bedrock_budget import LabelRequests  # noqa: E402
 from app.cache import ClassificationCache  # noqa: E402
 from app.checks import CheckBook  # noqa: E402
 from app.classify.rules import RulesClassifier  # noqa: E402
@@ -114,6 +115,7 @@ def no_local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "live", LiveLog(d, main.settings.tz))
     monkeypatch.setattr(main, "classifier", RulesClassifier())
     monkeypatch.setattr(main, "pack_signer", LocalSigner(d / "pack-signing-key.pem"))
+    monkeypatch.setattr(main, "label_requests", LabelRequests(d / "bedrock-requests.json"))
     # Starlette's TestClient connects as client "testclient" to host "testserver". Production never
     # treats either as this machine, so only the tests add them.
     monkeypatch.setattr(main, "gate", OwnerGate(d / "owner-secret", hosts={"testserver"},
