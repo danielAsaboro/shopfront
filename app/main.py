@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import agent as shop_agent
+from app.ask_probe import AskProbe
 from app.briefing import _is_open, build_briefing, classify_day
 from app.cache import ClassificationCache
 from app.classify import make_classifier
@@ -59,6 +60,14 @@ webhook_log = make_webhook_log(settings, DATA / "ring-webhooks.jsonl")  # file, 
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
 scan_reader = ScanReader(settings.aws_region, settings.bedrock_model_id)  # tracking-page screenshots
+ask_probe = AskProbe(settings.aws_region, settings.bedrock_model_id)  # can Ask reach Bedrock from here?
+
+
+def _ask_state() -> str | None:
+    """None when Ask Shopfront can answer from this machine, else why not (app/ask_probe.py)."""
+    if classifier.name != "bedrock" and not _aws_creds_available(settings.aws_region):
+        return "NO_AWS_SIGN_IN"
+    return ask_probe.state()
 
 
 def make_gate(s, secret_file: Path) -> OwnerGate:
@@ -323,7 +332,8 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         "status_text": STATUS_TEXT,
         "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
         "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE,
-        "can_ask": classifier.name == "bedrock" or _aws_creds_available(settings.aws_region),
+        **({"can_ask": True, "ask_reason": None} if (ask := _ask_state()) is None else
+           {"can_ask": False, "ask_reason": ask}), "ask_example": pages.ASK_EXAMPLE,
         "can_read_scan": scan_reader.available()})
 
 
@@ -888,6 +898,7 @@ async def api_ask(request: Request):
     except ValueError as exc:
         return JSONResponse({"error": "BAD_QUESTION", "detail": str(exc)}, status_code=400)
     except shop_agent.AgentUnavailable as exc:  # reason: named state; message: the sentence to show
+        ask_probe.mark(exc.reason)  # a lasting failure: the page stops offering the box
         return JSONResponse({"error": "AGENT_UNAVAILABLE", "reason": exc.reason, "message": exc.message,
                              "detail": str(exc)}, status_code=503)
 

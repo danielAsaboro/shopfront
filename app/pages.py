@@ -131,6 +131,17 @@ def scan_lead(finding: dict | None, carrier: str = "") -> str | None:
     return f"{label} scan at {when}" + (f" ({carrier})" if carrier else "") + f". {verdict(finding)}"
 
 
+# Shown where Ask can't run, so the owner sees what it does. Recorded from the fake agent in
+# tests/test_ask_example.py (the same tools over the demo's door data), never from Bedrock: the page says so.
+ASK_EXAMPLE = {
+    "question": "Did the flour come yesterday?",
+    "answer": "Yes. Ring's package alert put a courier at the door at 10:12, and Shopfront matched it to "
+              "Hillside Mill's order PO-1041. Ring has no door-answered signal, so this doesn't show the sacks "
+              "were handed over.",
+    "tools": "deliveries(yesterday)",
+}
+
+
 def labelled_by_text(funnel: dict, classifier: str) -> str:
     """What actually labelled the day's door events, from the funnel counts (never from the
     classifier's name alone: 'bedrock' mode with no frames means Bedrock labelled nothing)."""
