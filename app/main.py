@@ -51,6 +51,9 @@ templates.env.filters.update(
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label,
     illustration=illustrations.url_for, illustration_alt=illustrations.alt_for, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
+# Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
+templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(illustrations.FAVICON)
+
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
 book = DeliveryBook(DATA / "expected-deliveries.json")
@@ -814,6 +817,11 @@ def frame(request: Request, name: str):
     if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/favicon.ico")
+def favicon():  # for clients that ask for it anyway; the pages carry the icon inline
+    return Response(illustrations.FAVICON, media_type="image/svg+xml", headers={"Cache-Control": "max-age=86400"})
 
 
 @app.get("/illustrations/{name}.svg")

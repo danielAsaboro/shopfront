@@ -81,7 +81,7 @@
       {% endfor %}
     </div>
     {% if ns.drawn %}<p class="why" style="margin:4px 0 0">Door around {{ 'the scan' if p.claim else 'the courier' }}: {{ 'illustrations, not camera frames' if ns.drawn == ns.shown else 'the drawn ones are illustrations, not camera frames' }}. Shopfront drew them for its demo events; no camera took them, and they aren't in the zip.</p>{% endif %}
-    <table>
+    <table class="log">
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
       {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td{% if not t.confirmed %} class="muted"{% endif %}>{{ t.type|visit_label(t.confirmed) }}</td><td class="why">{{ t.labelled_by|how(t.reason, none if t.event_source == 'synthetic' else t.event_source, t.frame_url) }}</td></tr>{% endfor %}
     </table>

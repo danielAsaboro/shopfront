@@ -183,3 +183,10 @@ def svg(name: str) -> str:
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" width="320" height="240" role="img" '
             f'aria-label="{CAPTION}: {SCENES[scene]}"><title>{CAPTION}: {SCENES[scene]}</title>{_STYLE}'
             f'{body}{_caption()}</svg>')
+
+
+# The tab icon: a shop door with its bell, ink on the page colour (and the reverse in dark mode)
+FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><style>.b{fill:#1d1d1f}.f{fill:#f7f6f3}'
+           '@media (prefers-color-scheme: dark){.b{fill:#ececee}.f{fill:#151517}}</style>'
+           '<rect width="32" height="32" rx="7" class="b"/><rect x="9" y="6" width="12" height="21" rx="1.5" class="f"/>'
+           '<rect x="11.5" y="8.5" width="7" height="8" rx="1" class="b"/><circle cx="25" cy="16" r="2" class="f"/></svg>')

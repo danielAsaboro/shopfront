@@ -65,3 +65,17 @@ def test_pack_strip_shows_the_door_around_the_scan_but_the_zip_holds_no_drawing(
     z = zipfile.ZipFile(io.BytesIO(c.get(f"/dispute.zip?{q}").content))
     assert not [n for n in z.namelist() if n.endswith(".svg") or "illustration" in n.lower()]
     assert "not camera frames, not evidence, and not in this zip" in z.read("README.txt").decode()
+
+
+def test_every_page_has_an_inline_icon_and_favicon_ico_answers(c):  # noqa: F811
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,' in page
+    r = c.get("/favicon.ico")
+    assert r.status_code == 200 and r.text.startswith("<svg")
+
+
+def test_phone_rows_keep_how_we_know(c):  # noqa: F811
+    """At 390px the provenance column used to be hidden on delivery rows; it now stacks under the row."""
+    page = c.get(f"/?date={WEDNESDAY}").text
+    phone = page.split("@media (max-width: 560px)")[1].split("@media print")[0]
+    assert ".receipts td.why, .log td.why { display: block;" in phone

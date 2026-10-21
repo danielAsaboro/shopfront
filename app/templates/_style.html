@@ -127,6 +127,17 @@
     .figures .v { font-size: 22px; }
     td.why, th.why { display: none; }
     .fields > .grow { flex-basis: 100%; }
+    /* "How we know" stays on phones: each row stacks it under the row instead of dropping the column */
+    .receipts tr, .log tr { display: grid; column-gap: 10px; border-bottom: 1px solid var(--line); padding: 8px 0; }
+    .receipts tr { grid-template-columns: 42px 1fr auto; }
+    .log tr { grid-template-columns: auto auto 1fr; }
+    .receipts td, .log td { border-bottom: 0; padding: 0; }
+    .receipts td.thumb { grid-column: 3; grid-row: 1; width: auto; }
+    .receipts td.why, .log td.why { display: block; grid-column: 1 / -1; grid-row: 2; padding-top: 4px; width: auto; }
+    .receipts td.why { grid-column: 2 / -1; }
+    .receipts td.why:empty { display: none; }
+    .log tr:first-child { display: none; }
+    figure.still img { width: 64px; }
   }
   @media print {
     .site nav, .no-print { display: none; }
