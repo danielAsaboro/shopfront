@@ -5,8 +5,8 @@ Sponsor mechanism (critical path): orders/invoices CSV → Ring Event History + 
 Features in scope: orders import · receiving desk (orders vs couriers seen) · business-closed / attempted scan check · dispute pack + zip · staff tap · Ask Shopfront · morning briefing (secondary: doorbell presses while closed, staff at the door, traffic vs last week).
 Not building: alerts/push, multi-shop, Ring Appstore listing/certification, account-linking UI.
 
-Stack: Python 3.11+, FastAPI, Jinja, httpx, boto3. Demo: `.venv/bin/python -m scripts.demo` · Run: `.venv/bin/uvicorn app.main:app --reload --port 8000` · Test: `.venv/bin/python -m pytest -q` · Proof: `.venv/bin/python -m scripts.ring_proof --bedrock`
-CI does NOT exist. Tests never touch the live Ring or AWS APIs; they use MockTransport and fakes.
+Stack: Python 3.11+, FastAPI, Jinja, httpx, boto3. Demo: `.venv/bin/python -m scripts.demo` · Run: `.venv/bin/uvicorn app.main:app --reload --port 8000` · Test: `.venv/bin/pip install -r requirements-dev.txt` then `.venv/bin/python -m pytest -q` and `.venv/bin/ruff check .` · Proof: `.venv/bin/python -m scripts.ring_proof --bedrock`
+CI: .github/workflows/ci.yml runs `ruff check .` and `pytest -q` on Python 3.11 and 3.13 on every push and PR, installing requirements-dev.txt (pinned). Tests never touch the live Ring or AWS APIs; they use MockTransport and fakes, and tests/conftest.py blocks sockets and pins the environment.
 
 Repo map: app/ring/api.py (live Ring client) · app/ring/synthetic.py (demo generator) · app/ring/webhooks.py · app/live.py (live-view sessions) · app/classify/{rules,bedrock}.py · app/briefing.py · app/orders.py · app/reconcile.py · app/dispute.py · app/main.py · app/agent.py (Strands agent) · scripts/feed_webhook.py · scripts/demo.py + samples/orders.csv · docs/{ring,bedrock,receiving-desk,receipts}.md · evidence/ (live captures only) · scripts/ring_proof.py
 

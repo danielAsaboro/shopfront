@@ -60,12 +60,37 @@ The demo keeps its data in `.data/demo` (git-ignored) and starts fresh each run.
 is taken. To run the app on its own, use `.venv/bin/uvicorn app.main:app --port 8000`. With no Ring
 token it uses synthetic events, and the banner says so.
 
-Tests: `.venv/bin/python -m pytest -q` (all pass; nothing in the suite calls Ring or AWS).
+Tests and lint need the dev requirements (pytest, hypothesis, ruff, mypy):
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+.venv/bin/ruff check .
+```
+
+The suite blocks network access, so nothing in it calls Ring or AWS. CI runs the same two commands
+on Python 3.11 and 3.13 ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+
+### On your phone
+
+On the computer itself (127.0.0.1) Shopfront never asks who you are. Any other device has to pair
+first, so someone else on the shop Wi-Fi can't read your orders or door log:
+
+1. Start the app so the network can reach it: `.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+2. On the computer, open http://127.0.0.1:8000/setup. "Use Shopfront on your phone" shows a 6-digit code.
+3. On the phone, open the computer's address (e.g. `http://192.168.1.20:8000`). It asks for the code
+   instead of showing the page; enter it. It works once, lasts 10 minutes and allows 5 tries. The phone then stays
+   signed in for 180 days.
+4. "Sign out every paired device" on `/setup` revokes every phone at once.
+
+IP addresses and localhost always work. To reach Shopfront by a name instead (e.g.
+`http://shop-mac.local:8000`), add it to `SHOPFRONT_ALLOWED_HOSTS`; other names are refused, which
+stops DNS-rebinding pages. Forms and API calls from other websites are refused too.
 
 ### With a real Ring doorbell
 
 1. Sign in to the [Ring Developer Playground](https://developer.amazon.com/ring/console/playground) (a free Amazon Developer account) and generate an access token. It lasts about 30 minutes.
-2. Open http://127.0.0.1:8000/connect and paste it. Or, in `.env`, set `RING_MODE=live` and `RING_ACCESS_TOKEN=<token>`. Optionally set `RING_DEVICE_ID`; otherwise Shopfront picks the doorbell from `GET /v1/devices`.
+2. Open http://127.0.0.1:8000/connect and paste it. Or, in `.env`, set `RING_MODE=live` and `RING_ACCESS_TOKEN=<token>`. Optionally set `RING_DEVICE_ID`; otherwise Shopfront picks the first camera or doorbell from `GET /v1/devices`. Set `RING_ACCOUNT_ID` to your Ring account ID (`GET /v1/users/me`) to ignore webhooks for any other account; when empty, Shopfront learns it from the live token.
 3. For Bedrock labels and Ask Shopfront, sign in to AWS (`aws login`) with Bedrock access to the model in `BEDROCK_MODEL_ID`.
 4. Restart and open the page. The footer shows the Ring X-Request-ID of the last call.
 5. Live view: open http://127.0.0.1:8000/live and press a Playground scene (Package, Vehicle, Motion). The Playground plays its clips over the WHEP live-view stream, so this is where the simulator shows up.
@@ -74,6 +99,10 @@ Tests: `.venv/bin/python -m pytest -q` (all pass; nothing in the suite calls Rin
 If Ring refuses, the page shows the named reason (`TOKEN_REJECTED`, `FORBIDDEN`, …). It never swaps in synthetic data.
 Real Ring webhooks need a public HTTPS URL for `POST /webhooks/ring` and the HMAC key from partner
 onboarding in `RING_HMAC_KEY`. The `demo-key` in `.env.example` is only for local replays.
+
+Door frames are pictures of people, so Shopfront deletes them after `SHOPFRONT_FRAME_DAYS` days
+(default 30; `0` keeps them). Each frame on the receiving desk and the dispute pack also has a
+"Delete frame" button.
 
 ## Why
 
