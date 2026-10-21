@@ -1,9 +1,9 @@
 # Shopfront on AWS
 
 **Status: template ready, not yet deployed.** [infra/template.yaml](../infra/template.yaml) passes
-`sam validate --lint`, and `sam build` packages it, but no stack has been deployed and no Ring
-webhook has reached it. Until someone deploys it and a Ring delivery lands in the table, every
-claim below is about the template and its tests, not about a running service.
+`sam validate --lint` and `cfn-lint`, and `sam build` packages both functions, but no stack has been
+deployed, no Ring webhook has reached it, and there is no public demo URL yet. Until someone deploys it,
+every claim below is about the template and its tests, not about a running service.
 
 Shopfront runs on the shop's own computer. Two things need more than that:
 
@@ -15,6 +15,9 @@ Shopfront runs on the shop's own computer. Two things need more than that:
 
 The template adds the first: a small, always-on endpoint that takes Ring's webhooks, checks them
 exactly as the app does, and keeps them in DynamoDB, where the app reads them when it runs.
+
+It also adds a **public demo** (section 2): the app itself, read-only, over the one-command demo's
+made-up shop, at a link anyone can open. Same `sam deploy`; the link is the `DemoUrl` output.
 
 ## 1. What the template deploys
 
@@ -63,7 +66,66 @@ from [tests/test_webhooks.py](../tests/test_webhooks.py), against moto's in-proc
 Manager (the test table is built from the template's own key schema). It also checks that the packaged
 code imports with no third-party packages, and that the function's IAM actions are exactly the four above.
 
-## 2. Deploy (one command, from `infra/`)
+## 2. The public demo
+
+A second function in the same stack serves Shopfront's own pages to anyone with the link, so a judge
+can see the receiving desk, the business-closed check and the dispute pack without installing anything.
+It is [app/public_demo.py](../app/public_demo.py), run by
+[Mangum](https://github.com/Kludex/mangum) behind a Function URL.
+
+```
+Visitor ──HTTPS GET──▶ Function URL (no auth) ──▶ Lambda: Mangum ──▶ PublicDemoApp (allowlist + banner)
+                                                                        │ only GET/HEAD reads
+                                                                        ▼
+                                                     app.main, with PublicDemoGate and read-only stores
+                                                     over /tmp: the made-up shop, seeded at cold start
+```
+
+**What it shows.** At each cold start it builds the shop `python -m scripts.demo` builds, with that
+script's own functions: the most recent open day before today whose synthetic door leaves a scan the
+door can answer, [samples/orders.csv](../samples/orders.csv) dated to that day, one signed
+`package_delivery` webhook replay for the flour courier, and the dairy order's "business closed" scan,
+picked and checked through the app. `/` opens on that day, and every page carries the banner
+**"Public demo: made-up shop, made-up deliveries."** with links to the desk, the check and the pack.
+
+**What it can't do.** Nothing a visitor does is kept, and nothing reaches Ring or Bedrock:
+
+| Layer | How |
+|---|---|
+| Allowlist ([`PublicDemoApp`](../app/public_demo.py)) | Only `GET`/`HEAD` on `/`, `/dispute`, `/dispute.zip`, `/setup`, `/api/{deliveries,events,briefing,attempt,dispute,webhooks}`, `/healthz`, `/illustrations/*`, `/frames/*` (and the favicon) reach the app. Everything else, on every path, is answered 403 before the body is read: a page that says what the action would do on the shop's own computer, or `{"error": "PUBLIC_DEMO"}` for `/api/*` and the webhook. New routes are refused until someone adds them. The business-closed check and the dispute pack are GETs that compute in memory, so they work. |
+| Owner gate ([`PublicDemoGate`](../app/owner.py)) | There is no owner: no request is local, no cookie is valid, no code pairs, no secret exists. A request passes only inside the allowlist's `admit_visitor()` (a context variable, not anything a visitor sends). `app.main:app` started with `SHOPFRONT_PUBLIC_DEMO=1` but without the allowlist refuses every route, the webhook included. |
+| Stores | Orders, profile, frames, webhook log, live sessions and the classification cache are swapped for versions that raise on any write. The Ring source is pinned to the synthetic generator and never reads a token file; pasting a token or pairing is refused. |
+| No Bedrock | The rules classifier labels the door; Ask shows its labelled example answer; the screenshot reader is off; the agent factory raises. The function's IAM role can only write its own logs, so it couldn't call Bedrock, DynamoDB, S3 or Secrets Manager anyway. |
+| No background work | It answers the ASGI lifespan itself, so nothing the app starts in the background (Ring status polling) runs. |
+| Crawlers | `robots.txt` disallows everything and every response says `X-Robots-Tag: noindex, nofollow`. |
+
+[tests/test_public_demo.py](../tests/test_public_demo.py) walks every route of `app.main` with every
+HTTP method, plus the banner's links, and checks after each request that no file under the test's data
+folder and no store changed, and that nothing opened a socket, an httpx connection, a boto3 client, a
+live Ring client or the agent. It also runs the Mangum handler on Function URL events for `/`,
+`/dispute` and `/dispute.zip`.
+
+**Why Mangum and not the Lambda Web Adapter.** Mangum turns the Function URL event into an ASGI call in
+the same Python process, so the handler is an ordinary function: the tests above call it with a Function
+URL event, with no Docker and no emulator. The Web Adapter would run uvicorn as a second process behind
+an extension layer published from another AWS account, pinned by region-specific ARN, which the template
+would have to trust and keep current, for no gain on a few requests a day.
+
+| Setting | Value | Why |
+|---|---|---|
+| Runtime | Python 3.12, arm64 | Same as the webhook function. [infra/package_demo.py](../infra/package_demo.py) (called by `sam build` through the Makefile) copies `app/`, `scripts/demo.py`, `scripts/feed_webhook.py` and `samples/orders.csv`, and pip-installs [infra/public-demo-requirements.txt](../infra/public-demo-requirements.txt) as arm64 wheels (about 16 MB). boto3 comes from the runtime. |
+| Memory, timeout | 512 MB, 10 s | Lambda's CPU grows with memory. A cold start (imports, seeding, the story walk) took 0.8 s on a laptop; a warm page about 80 ms. Not yet measured on Lambda. |
+| Reserved concurrency | `DemoConcurrency`, default 2 | The cost cap: at most two requests run at once; the rest get 429 until one finishes. `0` switches the demo off without deleting it. `-1` reserves nothing, for accounts whose concurrency limit (10 on new accounts) is too low to reserve any: then the demo is uncapped. |
+| Logs | Own log group, `DemoLogRetentionDays` (default 7) | JSON, warnings and errors only. |
+| Function URL | `AuthType: NONE` | It's a public demo: nothing private is in it, and it refuses every write. |
+
+To see it on your machine first:
+
+```sh
+SHOPFRONT_PUBLIC_DEMO=1 .venv/bin/uvicorn app.public_demo:app --port 8404   # open http://127.0.0.1:8404
+```
+
+## 3. Deploy (one command, from `infra/`)
 
 You need the [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html),
 `make`, `python3`, and an AWS sign-in that can create the stack's resources (`aws login`, SSO, or a profile).
@@ -83,14 +145,29 @@ sam build && sam deploy --guided
 | RingAccountId | empty | The owner's Ring Account ID (`meta.account_id`, `GET /v1/users/me`). Empty accepts any account. |
 | EventDays | 90 | Days a webhook event is kept. |
 | FrameDays | 30 | Days a frame is kept in S3. |
-| LogRetentionDays | 30 | Days CloudWatch keeps the function's logs. |
+| LogRetentionDays | 30 | Days CloudWatch keeps the webhook function's logs. |
+| DemoConcurrency | 2 | Public demo requests at once (the cost cap). `0` = demo off, `-1` = no reservation (see section 2). |
+| DemoLogRetentionDays | 7 | Days CloudWatch keeps the public demo's logs. |
 
-When it says the function's URL "has no authentication. Is this okay?", answer **y** (the HMAC is the
-authentication) and **Y** to IAM role creation. SAM saves the answers in `infra/samconfig.toml`, which is
+SAM asks twice whether a function URL "has no authentication. Is this okay?": answer **y** to both (the
+webhook's authentication is the HMAC; the demo is public on purpose and read-only), and **Y** to IAM role
+creation. SAM saves the answers in `infra/samconfig.toml`, which is
 git-ignored because it can hold your Ring IDs; later deploys are just `sam build && sam deploy`.
 
-The stack's outputs: `WebhookUrl`, `HmacSecretArn`, `WebhookTableName`, `FramesBucketName`, `AppPolicyArn`,
-`LogGroupName`.
+The stack's outputs: `DemoUrl`, `WebhookUrl`, `HmacSecretArn`, `WebhookTableName`, `FramesBucketName`,
+`AppPolicyArn`, `LogGroupName`, `DemoLogGroupName`.
+
+`DemoUrl` (`https://<id>.lambda-url.<region>.on.aws/`) is the link for judges. Open it once yourself:
+the first request is the cold start. To print it again later:
+
+```sh
+aws cloudformation describe-stacks --stack-name shopfront \
+  --query "Stacks[0].Outputs[?OutputKey=='DemoUrl'].OutputValue" --output text
+```
+
+If the deploy fails with "decreases the account's UnreservedConcurrentExecution below its minimum
+value", your account can't reserve concurrency: deploy with
+`sam deploy --parameter-overrides DemoConcurrency=-1`.
 
 ### Put the HMAC key in the secret
 
@@ -148,7 +225,7 @@ Differences from the file log, on purpose: events from another device or account
 stored, so `ignored()` is 0; and `recent()` reads the shop's whole table (bounded by the TTL), newest by
 Ring's timestamp first.
 
-## 3. What it costs at one shop's volume
+## 4. What it costs at one shop's volume
 
 Assumptions: one door, 200 Ring notifications a day (6,000 a month), the app open all day with about
 100 page loads a day, 90 days of events kept. List prices in us-east-1; check the pricing pages for your
@@ -164,12 +241,17 @@ region.
 | Secrets Manager | 1 secret, a few thousand calls | ~$0.40 |
 | S3 | nothing written yet; frames for 30 days would be a few hundred MB | $0 now, under $0.02 if used |
 | CloudWatch Logs | a few MB | under $0.01 |
+| Public demo (arm64, 512 MB) | a few hundred visits × ~10 requests × ~0.1 s | under $0.01 (inside the free tier) |
 | **Total** | | **under $1 a month** |
 
-The two fixed-ish costs are the secret and the whole-table read on each page load. Bedrock, which
+The two fixed-ish costs are the secret and the whole-table read on each page load. The public demo is
+the only part strangers can make you pay for. With `DemoConcurrency=2` the worst case is two requests
+running every second of the hour: 3,600 GB-s (about $0.05) plus ~72,000 requests (about $0.015), so
+roughly $0.06 an hour, $1.50 a day, for as long as someone keeps it up. Set `DemoConcurrency=0` and
+redeploy to stop it at once. Bedrock, which
 the app calls directly, is separate ([bedrock.md](bedrock.md)).
 
-## 4. Tear down
+## 5. Tear down
 
 The bucket must be empty before CloudFormation can delete it:
 
@@ -178,16 +260,23 @@ aws s3 rm s3://<FramesBucketName> --recursive
 cd infra && sam delete
 ```
 
-`sam delete` removes the function, its URL, the table (and every event in it), the secret, the log
-group, the role and the policy. Remove the Webhook URL from the Ring developer console too, or Ring
+`sam delete` removes both functions and their URLs (the demo link stops working), the table (and every
+event in it), the secret, the log groups, the roles and the policy. Remove the Webhook URL from the Ring developer console too, or Ring
 keeps calling an address that no longer answers. Set `SHOPFRONT_WEBHOOK_STORE` back to empty in `.env`.
 
-## 5. Checking the template yourself
+## 6. Checking the template yourself
 
 ```sh
-pip install aws-sam-cli            # in its own virtualenv, not the app's
+pip install aws-sam-cli cfn-lint  # in its own virtualenv, not the app's
 cd infra
 sam validate --lint                # SAM transform + cfn-lint
-sam build                          # runs package_lambda.py; output in infra/.aws-sam/ (git-ignored)
-.venv/bin/python -m pytest -q tests/test_lambda_webhook.py tests/test_webhook_store.py   # from the repo root
+cfn-lint template.yaml
+sam build                          # runs package_lambda.py and package_demo.py; output in infra/.aws-sam/ (git-ignored)
+cd .. && .venv/bin/python -m pytest -q tests/test_lambda_webhook.py tests/test_webhook_store.py tests/test_public_demo.py
 ```
+
+`sam build` downloads the demo's wheels for arm64, so it needs network access to PyPI, and `python3` with
+pip on the PATH. To run the built demo handler on this machine instead of Lambda, build it for this
+machine with `python3 infra/package_demo.py --local /tmp/demo-build` and call
+`app.public_demo.handler(<Function URL event>, None)` with `SHOPFRONT_PUBLIC_DEMO=1` and `/tmp/demo-build`
+first on `sys.path` (boto3 must be importable, as it is on Lambda).
