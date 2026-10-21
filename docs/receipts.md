@@ -62,15 +62,19 @@ near midnight also look at the neighbouring day. Outcomes, first match wins:
 | `camera_offline` | Nothing near then, and Ring's `device_offline` notice covers the time | The camera may not have been watching; no draft |
 | `door_silent` | Nothing within ±30 min and no Ring status notice saying online | "Can't tell: the door recorded nothing around the scan"; no draft |
 
-**Was the camera watching?** (`app/coverage.py`) Ring documents `device_online` / `device_offline`
-webhooks (API reference, Notifications > Device Online / Device Offline) and `GET
-/v1/devices/{device_id}/status` (Device Discovery > Status), which only says whether the device is online
-*now*, so it can't speak for a past scan. Shopfront logs the notices with every other verified webhook
-and reads them for the shop's own doorbell and account. A `device_offline` covering the scan's ±10 min
-makes "nothing recorded" or "open, no courier" into `camera_offline`; door events within ±30 min show
-the doorbell was recording; with neither, the answer is `door_silent`. Every scan pack shows the camera
-line, and when no status notices have arrived (the Developer Playground sends no webhooks) its limits
-say an outage between door events wouldn't show.
+**Was the camera watching?** (`app/coverage.py`) `GET /v1/devices/{device_id}/status` (API reference,
+Device Discovery > Status) only says whether the device is online *now*, so while Ring is live Shopfront
+asks it every `SHOPFRONT_STATUS_MINUTES` (default 5) and keeps the answers (`app/ring/status.py`). Only
+the time between two consecutive answers that both said online, no more than 1.5 intervals apart, counts
+as watching; a failed check or a missed one is a gap. Ring's `device_online` / `device_offline` webhooks
+(Notifications > Device Online / Device Offline) are logged with every other verified webhook and read for
+the shop's own doorbell and account. A `device_offline` notice, or an offline status answer, covering the
+scan's ±10 min makes "nothing recorded" or "open, no courier" into `camera_offline`; status answers
+covering the whole ±10 min say the camera was watching, and the pack's camera line names that window;
+otherwise door events within ±30 min show the doorbell was recording at those moments, and the line names
+the gap in the status answers; with none of these, the answer is `door_silent`. When there are neither
+status answers nor notices (synthetic mode, or before the first check), the pack's limits say an outage
+between door events wouldn't show.
 
 Gaps are measured between instants (UTC), never wall-clock readings: on a fall-back night 01:58 PDT and
 01:03 PST are five minutes apart, not 55. A time that happened twice is read as the first, and the text

@@ -1,7 +1,7 @@
 """Event History composite filters (event_types=motion.package_delivery) that Ring may not apply.
 
 API reference, Event History > Event type filtering: dotted values filter "by event type AND detection
-subtype". CounterSign logged the Developer Playground answering a motion.vehicle query with on_demand
+subtype". Another team logged the Developer Playground answering a motion.vehicle query with on_demand
 events anyway. A package_delivery tag makes a motion event a courier "by Ring" with no model call, the
 app's strongest label, so a filter that looks ignored must tag nothing. MockTransport, documented shapes.
 """

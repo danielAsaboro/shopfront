@@ -353,11 +353,11 @@ class RingApiClient(RingClient):
         those events go to the classifier untagged, as with Smart Alerts off.
 
         A tag is only as good as the filter, and a package_delivery tag makes an event a courier with no model
-        call, so a filter that looks ignored tags nothing: the Developer Playground has answered a
-        motion.vehicle query with its on_demand events (CounterSign's log). If a composite answer holds any
-        event type the query didn't ask for, or a motion.<subtype> answer is every one of the day's motion
-        events (more than one), the filter is marked unreliable for that device, isn't asked again, and the
-        day's motion events go to the classifier untagged. `filter_notes` and the log say why.
+        call, so a filter that looks ignored tags nothing: another team's friction log shows the Developer
+        Playground answering a motion.vehicle query with its on_demand events. If a composite answer holds
+        any event type the query didn't ask for, or a motion.<subtype> answer is every one of the day's
+        motion events (more than one), the filter is marked unreliable for that device, isn't asked again,
+        and the day's motion events go to the classifier untagged. `filter_notes` and the log say why.
         """
         filters = [f.strip() for f in (self.event_types or "ding,motion").split(",") if f.strip()]
         answer = self._fetch_filtered(day, self.event_types)

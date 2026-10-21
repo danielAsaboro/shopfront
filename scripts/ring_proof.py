@@ -299,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="run every step against a MockTransport and a fake Bedrock; writes no evidence")
     p.add_argument("--no-bedrock", action="store_true", help="skip step 4 (the Bedrock label)")
+    p.add_argument("--bedrock", action="store_true", help=argparse.SUPPRESS)  # the old flag: Bedrock is now the default
     p.add_argument("--wait", type=float, default=WAIT_FOR_EVENT,
                    help=f"seconds to wait for the new event (default {WAIT_FOR_EVENT:.0f})")
     p.add_argument("--out", type=Path, default=None,

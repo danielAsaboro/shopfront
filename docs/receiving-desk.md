@@ -46,14 +46,19 @@ is a free first filter on signed webhooks:
 **Event History gets the same stage 0** (`stage0_route`, used by `app/briefing.py`). A history item has
 no sub_type field, but `event_types` takes composite values that filter "by event type AND detection
 subtype" ([API reference](https://developer.amazon.com/docs/ring/api-documentation.html), Event History >
-Event type filtering). So `RingApiClient` asks for the day twice: `ding,motion`, then
+Event type filtering). So `RingApiClient` asks for the day twice: `ding,motion,on_demand`, then
 `motion.package_delivery`; motion events in the second answer (by Ring's event ID) get
 `ring_subtype = "package_delivery"` and become couriers **by ring** with no model call. The Event History
 table lists `motion.human`, `.vehicle`, `.animal` and `.other_motion`; `package_delivery` is a detection
 subtype from the Motion Detection webhook section, so whether history honours `motion.package_delivery`
 is **unverified live**. If Ring answers 400, the filter isn't asked again and those events go to the
 classifier untagged, as with Smart Alerts off. When `RING_EVENT_TYPES` has a single composite motion
-value (`ding,motion.human`), every motion event carries that subtype with no extra call.
+value (`ding,motion.human`), every motion event carries that subtype with no extra call. A filter that
+looks ignored tags nothing: if an answer holds an event type the query didn't ask for (another team saw
+the Playground answer `motion.vehicle` with `on_demand` events), or the `motion.package_delivery` answer
+is every one of the day's motion events (more than one), that filter is marked unreliable for the
+doorbell and its motion events go to the classifier untagged. Live views (`on_demand`) are counted in the
+footer and never become visitors.
 
 A webhook and its Event History record of the same press or motion (same kind, within 5 s) count
 once; the webhook copy wins. The dashboard footer shows the funnel:
@@ -87,8 +92,9 @@ First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse 
 | `door_silent` | Posted open, nothing at the door within 30 min, no Ring status notice saying online | "Can't tell: the door recorded nothing around the scan"; no draft |
 
 Both checks ask whether the camera was watching (`app/coverage.py`, see
-[receipts.md](receipts.md#checking-a-carriers-attempt-time)): Ring's `device_online` / `device_offline`
-webhooks, then the door's own events within 30 minutes.
+[receipts.md](receipts.md#checking-a-carriers-attempt-time)): Ring's `device_offline` webhooks and
+Shopfront's own status checks (`GET /v1/devices/{id}/status` every few minutes; only the time between two
+close "online" answers counts), then the door's own events within 30 minutes.
 
 A label from the time-of-day rules is never a sighting and never "not a courier" either. For an
 attempted-delivery scan, one near the scan makes the answer unverified. A "business closed" scan claims

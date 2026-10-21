@@ -46,7 +46,7 @@ A visit gets a Bedrock label only when Bedrock looked at that visit's Ring frame
 
 ## 6. Docs vs live differences
 
-None recorded yet, because no live Bedrock call from this project has been captured (section 8). The Playground's image download returns 403, so the frame path needs live-view frames from a playing Playground clip.
+None recorded yet, because no live Bedrock call from this project has been captured (section 8). Our one Playground image download (`latest_in_range` over 24 h with an empty Event History) got 403; `scripts/ring_proof.py` now downloads the frame of a Playground scene's filed event and sends it to Bedrock ([ring.md](ring.md), section 6).
 
 ## 7. Config
 
@@ -58,7 +58,7 @@ None recorded yet, because no live Bedrock call from this project has been captu
 |---|---|---|---|
 | Classify a real Ring frame | — | **Not captured yet.** Needs a Ring frame and AWS credentials with Bedrock model access. | — |
 
-`scripts/ring_proof.py --bedrock` records the label and RequestId for the latest frame of the day.
+`scripts/ring_proof.py` records the label and RequestId for the frame of the Playground event it waits for (`--no-bedrock` skips that step).
 
 ## 9. Honest scope
 
