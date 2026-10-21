@@ -719,6 +719,8 @@ def dispute_page(request: Request, date: str | None = Query(None), at: str | Non
     return _page(request, "dispute.html", {"p": p, "query": query, "zip_query": zip_query,
                                            "manifest_sha256": dispute.manifest_digest(p, frames),
                                            "status_text": STATUS_TEXT,
+                                           # said once, in the watermark, not again as bullets
+                                           "source_limits": (dispute.DEMO_LIMIT, dispute.REPLAY_LIMIT),
                                            "replayed": "ring-webhook-replay" in p["event_sources"]})
 
 

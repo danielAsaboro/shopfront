@@ -166,13 +166,17 @@ def test_synthetic_events_watermark_the_pack_draft_and_zip(tmp_path):
     vs = [visit(12, m, "customer", "bedrock", src="synthetic") for m in (13, 20, 50)]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["demo_data"] and p["watermark"].startswith("DEMO DATA, not from a camera")
-    assert p["draft"]["subject"].startswith("[DEMO DATA, not from a camera]")
-    assert p["draft"]["body"].startswith("DEMO DATA, not from a camera")
+    # Round 2: one short tag on the subject, one line on top of the body, the full story in the README
+    assert p["draft"]["subject"].startswith("[DEMO] ") and p["draft"]["subject"].count("DEMO") == 1
+    first, rest = p["draft"]["body"].split("\n\n", 1)
+    assert first == "DEMO DATA, not from a camera: don't send this." and rest.startswith("Hello")
+    assert "DEMO" not in rest and "demo generator" not in rest
     assert any("synthetic" in x for x in p["limits"]) and p["cited_sources"] == ["synthetic"]
     text = dispute.as_text(p)
     assert text.startswith("DEMO DATA, not from a camera")
     z = zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, FrameStore(tmp_path))))
-    assert z.read("README.txt").decode().startswith("DEMO DATA, not from a camera")
+    readme = z.read("README.txt").decode()
+    assert readme.startswith("DEMO DATA, not from a camera") and dispute.DEMO_LIMIT in readme
     assert json.loads(z.read("pack.json"))["demo_data"] is True
 
 
@@ -180,7 +184,8 @@ def test_replayed_events_are_disclosed_in_limits_and_draft(tmp_path):
     vs = confirmed_lunch() + [visit(12, 55, "customer", "bedrock", src="ring-webhook-replay")]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["replayed"] and dispute.REPLAY_LIMIT in p["limits"]
-    assert "REPLAYED RING EVENTS" in p["draft"]["body"] and "REPLAYED" in p["draft"]["subject"]
+    assert p["draft"]["body"].split("\n\n")[0] == "REPLAYED RING EVENTS, not live Ring notifications: don't send this as evidence."
+    assert p["draft"]["subject"].startswith("[DEMO] ")
     real = pack(confirmed_lunch(), rc.check_closed_scan(at(12, 40), confirmed_lunch(), OPEN, now=NOW), tmp=tmp_path)
     assert not real["replayed"] and not real["demo_data"] and real["watermark"] is None
     assert real["draft"]["body"].startswith("Hello,")

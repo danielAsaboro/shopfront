@@ -98,7 +98,7 @@ def test_demo_story_matches_the_receiving_desk_and_yields_a_pack(day, monkeypatc
     assert story["check"]["outcome"] == OPEN_NO_COURIER
     pack = story["pack"]
     assert pack["draft"]["to"] == "Valley Creamery" and pack["order"]["order_ref"] == demo.SCAN_ORDER
-    assert pack["demo_data"] and pack["draft"]["subject"].startswith("[DEMO DATA")
+    assert pack["demo_data"] and pack["draft"]["subject"].startswith("[DEMO] ")
     if pack["order"]["possible"]:  # the desk's "Possible courier" for the dairy order is in the draft too
         assert pack["order"]["unidentified"] in pack["draft"]["body"]
     page = client.get("/", params={"date": day.isoformat()}).text

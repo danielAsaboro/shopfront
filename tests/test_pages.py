@@ -336,3 +336,17 @@ def test_visit_label_marks_rule_guesses():
     assert pages.visit_label("doorbell_press", confirmed=False) == "doorbell press (guess)"
     assert pages.visit_label("delivery", confirmed=True) == "delivery"
     assert pages.visit_label("after_hours", confirmed=False) == "after hours (guess)"
+
+
+def test_demo_pack_says_demo_once_on_the_page(c):
+    """Round 2: the site banner and ONE watermark block; the subject gets "[DEMO]", the draft one line, and the
+    'what this does not show' list doesn't repeat it."""
+    e = main.book.add(date(2026, 10, 7), "Dairy Co", "05:00", "05:30", order_ref="PO-9")
+    page = c.get(f"/dispute?date=2026-10-07&order={e.id}").text
+    assert page.count('class="watermark"') == 1 and page.count("demo generator") == 1
+    from app import dispute
+    assert dispute.DEMO_LIMIT not in page
+    subject = page.split('id="subject">')[1].split("</dd>")[0]
+    assert subject.startswith("[DEMO] ") and subject.count("DEMO") == 1
+    body = page.split('id="draft">')[1].split("</div>")[0]
+    assert body.count("DEMO") == 1 and body.startswith("DEMO DATA, not from a camera: don&#39;t send this.")

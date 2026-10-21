@@ -50,11 +50,18 @@ NO_STATUS_LIMIT = ("Shopfront has no Ring device_online/device_offline notices f
                    "between them.")
 DEMO = "DEMO DATA, not from a camera"
 REPLAYED = "REPLAYED RING EVENTS, not live Ring notifications"
-WATERMARK_BODY = {
-    DEMO: "DEMO DATA, not from a camera: these door events came from Shopfront's demo generator. Don't send this.",
-    REPLAYED: "REPLAYED RING EVENTS: some door events came from Shopfront's webhook replay feeder, not a live "
-              "Ring notification. Don't send this as evidence.",
-}
+SUBJECT_TAG = "[DEMO] "  # one short tag on the draft's subject; the body's first line says what it means
+
+
+def draft_warning(demo: bool, replayed: bool) -> str:
+    """The one line at the top of a draft built on demo or replayed data. The pack page's watermark and the
+    zip README carry the full explanation; the draft only has to stop it being sent."""
+    if demo and replayed:
+        return f"{DEMO}, with replayed Ring events: don't send this."
+    if demo:
+        return f"{DEMO}: don't send this."
+    return f"{REPLAYED}: don't send this as evidence."
+
 
 # Where a frame came from, by the source of the event it belongs to
 PROVENANCE = {
@@ -234,8 +241,8 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     }
     d, pack["no_draft_reason"] = draft(pack, visits)
     if d and marks:
-        d["subject"] = "".join(f"[{m}] " for m in marks) + d["subject"]
-        d["body"] = "\n\n".join(WATERMARK_BODY[m] for m in marks) + "\n\n" + d["body"]
+        d["subject"] = SUBJECT_TAG + d["subject"]
+        d["body"] = draft_warning(demo, replayed) + "\n\n" + d["body"]
     pack["draft"] = d
     return pack
 
@@ -476,6 +483,11 @@ def _readme(p: dict, frame_name: str | None) -> str:
         lines.append("synthetic = Shopfront's demo generator. No camera recorded these events.")
     if p["replayed"]:
         lines.append("ring-webhook-replay = Shopfront's webhook replay feeder, not a live Ring notification.")
+    if p["demo_data"] or p["replayed"]:
+        lines += ["", "Why this pack says DEMO: " + " ".join(
+            ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])),
+            "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
+            "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]
     return "\n".join(lines) + "\n"
 
