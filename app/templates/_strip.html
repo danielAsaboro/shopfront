@@ -1,0 +1,29 @@
+{# The door around a scan as a picture (pages.door_strip): posted hours shaded, one mark per door event, the
+   carrier's scan as its own tick, the near-the-scan minutes bracketed, the order's window under the track.
+   Where the data came from is the verdict's one chip, not a mark per dot.
+   role=img with the same picture in words; the words print under it. #}
+{% macro door_strip(s, id) %}{% if s %}
+<figure class="strip" aria-labelledby="{{ id }}-cap">
+  <div class="strip-row">
+    <svg class="strip-svg" width="100%" height="104" role="img" aria-labelledby="{{ id }}-t {{ id }}-d" focusable="false">
+      <title id="{{ id }}-t">The door around the scan</title>
+      <desc id="{{ id }}-d">{{ s.text }}</desc>
+      {% if s.band %}<rect class="s-band" x="{{ s.band.x }}%" y="20" width="{{ s.band.w }}%" height="36"></rect>
+      <text class="s-lab" x="{{ s.band.x }}%" y="11">{{ s.band.label }}</text>{% else %}<text class="s-lab" x="0%" y="11">Closed by your posted hours</text>{% endif %}
+      <rect class="s-near" x="{{ s.near.x }}%" y="20" width="{{ s.near.w }}%" height="36"></rect>
+      <text class="s-lab" x="{{ s.near.x + 0.8 }}%" y="52">{{ s.near.label }}</text>
+      <line class="s-axis" x1="0%" x2="100%" y1="56" y2="56"></line>
+      {% for t in s.ticks %}<line class="s-axis" x1="{{ t.x }}%" x2="{{ t.x }}%" y1="56" y2="{{ 62 if s.window else 60 }}"></line>{% endfor %}
+      {% if s.window %}<rect class="s-win" x="{{ s.window.x }}%" y="62" width="{{ s.window.w }}%" height="5" rx="2"></rect>
+      <text class="s-lab" x="{{ [s.window.x, 0]|max }}%" y="80">{{ s.window.label }}</text>{% endif %}
+      {% for t in s.ticks %}<text class="s-tick" x="{{ t.x }}%" y="98" text-anchor="{{ 'start' if loop.first else ('end' if loop.last else 'middle') }}">{{ t.label }}</text>{% endfor %}
+      <line class="s-scan" x1="{{ s.scan }}%" x2="{{ s.scan }}%" y1="15" y2="60"></line>
+      <text class="s-scanlab" x="{{ s.scan }}%" y="11" text-anchor="middle">{{ s.scan_label }}</text>
+      {% for d in s.dots %}<circle class="s-dot s-{{ d.kind }}" cx="{{ d.x }}%" cy="38" r="{{ 7 if d.kind == 'courier' else 5.5 }}"><title>{{ d.label }}</title></circle>{% endfor %}
+    </svg>
+    {% if s.frame and s.frame.url %}<a class="strip-frame" href="{{ s.frame.url }}"><img src="{{ s.frame.url }}" alt="{{ s.frame.alt }}"></a>{% endif %}
+  </div>
+  <figcaption id="{{ id }}-cap" class="strip-key">{% for k in s.kinds %}<span><svg width="12" height="12" aria-hidden="true"><circle class="s-dot s-{{ k }}" cx="6" cy="6" r="{{ 5 if k == 'courier' else 4 }}"></circle></svg>{{ s.kind_text[k] }}</span>{% endfor %}<span><svg width="12" height="12" aria-hidden="true"><line class="s-scan" x1="6" x2="6" y1="0" y2="12"></line></svg>carrier's scan</span></figcaption>
+  <p class="strip-words">{{ s.text }}</p>
+</figure>
+{% endif %}{% endmacro %}

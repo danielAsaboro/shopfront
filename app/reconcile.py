@@ -186,6 +186,11 @@ def _visit(v: ClassifiedVisit, frame_url) -> dict:
             "frame_url": frame_url(v.event.id), "event_source": v.event.source}
 
 
+def _door(vs: list[ClassifiedVisit], frame_url) -> list[dict]:
+    """Every door event in the activity window, oldest first: what the check page and the pack draw."""
+    return [_visit(v, frame_url) for v in sorted(vs, key=lambda v: utc(v.event.timestamp))]
+
+
 def _hours_text(open_hours: tuple[time, time] | None) -> str:
     return f"{open_hours[0]:%H:%M}–{open_hours[1]:%H:%M}" if open_hours else "closed"
 
@@ -354,6 +359,7 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
     if cov and cov["state"] == coverage.CAMERA_DOWN and outcome != CAMERA_OFFLINE:
         text += " " + cov["text"]
     return {**base, "outcome": outcome, "text": text, "activity": activity, "coverage": cov,
+            "door": _door(around, frame_url),
             "visit": _visit(cited, frame_url) if cited else None,
             "unidentified": [_visit(v, frame_url) for v in sorted(unconfirmed, key=lambda v: utc(v.event.timestamp))],
             "later": _visit(later, frame_url) if later else None,
@@ -406,5 +412,6 @@ def check_attempt(attempt: datetime, visits: list[ClassifiedVisit], frame_url=la
     if cov["state"] == coverage.CAMERA_DOWN and outcome != CAMERA_OFFLINE:
         text += " " + cov["text"]
     sources = [v.event.source] if v else sorted({x.event.source for x in visits})
+    around = [x for x in visits if abs(gap(x.event.timestamp, attempt)) <= ACTIVITY]
     return {**base, "outcome": outcome, "text": text, "visit": _visit(v, frame_url) if v else None,
-            "event_source": sources, "coverage": cov}
+            "event_source": sources, "coverage": cov, "door": _door(around, frame_url)}

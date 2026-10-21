@@ -153,7 +153,36 @@
   .tapform input { font-size: 16px; padding: 3px 8px; width: 170px; height: 32px; }
   .sr { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space: nowrap; }
   .primary { margin-top: 8px; }
+  /* The door around a scan (_strip.html): neutral marks by what they rest on, the scan tick in ink */
+  .strip { margin: 14px 0 0; }
+  .strip-row { display: flex; gap: 14px; align-items: flex-start; }
+  .strip-svg { flex: 1 1 auto; min-width: 0; overflow: visible; display: block; }
+  .strip-svg text { font: 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .s-band { fill: var(--line); }
+  .s-near { fill: none; stroke: var(--edge); stroke-dasharray: 3 3; }
+  .s-axis { stroke: var(--edge); }
+  .s-win { fill: var(--lw); }
+  .s-lab, .s-tick { fill: var(--muted); }
+  .s-tick { font-variant-numeric: tabular-nums; }
+  .s-scan { stroke: var(--ink); stroke-width: 2; }
+  .s-scanlab { fill: var(--ink); font-weight: 600; }
+  .s-dot { stroke-width: 1.5; }
+  .s-courier { fill: var(--ink); stroke: var(--bg); }
+  .s-person { fill: var(--muted); stroke: var(--muted); }
+  .s-seen { fill: var(--ink); stroke: var(--ink); fill-opacity: .55; }
+  .s-guess { fill: var(--bg); stroke: var(--muted); }
+  .strip-key { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .strip-key span { display: inline-flex; gap: 5px; align-items: center; }
+  .strip-frame img { display: block; width: 120px; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 4px; }
+  .strip-words { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); margin: 0; }
+  /* The verdict's facts: a tick or a cross, then a few words */
+  ul.facts3 { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 15px; }
+  ul.facts3 li { display: flex; margin: 0; gap: 8px; align-items: baseline; }
+  .facts3 .mk { flex: none; width: 1.1em; text-align: center; font-weight: 700; }
+  .facts3 .no .mk { color: var(--muted); }
+  .verdict-src { margin: 8px 0 0; font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   @media (max-width: 560px) {
+    .strip-row { flex-direction: column; gap: 8px; }
     .axis span:nth-child(odd) { visibility:hidden; }
     .figures div + div { padding-left: 10px; }
     .figures .v { font-size: 22px; }
@@ -177,5 +206,7 @@
     body { background: #fff; color: #000; }
     .banner { border: 1px solid currentColor; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     td.why, th.why { display: table-cell; }
+    .strip-svg, .strip-key svg { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .strip-words { position: static; width: auto; height: auto; overflow: visible; clip: auto; font-size: 12px; margin: 4px 0 0; }
   }
 </style>

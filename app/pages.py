@@ -272,3 +272,221 @@ def plain_error(status: int, detail: str, path: str) -> dict:
     else:
         title, text = "That didn't work", (detail[:1].upper() + detail[1:].rstrip(".") + ".") if detail else ""
     return {"status": status, "title": title, "text": text, "detail": detail, "back": back}
+
+
+# ---- The verdict as three short facts, and the door around the scan as a picture ---------------------------
+
+# What a label rests on, in two or three words, for a fact line: "Courier at 10:12 (Ring alert)"
+SHORT_BY = {provenance.RING_ALERT: "Ring alert", provenance.RING_PERSON: "Ring person alert",
+            provenance.REPLAY: "replayed alert", provenance.BEDROCK_RING: "Bedrock, Ring frame",
+            provenance.BEDROCK_LIVE: "Bedrock, live-view frame", provenance.RULES: "guess",
+            provenance.SYNTHETIC: "demo"}
+
+
+def _mins(hhmm: str) -> int | None:
+    """Minutes since midnight from 'HH:MM', 'HH:MM:SS' or 'YYYY-MM-DD HH:MM'."""
+    try:
+        h, m, *_ = (int(x) for x in str(hhmm).strip().split(" ")[-1].split(":"))
+    except ValueError:
+        return None
+    return h * 60 + m
+
+
+def _clock(m: float) -> str:
+    m = int(round(m)) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _person(row: dict) -> bool:
+    return row.get("type") == "person" or (row.get("ring_event") == "motion" and row.get("ring_subtype") == "human")
+
+
+def _people_src(rows: list[dict]) -> str:
+    """'Ring' when every person alert came from the shop's Ring camera, else what they were."""
+    srcs = {r.get("event_source") for r in rows if _person(r)}
+    if srcs <= {"ring", "ring-webhook"}:
+        return "Ring"
+    return "demo alerts" if srcs <= {"synthetic"} else "replayed or demo alerts"
+
+
+def _people(rows: list[dict]) -> str:
+    n = sum(1 for r in rows if _person(r))
+    return f", {n} {'person' if n == 1 else 'people'} ({_people_src(rows)})" if n else ""
+
+
+def _events(n: int) -> str:
+    return f"{n} door event{'' if n == 1 else 's'}"
+
+
+def _camera_fact(cov: dict | None, at: str) -> dict | None:
+    if not cov:
+        return None
+    st = cov.get("state")
+    if st == "online_by_status":
+        return {"ok": True, "text": f"Camera online around {at} ({'demo status checks' if cov.get('demo') else 'Ring status'})"}
+    if st == "door_events":
+        return {"ok": True, "text": f"Camera recording around {at}"}
+    if st == "online_by_ring":
+        return {"ok": True, "text": f"Camera online around {at} (Ring notice)"}
+    if st == "offline":
+        return {"ok": False, "text": f"Camera offline around {at} (Ring)"}
+    return {"ok": False, "text": f"Nothing shows the camera was watching at {at}"}
+
+
+def _courier(v: dict, later: bool = False) -> str:
+    said = SHORT_BY[provenance.of(v)]
+    mins = v.get("minutes_after")
+    if later or mins:
+        return f"Courier came later, at {v['time']}" + (f", {mins} min after the scan" if mins else "") + f" ({said})"
+    return f"Courier at the door at {v['time']} ({said})"
+
+
+def verdict_facts(c: dict | None) -> list[dict]:
+    """Three short facts under a scan's one-line verdict, each {"ok": True/False, "text": ...}: the posted hours,
+    the door around the scan, and the courier (or the camera, when that is what decides it). The full reasoning
+    stays in reconcile's text, which the page keeps under Details. Nothing a rule guessed is stated as a fact."""
+    if not c or not c.get("outcome") or c["outcome"] in ("not_happened_yet", "no_such_local_time"):
+        return []
+    out, at = c["outcome"], str(c.get("attempt", ""))[-5:]
+    door, a, v = c.get("door") or [], c.get("activity") or {}, c.get("visit") or {}
+    tol = c.get("tolerance_min") or 10
+    facts: list[dict | None] = []
+    if c.get("claim") == "business_closed":
+        hours = c.get("posted_hours") or "closed"
+        facts.append({"ok": False, "text": f"Closed by your posted hours ({hours})"} if out == "posted_closed"
+                     else {"ok": True, "text": f"Open {hours}"})
+        if out == "no_door_data":
+            return facts + [{"ok": False, "text": "No door events that day"}]
+        lo, hi = a.get("from", ""), a.get("to", "")
+        n = a.get("events", len(door))
+        facts.append({"ok": True, "text": f"{_events(n)} {lo}–{hi}{_people(door)}"} if n else
+                     {"ok": False, "text": f"No door events {lo}–{hi}"})
+        if out == "posted_closed":
+            return facts
+        if out in ("open_courier_came", "delivered_after_scan", "courier_came_later") and v:
+            facts.append({"ok": True, "text": _courier(v, later=out != "open_courier_came")})
+        elif out in ("camera_offline", "door_silent"):
+            facts.append(_camera_fact(c.get("coverage"), at))
+        elif out == "open_no_courier":
+            facts.append({"ok": False, "text": f"No courier within {tol} min of the scan" +
+                          (" (checked from the frame)" if a.get("near") else "")})
+        else:
+            facts.append({"ok": False, "text": "Courier not identified"})
+        return [f for f in facts if f]
+    # "delivery attempted": was anyone near the time, who, and was the camera watching
+    if out == "no_door_data":
+        return [{"ok": False, "text": "No door events that day"}]
+    scan = _mins(at)
+    near = [r for r in door if scan is not None and _mins(r.get("time", "")) is not None
+            and abs(_mins(r["time"]) - scan) <= tol]
+    facts.append({"ok": True, "text": f"{_events(len(near))} within {tol} min of {at}{_people(near)}"} if near else
+                 {"ok": False, "text": f"Nothing recorded within {tol} min of {at}"})
+    if out in ("courier_at_door", "courier_came_later", "delivered_after_scan") and v:
+        facts.append({"ok": True, "text": _courier(v, later=out != "courier_at_door")})
+    elif out == "someone_not_a_courier" and v:
+        facts.append({"ok": False, "text": f"Not a courier: {visit_label(v.get('type'))} at {v['time']} "
+                                           f"({SHORT_BY[provenance.of(v)]})"})
+    elif out == "door_activity_unverified":
+        facts.append({"ok": False, "text": "Courier not identified"})
+    else:
+        facts.append({"ok": False, "text": "No courier seen"})
+    facts.append(_camera_fact(c.get("coverage"), at))
+    return [f for f in facts if f]
+
+
+def pack_check(p: dict) -> dict | None:
+    """A pack's finding in the shape verdict_facts() and door_strip() read (a reconcile check)."""
+    f, c = p.get("finding"), p.get("claim")
+    if not f or not c:
+        return None
+    return {**f, "claim": c["kind"], "attempt": c["time"], "posted_hours": p.get("posted_hours"),
+            "coverage": p.get("coverage"), "tolerance_min": p.get("tolerance_min"), "door": p.get("timeline") or []}
+
+
+def chip(sources) -> str:
+    """One word for where a check's door data came from: 'demo', 'replay' or 'ring'."""
+    s = set(sources or [])
+    if "synthetic" in s:
+        return "demo"
+    if any("replay" in x for x in s):
+        return "replay"
+    return "ring"
+
+
+STRIP_KIND = {"courier": "courier, confirmed", "person": "person alert", "seen": "seen in a frame",
+              "guess": "not identified"}
+
+
+def _strip_kind(r: dict) -> str:
+    if r.get("type") == "delivery" and r.get("confirmed"):
+        return "courier"
+    if _person(r):
+        return "person"
+    return "seen" if r.get("confirmed") else "guess"
+
+
+def _strip_label(r: dict) -> str:
+    src = r.get("event_source")
+    kind = _strip_kind(r)
+    if kind == "courier":
+        what = f"courier ({SHORT_BY[provenance.of(r)]})"
+    elif kind == "person":
+        what = "person (" + ("demo alert" if src == "synthetic" else "replayed alert" if "replay" in (src or "")
+                             else "Ring alert") + ")"
+    elif kind == "seen":
+        what = f"{visit_label(r.get('type'))} (seen in a frame)"
+    else:
+        what = {"ding": "doorbell press", "motion": "motion"}.get(r.get("ring_event"), "door event") + ", not identified"
+    return f"{str(r.get('time', ''))[:5]} {what}"
+
+
+def door_strip(c: dict | None, hours: str | None = None, order: dict | None = None,
+               frame: dict | None = None) -> dict | None:
+    """The door around a scan as a picture: a 60-minute track centred on the carrier's scan, the posted hours
+    shaded, one mark per door event by what it rests on, the scan as its own tick, the 10 minutes that count
+    as "near" bracketed, the order's delivery window when it overlaps, and a frame thumbnail when Shopfront
+    holds one. Positions are percentages, so the SVG fits any width with readable text. `text` is the same
+    picture in words, for screen readers and print."""
+    if not c or not c.get("attempt"):
+        return None
+    scan = _mins(c["attempt"])
+    if scan is None:
+        return None
+    reach, tol = 30, c.get("tolerance_min") or 10
+    lo, hi = scan - reach, scan + reach
+
+    def pct(m: float) -> float:
+        return round(max(0.0, min(100.0, (m - lo) / (hi - lo) * 100)), 2)
+
+    hours = hours or c.get("posted_hours") or ""
+    band = None
+    if hours and hours != "closed" and "–" in hours:
+        o, cl = (_mins(x) for x in hours.split("–", 1))
+        if o is not None and cl is not None and o < hi and cl > lo:
+            band = {"x": pct(o), "w": round(pct(cl) - pct(o), 2), "label": f"Open {hours}"}
+    win = None
+    if order and order.get("window_start") and order.get("window_end"):
+        ws, we = _mins(order["window_start"]), _mins(order["window_end"])
+        if ws is not None and we is not None and ws < hi and we > lo:
+            win = {"x": pct(ws), "w": round(pct(we) - pct(ws), 2),
+                   "label": f"{order.get('order_ref') or 'Order'} due {order['window_start']}–{order['window_end']}"}
+    dots = []
+    for r in c.get("door") or []:
+        m = _mins(r.get("time", ""))
+        if m is None or not lo <= m <= hi:
+            continue
+        dots.append({"x": pct(m), "kind": _strip_kind(r), "label": _strip_label(r)})
+    ticks = [{"x": pct(m), "label": _clock(m)} for m in range(lo, hi + 1, 15)]
+    kinds = [k for k in STRIP_KIND if any(d["kind"] == k for d in dots)]
+    words = (f"Door from {_clock(lo)} to {_clock(hi)}. "
+             + ((f"Posted hours {hours} cover " + ("all of it. " if band["w"] >= 99.9 else "the shaded part. "))
+                if band else "Posted hours: closed that day. " if hours == "closed" else
+                f"All of it is outside the posted hours ({hours}). " if hours else "")
+             + f"Carrier's scan at {_clock(scan)}; {tol} minutes either side bracketed as near the scan. "
+             + (f"{win['label']}. " if win else "")
+             + (f"{len(dots)} door event{'' if len(dots) == 1 else 's'}: " + "; ".join(d["label"] for d in dots) + "."
+                if dots else "No door events in this hour."))
+    return {"scan": pct(scan), "scan_label": f"Scan {_clock(scan)}", "near": {"x": pct(scan - tol),
+            "w": round(pct(scan + tol) - pct(scan - tol), 2), "label": f"±{tol} min"},
+            "band": band, "window": win, "dots": dots, "ticks": ticks, "kinds": kinds,
+            "kind_text": STRIP_KIND, "text": words, "frame": frame}

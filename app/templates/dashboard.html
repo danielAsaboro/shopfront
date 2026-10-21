@@ -1,6 +1,7 @@
 {% extends "_base.html" %}
 {% from "_frame_delete.html" import delete_frame %}
 {% from "_source.html" import source %}
+{% from "_strip.html" import door_strip %}
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
@@ -38,11 +39,16 @@
   {% if attempt %}
   {# One verdict for a checked scan, with what it would cost and the one next step #}
   <section class="verdict{{ ' act' if attempt.outcome in disputable }}" role="status" aria-label="The door's answer to the scan">
-    <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}</div>
+    <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}{% if attempt.outcome not in refused %} <span class="badge b-{{ attempt.event_source|chip }}" title="Where this door data came from">{{ attempt.event_source|chip }}</span>{% endif %}</div>
     <p class="first{{ ' warn' if attempt.outcome in disputable }}">{{ attempt|verdict }}</p>
-    <p class="reason">{{ attempt.text }}</p>
+    {% set facts = attempt|verdict_facts %}
+    {% if facts %}<ul class="facts3" aria-label="What the door shows">{% for f in facts %}<li class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span><span>{{ f.text }}</span></li>{% endfor %}</ul>
+    {% set fv = attempt.visit if attempt.visit and attempt.visit.frame_url else none %}
+    {{ door_strip(attempt|strip(posted, {'order_ref': scan_order.order_ref, 'window_start': scan_order.window_start, 'window_end': scan_order.window_end} if scan_order else none, {'url': fv.frame_url, 'alt': (fv|frame_label) ~ ' at ' ~ fv.time} if fv else none), "chk") }}
+    {% if fv %}{{ delete_frame(fv.frame_url, back) }}{% endif %}
+    {% else %}<p class="reason">{{ attempt.text }}</p>{% endif %}
     {% if pack_href %}{{ stake(scan_order) }}{% endif %}
-    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
+    {% if facts %}<details class="tech why-verdict"><summary>Details: how Shopfront reached this</summary><p class="why" style="margin:0">{{ attempt.text }}</p>{% if attempt.coverage %}<p class="why" style="margin:6px 0 0">{{ attempt.coverage.text }}</p>{% endif %}</details>{% endif %}
     {% set back_here = request.url.path ~ '?' ~ request.url.query %}
     <div class="next">
       {% if pack_href %}<a class="primary" href="{{ pack_href }}">Build the dispute pack</a>{% endif %}

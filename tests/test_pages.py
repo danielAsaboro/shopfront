@@ -311,7 +311,11 @@ def test_dispute_page_leads_with_a_verdict_and_hides_the_jargon(c):
     scan = c.get(f"/dispute?date={WEDNESDAY}&at=03:17&claim=attempted").text
     # nothing within 30 minutes of 03:17 and no Ring status notice: the door can't speak for that time
     assert '<p class="first">Can&#39;t tell: the door recorded nothing around the scan.</p>' in scan
-    assert '<p class="reason">Can&#39;t tell: the door recorded nothing around 03:17.' in scan
+    # three short facts under the verdict; the full reasoning (and its caveats) moved under Details
+    assert "Nothing recorded within 10 min of 03:17" in scan and "No courier seen" in scan
+    details = re.search(r"<details class=\"tech\"><summary>Details: how Shopfront reached this</summary>(.*?)</details>",
+                        scan, re.S).group(1)
+    assert "Can&#39;t tell: the door recorded nothing around 03:17." in details
     assert "may not have been watching" in scan
 
 

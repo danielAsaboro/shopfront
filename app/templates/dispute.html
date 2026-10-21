@@ -1,5 +1,6 @@
 {% extends "_base.html" %}
 {% from "_frame_delete.html" import delete_frame %}
+{% from "_strip.html" import door_strip %}
 {% block title %}Dispute pack, {{ p.day }}{% endblock %}
 {% block head %}
 <style>
@@ -42,7 +43,12 @@
   <section class="lead">
     {% if p.finding %}
     <p class="first">{{ p.finding|verdict }}</p>
-    <p class="reason">{{ p.finding.text }}</p>
+    {% set pc = p|pack_check %}
+    {% set facts = pc|verdict_facts %}
+    {% if facts %}<ul class="facts3" aria-label="What the door shows">{% for f in facts %}<li class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span><span>{{ f.text }}</span></li>{% endfor %}</ul>
+    {{ door_strip(pc|strip(p.posted_hours, p.order, {'url': p.frame.url, 'alt': p.frame.label ~ ' at ' ~ p.frame.time} if p.frame else none), "pack") }}
+    <details class="tech"><summary>Details: how Shopfront reached this</summary><p class="why" style="margin:0">{{ p.finding.text }}</p></details>
+    {% else %}<p class="reason">{{ p.finding.text }}</p>{% endif %}
     {% elif p.order %}
     <p class="first">{{ p.order.door_status_text }}{% if p.order.received %}; staff marked it {{ p.order.received.status }}{% endif %}.</p>
     {% endif %}
