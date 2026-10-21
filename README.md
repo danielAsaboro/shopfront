@@ -43,8 +43,8 @@ cp .env.example .env
 .venv/bin/python -m scripts.demo
 ```
 
-`scripts/demo.py` picks the most recent day the demo shop was open (and its synthetic door leaves a quiet
-moment for the scan) and imports the three orders in
+`scripts/demo.py` picks the most recent day the demo shop was open (and its synthetic door was in use around
+the scan time) and imports the three orders in
 [samples/orders.csv](samples/orders.csv), dated to that day. It starts Shopfront at
 http://127.0.0.1:8000 on synthetic door events and replays one signed Ring `package_delivery`
 webhook at 10:12, signed the way [scripts/feed_webhook.py](scripts/feed_webhook.py) does it. Then it
@@ -54,11 +54,14 @@ prints three links:
    Ring's 10:12 alert is the flour order's (PO-1041, due 10:00–11:00) confirmed courier; the script
    checks the desk says so and stops if it doesn't.
 2. **The business-closed check:** the made-up carrier "Northline Parcel" scanned the dairy order
-   PO-1042 "business closed" inside its 13:00–16:00 window, during posted hours, at a time when the door
-   recorded motion within half an hour but nothing within 12 minutes, after Ring's only courier of the
-   day. The script asks the running app what the door shows and prints its answer.
+   PO-1042 "business closed" at 14:30, inside its 13:00–16:00 window and during posted hours. It's an
+   ordinary busy afternoon minute, not a hand-picked quiet one: any open-hours time with the door in use
+   around it gives "You were open" (a test sweeps the day every 15 minutes). An unidentified doorbell
+   press near the scan is named as unidentified, never offered as the courier. The script asks the
+   running app what the door shows and prints its answer.
 3. **The dispute pack** (`/dispute?…`): the finding, the door log around the scan, the posted hours,
-   what the pack can't show, a draft to copy, and a zip (`/dispute.zip`).
+   what the pack can't show, two drafts to pick from (to the supplier, and to the carrier about its
+   scan), and a zip (`/dispute.zip`).
 
 The demo keeps its data in `.data/demo` (git-ignored) and starts fresh each run. Use `--port` if 8000
 is taken. To run the app on its own, use `.venv/bin/uvicorn app.main:app --port 8000`. With no Ring
