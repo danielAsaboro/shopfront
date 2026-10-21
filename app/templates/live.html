@@ -27,6 +27,7 @@
   <div id="label" aria-live="polite"></div>
   {% endif %}
 
+  {% if connected or sessions %}
   <section class="block" aria-labelledby="recent">
     <h2 id="recent">Recent live visits</h2>
     <table>
@@ -35,6 +36,7 @@
       {% else %}<tr><td colspan="3" class="why">None yet.</td></tr>{% endfor %}
     </table>
   </section>
+  {% endif %}
   <details class="tech block">
     <summary>Details</summary>
     <p class="why" style="margin:0">A Ring live-view session over WHEP (WebRTC), receive-only, up to 60 seconds. Ring X-Request-ID of this session: <span id="rid">none yet</span>. <a href="/api/live/sessions">sessions JSON</a></p>
