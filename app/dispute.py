@@ -27,7 +27,7 @@ import json
 import zipfile
 from datetime import UTC, date, datetime, timedelta, tzinfo
 
-from app import provenance
+from app import provenance, wording
 from app import reconcile as rc
 from app.deliveries import STATUS_TEXT, Expected, FrameStore
 from app.live import frame_provenance
@@ -341,6 +341,16 @@ def _scan_dispute(p: dict, sign: str) -> dict:
     return {"to": to, "subject": subject, "body": "\n\n".join(x for x in parts if x) + sign}
 
 
+def _note_for_draft(note: str) -> str:
+    """The staff note, quoted in the draft unless it accuses someone (app/wording.py): the draft states what
+    arrived, and the note stays in the pack for the owner to word themselves."""
+    if not note:
+        return "."
+    if wording.accusing(note):
+        return ". (Our staff note is in the attached pack.)"
+    return f": {note}."
+
+
 def _also_recorded(o: dict) -> str:
     """The order's own unidentified door events, said plainly so the draft doesn't hide what the pack shows."""
     if not o.get("unidentified"):
@@ -371,8 +381,7 @@ def draft(p: dict, visits: list[ClassifiedVisit] | None = None) -> tuple[dict | 
             body = "\n\n".join(x for x in [
                 f"Hello {o['supplier']},",
                 (_order_line(o) + " " + seen).strip(),
-                f"When we unpacked it at {rec['time']}, it was {rec['status']}"
-                + (f": {rec['note']}." if rec["note"] else "."),
+                f"When we unpacked it at {rec['time']}, it was {rec['status']}" + _note_for_draft(rec["note"]),
                 _evidence(p) + " Please send the missing items or a credit note.",
             ] if x) + sign
             return {"to": o["supplier"], "subject": f"{rec['status'].title()} delivery, {o['order_ref'] or o['day']}",
