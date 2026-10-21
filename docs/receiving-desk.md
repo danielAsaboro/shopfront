@@ -17,10 +17,14 @@ delivery date, Tracking number, …). Rules:
 
 - Every row is validated like one typed on `/setup`. A bad row is reported by line number; the rest import.
 - Re-importing updates rows with the same `order_ref` and day instead of duplicating them, and keeps any staff tap.
+  A row with no order number is the same row when its day, supplier, tracking, window and items match.
 - Several rows for one order and day (one per item) fold into one delivery. Their items are joined; if
-  they carry different amounts, the amount is left blank rather than presenting one line as the total.
+  more than one carries an amount, the amount is left blank rather than presenting one line as the total.
 - `amount` is kept as written. Shopfront never sums or converts it.
-- Dates are read as YYYY-MM-DD or month/day unless the owner ticks "Dates are day/month".
+- Dates are read as YYYY-MM-DD or month/day (2- or 4-digit years) unless the owner ticks "Dates are day/month".
+  The day comes from the most specific date column: a delivery/expected/due date beats a plain `Date`, and
+  `Order Date` is used only when there is no other, which the import message says.
+- Comma, semicolon, tab and pipe delimiters are detected. Window times may be `9`, `09:00` or `9:00 AM`.
 
 **Amazon Business:** the aliases cover the column names we expect in its order-history report
 (`Order ID`, `Seller Name`, `Title`, `Item Subtotal`, `Carrier Name & Tracking Number` as

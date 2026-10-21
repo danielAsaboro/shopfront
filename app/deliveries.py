@@ -109,14 +109,13 @@ class DeliveryBook:
 
     def _import_rows(self, rows: list[Expected]) -> dict:
         current = self._all()
-        by_key = {(e.order_ref, e.day): i for i, e in enumerate(current) if e.order_ref}
+        by_key = {_import_key(e): i for i, e in enumerate(current) if e.order_ref or e.origin.startswith("csv:")}
         added = updated = 0
         for r in rows:
-            i = by_key.get((r.order_ref, r.day)) if r.order_ref else None
+            i = by_key.get(_import_key(r))
             if i is None:
                 current.append(r)
-                if r.order_ref:
-                    by_key[(r.order_ref, r.day)] = len(current) - 1
+                by_key[_import_key(r)] = len(current) - 1
                 added += 1
             else:
                 r.id, r.received = current[i].id, current[i].received
@@ -137,6 +136,13 @@ class DeliveryBook:
                     self._write(rows)
                     return e
         raise KeyError(expected_id)
+
+
+def _import_key(e: Expected) -> tuple:
+    """The same order on a re-import: its order_ref and day, or, with no order number, the same line."""
+    if e.order_ref:
+        return ("ref", e.order_ref, e.day)
+    return ("line", e.day, e.supplier.lower(), e.tracking, e.window_start, e.window_end, e.items)
 
 
 RECEIVED = {"ok": "All there", "short": "Short", "damaged": "Damaged", "clear": "Undo"}

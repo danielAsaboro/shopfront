@@ -26,7 +26,7 @@ from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
                             receipts)
-from app.hours import posted_hours
+from app.hours import normalize_clock, posted_hours
 from app.live import LiveError, LiveLog
 from app.ring import RingSource
 from app.ring.synthetic import SyntheticRingClient
@@ -447,7 +447,8 @@ async def delivery_add(request: Request):
     back = back if back.startswith("/") and not back.startswith("//") else "/"
     try:
         book.add(date.fromisoformat(str(form.get("day", ""))), str(form.get("supplier", "")),
-                 str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")),
+                 normalize_clock(str(form.get("window_start", ""))), normalize_clock(str(form.get("window_end", ""))),
+                 str(form.get("note", "")),
                  order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
     except ValueError as exc:
         return RedirectResponse(f"/setup?error={quote(str(exc))}#deliveries", status_code=303)
@@ -570,7 +571,10 @@ async def orders_import(request: Request):
     except ValueError as exc:
         return RedirectResponse(f"/setup?error={quote(str(exc))}#orders", status_code=303)
     counts = book.import_rows(parsed["rows"])
+    day_col = parsed["columns"].get("day", "")
     msg = (f"Imported {counts['added']} new and updated {counts['updated']} orders ({parsed['format']} format)"
+           + (f", dated by the '{day_col}' column because the file has no delivery date"
+              if day_col.lower().replace(" ", "") == "orderdate" else "")
            + (f". Skipped {len(parsed['errors'])}: " + "; ".join(parsed["errors"][:5]) if parsed["errors"] else "."))
     return RedirectResponse(f"/setup?imported={quote(msg)}#orders", status_code=303)
 
