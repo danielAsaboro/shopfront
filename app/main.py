@@ -6,6 +6,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
                                Response)
 from fastapi.templating import Jinja2Templates
@@ -242,21 +243,27 @@ def live_page(request: Request):
         "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
 
 
+# The async handlers below read the request body, then run every blocking call (Ring over httpx, Bedrock
+# over boto3, a Strands agent turn) in the thread pool, so Ring's webhook (5 s limit) is never kept waiting.
 @app.post("/api/live/start")
 async def live_start(request: Request):
-    ring = _live_ring()
     offer = (await request.body()).decode()
     if "v=0" not in offer:
         raise HTTPException(400, "body must be an SDP offer")
-    answer, session_url = ring.whep_start(offer)
-    s = live.start(ring.device_id, session_url)
-    return {"session": s.id, "answer": answer, "ring_request_id": ring.last_request_id}
+
+    def start():
+        ring = _live_ring()
+        answer, session_url = ring.whep_start(offer)
+        s = live.start(ring.device_id, session_url)
+        return {"session": s.id, "answer": answer, "ring_request_id": ring.last_request_id}
+    return await run_in_threadpool(start)
 
 
 @app.post("/api/live/{session_id}/frame")
 async def live_frame(session_id: str, request: Request):
     day = datetime.now(settings.tz).date()
-    return live.frame(session_id, await request.body(), classifier, posted_hours(profile.hours(), day))
+    jpeg = await request.body()
+    return await run_in_threadpool(live.frame, session_id, jpeg, classifier, posted_hours(profile.hours(), day))
 
 
 @app.post("/api/live/{session_id}/stop")
@@ -557,11 +564,16 @@ def _agent_tools(today: date) -> shop_agent.ShopTools:
 
 @app.post("/api/ask")
 async def api_ask(request: Request):
-    body = await request.json()
     try:
-        return shop_agent.ask(str(body.get("question", "")), _agent_tools(datetime.now(settings.tz).date()),
-                              profile.get().name, settings.aws_region, settings.bedrock_model_id,
-                              agent_factory=agent_factory)
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "BAD_QUESTION", "detail": 'send {"question": "..."}'}, status_code=400)
+    try:
+        return await run_in_threadpool(shop_agent.ask, str(body.get("question", "")),
+                                       _agent_tools(datetime.now(settings.tz).date()), profile.get().name,
+                                       settings.aws_region, settings.bedrock_model_id, agent_factory=agent_factory)
     except ValueError as exc:
         return JSONResponse({"error": "BAD_QUESTION", "detail": str(exc)}, status_code=400)
     except shop_agent.AgentUnavailable as exc:
