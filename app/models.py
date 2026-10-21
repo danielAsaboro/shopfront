@@ -23,10 +23,11 @@ class DoorEvent:
     id: str
     device_id: str
     timestamp: datetime  # timezone-aware, shop local time
-    kind: str  # "motion" | "ding"
+    kind: str  # "motion" | "ding" | "on_demand" (a Ring live view: someone opened the camera, not a visitor)
     source: str = "synthetic"  # "ring" for Ring Event History, "synthetic" for the demo generator
     ring_subtype: str | None = None  # e.g. "human" when the history query filtered on motion.human
     snapshot: bytes | None = None  # JPEG bytes when available
+    ends: datetime | None = None  # Event History `end`, when Ring gave one
     # Synthetic events only: the generator's answer key. Classifiers never read it;
     # tests use it to measure how well the rules do.
     truth: VisitType | None = None

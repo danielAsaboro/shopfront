@@ -3,10 +3,11 @@
 Calls, all against https://api.amazonvision.com:
   GET  /v1/devices?include=capabilities              find the doorbell when RING_DEVICE_ID is empty
   GET  /v1/users/me                                  the Ring Account ID, to match webhooks' meta.account_id
-  GET  /v1/history/devices/{id}/events               the day's dings and motion events (paged, newest first),
-                                                     and again with event_types=motion.package_delivery to
-                                                     learn which motion events were Ring's courier alerts
-  POST /v1/devices/{id}/media/image/download         the frame at an event's start time (303 -> pre-signed GET)
+  GET  /v1/history/devices/{id}/events               the day's dings, motion and live views (on_demand), paged
+                                                     newest first, and again with event_types=
+                                                     motion.package_delivery to learn which motion events were
+                                                     Ring's courier alerts
+  POST /v1/devices/{id}/media/image/download         the frame at an event's time (303 -> pre-signed GET)
   POST /v1/devices/{id}/media/streaming/whep/sessions live view (the Developer Playground's simulator), + DELETE
 Tokens come from POST https://oauth.ring.com/oauth/token (refresh_token grant), or are a
 Developer Playground access token used as-is.
@@ -15,19 +16,21 @@ Every failure raises RingError with a named RingStatus. Nothing here falls back 
 
 Calls are kept down (API reference, Rate Limiting: limits are per partner client_id; "Cache device
 information when appropriate"): a past day's Event History doesn't change, so it is fetched once per
-client; today's is reused for `TODAY_TTL`. A frame Ring said doesn't exist (416), is corrupt (422) or is
-forbidden for this token (403: a Playground token on image download) isn't asked for again. A 429 is
-RATE_LIMITED with Ring's Retry-After; when that is a second or two, the call waits and tries once more
-("respect the Retry-After header").
+client; today's is reused for `TODAY_TTL`. A frame Ring said is corrupt (422), doesn't exist (416, once the
+event is older than Ring's 2-minute media window) or is forbidden for this token (403) isn't asked for
+again. A 429 is RATE_LIMITED with Ring's
+Retry-After; when that is a second or two, the call waits and tries once more ("respect the Retry-After
+header").
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import time as _time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from email.utils import parsedate_to_datetime
 from datetime import date, datetime, time, timedelta
 from enum import Enum
@@ -50,6 +53,16 @@ TODAY_TTL = 60.0  # seconds today's Event History is reused for
 MAX_RETRY_WAIT = 2  # seconds: a longer Retry-After is reported, not waited out in a page load
 REMEMBERED_FRAME_ERRORS = {403, 416, 422}
 TAGGED_SUBTYPES = ("package_delivery",)  # motion subtypes asked for by composite filter, for stage 0
+# API reference, Event History > Event types: motion, on_demand ("User or partner initiated a live view
+# session") and ding. A Developer Playground scene files an on_demand event, never motion or ding.
+KINDS = ("ding", "motion", "on_demand")
+# API reference, Media Clips > Download video after a webhook event: 416 MEDIA_NOT_FOUND and 425
+# RECORDING_NOT_READY on a recent event mean "not processed yet": retry the unchanged request with capped
+# backoff and jitter (5, 10, 20, 30 s), and stop 2 minutes after the requested time.
+MEDIA_RETRY_STATUS = (416, 425)
+MEDIA_RETRY_SCHEDULE = (5, 10, 20, 30)
+MEDIA_WINDOW = 120.0  # seconds after the requested time that a 416 can still turn into a frame
+ON_DEMAND_OFFSET_MS = 5_000  # a live view's frame is asked for this far into the session
 
 
 class RingStatus(str, Enum):
@@ -76,13 +89,39 @@ _BY_HTTP = {401: RingStatus.TOKEN_REJECTED, 403: RingStatus.FORBIDDEN, 404: Ring
 
 class RingError(Exception):
     def __init__(self, status: RingStatus, detail: str = "", http_status: int | None = None,
-                 request_id: str | None = None, retry_after: int | None = None):
+                 request_id: str | None = None, retry_after: int | None = None, code: str | None = None):
         super().__init__(f"{status.value}: {detail}" if detail else status.value)
         self.status = status
         self.detail = detail
         self.http_status = http_status
         self.request_id = request_id
         self.retry_after = retry_after  # seconds, from Ring's Retry-After on a 429
+        self.code = code  # Ring's own error code (errors[0].code), e.g. REQUEST_FORBIDDEN, when it sent one
+
+
+def error_code(resp: httpx.Response) -> str | None:
+    """`errors[0].code` from Ring's error body (API reference, Error Handling and Image Snapshots >
+    Error Handling: {"errors": [{"status", "code", "detail", ...}]}), or None."""
+    try:
+        errs = resp.json().get("errors")
+        code = errs[0].get("code") if isinstance(errs, list) and errs and isinstance(errs[0], dict) else None
+    except (ValueError, AttributeError):
+        return None
+    return code if isinstance(code, str) and code else None
+
+
+@dataclass
+class Frame:
+    """One downloaded image and what Ring said about it (API reference, Image Snapshots > Image Response
+    Headers)."""
+
+    content: bytes
+    content_type: str
+    requested_ms: int
+    media_timestamp: str | None  # X-Media-Timestamp: when the frame was captured (epoch ms)
+    media_origin: str | None  # X-Media-Origin: "recording" or "snapshot"
+    request_id: str | None
+    attempts: int
 
 
 def retry_after_seconds(value: str | None) -> int | None:
@@ -164,7 +203,7 @@ class RingApiClient(RingClient):
     name = "ring"
 
     def __init__(self, *, auth: RingAuth, tz: ZoneInfo, device_id: str = "",
-                 event_types: str = "ding,motion", http: httpx.Client | None = None):
+                 event_types: str = "ding,motion,on_demand", http: httpx.Client | None = None):
         self.auth = auth
         self.tz = tz
         self._device_id = device_id
@@ -177,7 +216,9 @@ class RingApiClient(RingClient):
         self._no_frame: dict[tuple, RingError] = {}  # (device, ms) -> the error Ring gave for that frame
         self._refused_filters: set[str] = set()  # composite subtypes Ring answered 400 to
         self._lock = threading.Lock()
-        self.sleep = _time.sleep  # tests swap it
+        self.sleep = _time.sleep  # tests swap these three for a fake clock
+        self.clock = _time.time
+        self.jitter = random.random
 
     def _request(self, method: str, path: str, **kw) -> httpx.Response:
         url = path if path.startswith("http") else f"{API_BASE}{path}"
@@ -203,7 +244,8 @@ class RingApiClient(RingClient):
         if resp.status_code >= 400:
             raise RingError(status_for_http(resp.status_code), f"{method} {path}: {resp.text[:200]}",
                             resp.status_code, resp.headers.get("X-Request-ID"),
-                            retry_after_seconds(resp.headers.get("Retry-After")) if resp.status_code == 429 else None)
+                            retry_after_seconds(resp.headers.get("Retry-After")) if resp.status_code == 429 else None,
+                            error_code(resp))
         return resp
 
     def _json(self, resp: httpx.Response) -> dict:
@@ -214,6 +256,16 @@ class RingApiClient(RingClient):
 
     def list_devices(self) -> list[dict]:
         return self._json(self._request("GET", "/v1/devices")).get("data", [])
+
+    def online(self, device_id: str | None = None) -> bool:
+        """Whether the doorbell is online right now: GET /v1/devices/{id}/status, `data.attributes.online`
+        (API reference, Device Discovery > Status: "Whether the device is currently online"). Raises RingError;
+        a body without a boolean `online` is MALFORMED_RESPONSE, never a guess."""
+        body = self._json(self._request("GET", f"/v1/devices/{device_id or self.device_id}/status"))
+        value = ((body.get("data") or {}).get("attributes") or {}).get("online") if isinstance(body, dict) else None
+        if not isinstance(value, bool):
+            raise RingError(RingStatus.MALFORMED_RESPONSE, "device status without a boolean `online`")
+        return value
 
     def _cameras(self) -> list[str]:
         """IDs of devices with a camera, in Ring's order.
@@ -287,7 +339,7 @@ class RingApiClient(RingClient):
         If Ring refuses a composite filter (400, "malformed query parameters"), it isn't asked again and
         those events go to the classifier untagged, as with Smart Alerts off.
         """
-        events = self._fetch_filtered(day, self.event_types)
+        events = [e for e in self._fetch_filtered(day, self.event_types) if e.kind in KINDS]
         motion = [f.strip() for f in (self.event_types or "ding,motion").split(",") if f.strip().startswith("motion")]
         if len(motion) == 1 and "." in motion[0]:
             only = motion[0].split(".", 1)[1]
@@ -312,7 +364,16 @@ class RingApiClient(RingClient):
     def _fetch_filtered(self, day: date, event_types: str) -> list[DoorEvent]:
         start = datetime.combine(day, time.min, tzinfo=self.tz)
         end = start + timedelta(days=1)
-        start_ms, end_ms = int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+        return self._fetch_range(int(start.timestamp() * 1000), int(end.timestamp() * 1000), event_types)
+
+    def recent_events(self, since: datetime) -> list[DoorEvent]:
+        """Every event from `since` to now, oldest first, of any kind, never cached: for watching Event History
+        for something new (scripts/ring_proof.py waits on it for the Playground's live-view event)."""
+        now_ms = int(self.clock() * 1000) + 1
+        return self._fetch_range(int(since.timestamp() * 1000), now_ms, self.event_types)
+
+    def _fetch_range(self, start_ms: int, end_ms: int, event_types: str) -> list[DoorEvent]:
+        """Events with start_ms <= start < end_ms, oldest first, every event_type Ring returned."""
         path: str | None = f"/v1/history/devices/{self.device_id}/events"
         params: dict | None = {"event_types": event_types} if event_types else None
         events: list[DoorEvent] = []
@@ -332,36 +393,85 @@ class RingApiClient(RingClient):
                 if ms < start_ms:
                     older = True  # newest first, so everything after this is older too
                     break
-                if ms >= end_ms or kind not in ("ding", "motion"):
+                if ms >= end_ms:
                     continue
+                try:
+                    ends = datetime.fromtimestamp(int(attrs["end"]) / 1000, tz=self.tz) if attrs.get("end") else None
+                except (TypeError, ValueError, OverflowError, OSError):
+                    ends = None  # `end` only places a live view's frame; a bad one isn't worth failing the day
                 events.append(DoorEvent(
                     id=str(item.get("id")), device_id=self.device_id,
                     timestamp=datetime.fromtimestamp(ms / 1000, tz=self.tz),
-                    kind=kind, source="ring"))
+                    kind=kind, source="ring", ends=ends))
             nxt = (body.get("links") or {}).get("next")
             if older or not items or not nxt:
                 break
             path, params = nxt, None  # links.next already carries the filters and cursor
         return sorted(events, key=lambda e: e.timestamp)
 
-    def snapshot(self, event: DoorEvent) -> bytes:
-        """JPEG frame at the event's start time. Raises RingError (e.g. MEDIA_NOT_FOUND)."""
+    def frame_ms(self, event: DoorEvent) -> int:
+        """The time to ask Ring for an event's frame, epoch ms.
+
+        A ding or motion event: its start, the moment the press or the motion was recorded. A live view
+        (on_demand): `ON_DEMAND_OFFSET` into it, kept inside its `end`, because the first instant of a
+        session can come before any video does (other Playground integrations ask a few seconds in)."""
         ms = int(event.timestamp.timestamp() * 1000)
+        if event.kind == "on_demand":
+            end = int(event.ends.timestamp() * 1000) if event.ends else None
+            ms += ON_DEMAND_OFFSET_MS if end is None else max(0, min(ON_DEMAND_OFFSET_MS, end - ms))
+        return ms
+
+    def snapshot(self, event: DoorEvent, retry_for: float = 0.0) -> bytes:
+        """JPEG frame for the event (see `frame`). Raises RingError (e.g. MEDIA_NOT_FOUND)."""
+        return self.frame(event, retry_for=retry_for).content
+
+    def frame(self, event: DoorEvent, retry_for: float = 0.0, at_ms: int | None = None) -> Frame:
+        """The image Ring holds at `at_ms` (default `frame_ms(event)`), with Ring's media headers.
+
+        API reference, Image Snapshots: POST {"type": "at_timestamp", "timestamp": ms}; `image_options` is
+        optional (JPEG unless asked otherwise), so it isn't sent. Ring answers 303 to a pre-signed URL, which
+        the client follows (httpx drops the Bearer header on that cross-origin hop).
+
+        Media for a recent event can lag: Ring answers 416 or 425 until it has processed the recording. With
+        `retry_for` > 0 the unchanged request is retried on those two, on Ring's schedule (5, 10, 20, 30 s
+        plus jitter), until `retry_for` seconds have passed or 2 minutes after the requested time, whichever
+        comes first. A page load passes 0 and never waits; a recent miss isn't remembered, so the next load
+        asks again."""
+        ms = self.frame_ms(event) if at_ms is None else at_ms
         forbidden = self._no_frame.get(("*", 403))
         if forbidden:  # this token may not download images at all
             raise forbidden
         if (event.device_id, ms) in self._no_frame:
             raise self._no_frame[(event.device_id, ms)]
-        try:
-            resp = self._request("POST", f"/v1/devices/{event.device_id}/media/image/download",
-                                 json={"type": "at_timestamp", "timestamp": ms, "image_options": {"format": "jpeg"}})
-        except RingError as exc:
-            if exc.http_status in REMEMBERED_FRAME_ERRORS:
-                self._no_frame[("*", 403) if exc.http_status == 403 else (event.device_id, ms)] = exc
-            raise
-        if not resp.headers.get("content-type", "").startswith("image/"):
-            raise RingError(RingStatus.MALFORMED_RESPONSE, f"snapshot content-type {resp.headers.get('content-type')}")
-        return resp.content
+        started, attempts = self.clock(), 0
+        while True:
+            attempts += 1
+            try:
+                resp = self._request("POST", f"/v1/devices/{event.device_id}/media/image/download",
+                                     json={"type": "at_timestamp", "timestamp": ms})
+                break
+            except RingError as exc:
+                now = self.clock()
+                recent = now - ms / 1000 <= MEDIA_WINDOW
+                if exc.http_status in MEDIA_RETRY_STATUS and recent:
+                    step = MEDIA_RETRY_SCHEDULE[min(attempts - 1, len(MEDIA_RETRY_SCHEDULE) - 1)]
+                    delay = step * (1 + 0.1 * self.jitter())
+                    stop = min(started + retry_for, ms / 1000 + MEDIA_WINDOW)
+                    if now + delay <= stop:
+                        log.info("Ring frame not ready (%s); asking again in %.0f s", exc.status.value, delay)
+                        self.sleep(delay)
+                        continue
+                    raise  # not ready yet; not remembered, so a later call asks again
+                if exc.http_status in REMEMBERED_FRAME_ERRORS:
+                    self._no_frame[("*", 403) if exc.http_status == 403 else (event.device_id, ms)] = exc
+                raise
+        ctype = resp.headers.get("content-type", "")
+        if not ctype.startswith("image/"):
+            raise RingError(RingStatus.MALFORMED_RESPONSE, f"snapshot content-type {ctype or 'missing'}")
+        return Frame(content=resp.content, content_type=ctype, requested_ms=ms,
+                     media_timestamp=resp.headers.get("X-Media-Timestamp"),
+                     media_origin=resp.headers.get("X-Media-Origin"),
+                     request_id=resp.headers.get("X-Request-ID"), attempts=attempts)
 
     # Live view (WHEP). The browser builds the SDP offer; the Bearer token stays on the server.
     def whep_start(self, sdp_offer: str) -> tuple[str, str]:

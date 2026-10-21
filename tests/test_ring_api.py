@@ -52,11 +52,15 @@ def test_history_pages_until_older_than_the_day_and_maps_events():
 
     ring, _ = client(handler)
     events = ring.events_for_day(DAY)
-    assert [(e.kind, e.timestamp.hour) for e in events] == [("motion", 7), ("ding", 11), ("motion", 17)]
+    # The on_demand (live view) event is kept and named as such: a Playground scene files nothing else.
+    # (This test used to assert it was dropped; the judge audit showed that threw away the Playground's frames.)
+    assert [(e.kind, e.timestamp.hour) for e in events] == [("motion", 7), ("ding", 11), ("on_demand", 12),
+                                                           ("motion", 17)]
     assert all(e.source == "ring" for e in events)
+    assert events[2].ends == datetime.fromtimestamp((ms(12) + 20000) / 1000, TZ)
     main = [c for c in calls if c.url.params.get("event_types") != "motion.package_delivery"]
     assert len(main) == 2  # stopped at the first event older than the day
-    assert calls[0].url.params["event_types"] == "ding,motion"
+    assert calls[0].url.params["event_types"] == "ding,motion,on_demand"
 
 
 def test_snapshot_follows_303_without_leaking_the_bearer_token():

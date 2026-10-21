@@ -44,9 +44,15 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
     events: list[DoorEvent] = []
     skipped: list[DoorEvent] = []
     ring_labelled: list[ClassifiedVisit] = list((stage0 or {}).get("ring_labelled", []))
+    live_views: list[DoorEvent] = []
     for e in _door_events(ring, day, stage0):  # Event History events get the same stage 0 as webhooks
         route = stage0_route(e)
-        if route == "skip":
+        if e.kind == "on_demand":
+            # API reference, Event History > Event types: on_demand is "User or partner initiated a live view
+            # session". Someone opened the camera; it says nothing about who was at the door, so it is counted
+            # as a live view and never becomes a visitor (or reaches a classifier).
+            live_views.append(e)
+        elif route == "skip":
             skipped.append(e)
         elif route == "ring":
             ring_labelled.append(ring_alert(e))
@@ -83,7 +89,8 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
                              "model": classifier.model_id, "request_id": v.request_id})
         visits.append(v)
     if stats is not None:
-        stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped}))
+        stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped,
+                                     "live_views": live_views}))
     return sorted(visits, key=lambda v: v.event.timestamp)
 
 
@@ -98,7 +105,8 @@ NO_FRAME = {  # why an event reached the classifier without a Ring frame, by whe
 def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
     """How far each door event got: the instrumentation Ring's CV guidelines ask for."""
     skipped = len((stage0 or {}).get("skipped", []))
-    return {"events": len(visits) + skipped, "skipped_stage0": skipped,
+    live_views = len((stage0 or {}).get("live_views", []))
+    return {"events": len(visits) + skipped + live_views, "skipped_stage0": skipped, "ring_live_views": live_views,
             "labelled_by_ring": sum(1 for v in visits if v.source == "ring"),
             "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
             "bedrock_live": sum(1 for v in visits if v.source == "bedrock" and v.event.source.startswith("ring-live")),

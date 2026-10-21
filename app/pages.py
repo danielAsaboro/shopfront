@@ -168,6 +168,9 @@ def labelled_by_text(funnel: dict, classifier: str) -> str:
         parts.append(f"{funnel['labelled_by_rules']} by time-of-day rules")
     if funnel.get("skipped_stage0"):
         parts.append(f"{funnel['skipped_stage0']} skipped (Ring said not a person)")
+    if funnel.get("ring_live_views"):
+        n = funnel["ring_live_views"]
+        parts.append(f"{n} Ring live view{'' if n == 1 else 's'} (on_demand: the camera was opened), not visitors")
     return ", ".join(parts) or "none"
 
 

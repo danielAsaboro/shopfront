@@ -39,7 +39,9 @@ class Settings:
     # The shop owner's Ring Account ID (GET /v1/users/me data.id); empty = learned from the live token.
     # Webhooks from any other account are ignored.
     ring_account_id: str = _env("RING_ACCOUNT_ID")
-    ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion")
+    # API reference, Event History > Event types. on_demand (a live view) is kept, never counted as a visitor:
+    # it is the only event a Developer Playground scene files, and the moment a Playground frame exists.
+    ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion,on_demand")
     ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
 
     # Classifier: auto (Bedrock if AWS credentials resolve, else rules) | rules | bedrock
