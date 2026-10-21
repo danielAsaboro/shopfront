@@ -264,7 +264,8 @@ def test_dashboard_degrades_when_the_ring_token_expires(c, tmp_path, monkeypatch
     assert "PO-1042" in r.text and "13:02" in r.text  # the order and Ring's pushed courier still show
     # round 6: the only confirming event is the feeder's replay, so Ring isn't credited with it
     assert "1 of 2 expected deliveries confirmed by webhook (replayed)" in r.text and "No courier seen" not in r.text
-    assert "confirmed by Ring" not in r.text
+    assert "confirmed by Ring" not in r.text and "Ring webhooks only" not in r.text
+    assert "Door data: webhooks only; Ring's door history unavailable" in r.text
     assert "Not confirmed: door history unavailable" in r.text and "order=" not in r.text  # no pack from a guess
     assert "Checking a scan needs the door history from Ring" in r.text and "Build the dispute pack" not in r.text
     # the other pages carry the notice too, and /setup says what Ring really said

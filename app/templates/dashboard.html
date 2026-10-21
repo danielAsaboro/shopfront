@@ -264,7 +264,7 @@
     {% if bedrock_held %}<form method="post" action="/bedrock/label" style="margin-top:10px"><input type="hidden" name="date" value="{{ b.date }}"><span class="why">{{ bedrock_held }} event{{ 's' if bedrock_held != 1 }} away from any order or checked scan went to the rules, not Bedrock.</span> <button type="submit" class="quiet">Label them with Bedrock</button></form>{% endif %}
   </details>
   <footer class="proof">
-    Door data: {% if ring_down %}Ring webhooks only (door history unavailable){% elif b.ring_source == "ring" %}your Ring doorbell{% else %}synthetic demo generator, no Ring calls{% endif %}
+    Door data: {% if ring_down %}webhooks only; Ring's door history unavailable{% elif b.ring_source == "ring" %}your Ring doorbell{% else %}synthetic demo generator, no Ring calls{% endif %}
     · Labelled: {{ labels }}
     <details class="tech">
       <summary>Details</summary>
