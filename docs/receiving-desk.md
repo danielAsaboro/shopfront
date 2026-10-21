@@ -129,6 +129,34 @@ credentials the section says, in plain words, that reading a screenshot needs an
 typed form works as before. Owner-only and same-site, like every other write (`app/owner.py`).
 Tested against botocore's Stubber in `tests/test_scan_extract.py`; **not run against live Bedrock yet**.
 
+## At home: the delivery-attempted check
+
+The "delivery attempted" check (`check_attempt` in `app/reconcile.py`) never reads the posted hours. It
+compares the carrier's time with the door events within 10 minutes and asks whether the camera was watching
+(`app/coverage.py`), so it answers the same question at a house with a Ring doorbell: did a courier come to
+the door when the tracking says they tried? There is no separate home mode. This is the shop's own check,
+used at a front door, and the pages and the pack still say "shop".
+
+1. Connect Ring (`/connect`, see the README's "With a real Ring doorbell"). Without it Shopfront runs on its
+   made-up demo shop, and every page says so.
+2. On `/setup`, put your name under "Shop name": it signs the drafts. The opening hours don't enter this
+   check. They still show on the pack's posted-hours line, and they steer the time-of-day guesses, which never
+   count as a courier, or as proof there wasn't one, either way.
+3. Open the receiving desk for the day of the scan (`/?date=YYYY-MM-DD`). Under "The carrier's tracking says",
+   pick **Delivery attempted**, enter the time from the tracking page, the carrier and the tracking number if
+   you have them, and press "Check the door". Reading a screenshot of the tracking page instead needs an AWS
+   sign-in (see "From a screenshot" above). The same check as JSON:
+   `GET /api/attempt?at=YYYY-MM-DDTHH:MM&claim=attempted`.
+4. The answer is one of the outcomes in [receipts.md](receipts.md#checking-a-carriers-attempt-time). When the
+   door disagrees with the carrier (`nothing_recorded`, or `someone_not_a_courier`: Bedrock saw a person who
+   wasn't a courier), "Build the dispute pack" makes the pack. With no order linked, its draft goes to the
+   carrier, by the name you typed, or with a plain "Hello," when you typed none.
+
+What it can't do at home: it says nothing about a parcel left and then taken (Ring has no "door answered"
+signal, and Shopfront has no theft detection). When the doorbell recorded nothing, it supports your account
+but doesn't prove nobody came. And a courier near the carrier's time means the door agrees with the carrier,
+so there's no draft.
+
 ## What a missed delivery costs
 
 The dashboard's week line ("Last 7 days: … that's $X") and the "At stake" line under a disputed scan

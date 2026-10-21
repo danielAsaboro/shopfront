@@ -341,15 +341,38 @@ aws secretsmanager put-secret-value --secret-id <HmacSecretArn> \
 .venv/bin/python -m scripts.check_deploy --stack shopfront   # add --region if it isn't your default
 ```
 
-`scripts/check_deploy.py` reads the stack's outputs, opens `<DemoUrl>healthz`, sends one signed replay
-(`motion_detected`, sub_type `other_motion`, marked replay inside the signed body) to `WebhookUrl`, waits for the
-queue consumer to store it in DynamoDB, reads the three log groups for this request's `QUEUED` and `ACCEPTED`
-lines and for any `ERROR`, `FAILED`, `QUEUE_UNAVAILABLE` or `BAD_SIGNATURE` line, and deletes the two items it
-stored (`--keep` leaves them). It writes `evidence/aws-deploy-<UTC>.json`: each step's result and the AWS request
-IDs (CloudFormation, both Function URL invocations, DynamoDB, the Lambda request IDs in the logs), never the key or
-a signature; the webhook host and any Ring IDs are hashed. Commit that file. Exit 0 means every step passed.
-`--dry-run` rehearses the same steps in-process against moto and the real Lambda handlers and writes its record
-anywhere but `evidence/` ([tests/test_check_deploy.py](../tests/test_check_deploy.py)).
+`scripts/check_deploy.py` runs ten steps and ends with a pass/fail table of them:
+
+| Step | What it does | Passes when |
+|---|---|---|
+| `stack` | CloudFormation `DescribeStacks` | the stack is `*_COMPLETE` (not a rollback) and has every output the check needs |
+| `demo` | `GET <DemoUrl>healthz` | 200 with `{"ok": true}` |
+| `webhook` | one signed replay (`motion_detected`, sub_type `other_motion`, marked replay inside the signed body) to `WebhookUrl` | 200 `QUEUED` |
+| `stored` | polls DynamoDB for the event and its request marker | both appear and the row says replayed |
+| `bad_hmac` | the same body under a wrong `X-Signature` | 401 `BAD_SIGNATURE` |
+| `malformed` | a body signed with the right key that isn't a Ring v1.1 payload | 400 `MALFORMED` |
+| `replay` | the `webhook` step's body and signature again, as Ring's retry would send them | 200 `QUEUED`, then the consumer logs `DUPLICATE` for that request ID and the table still holds the one event |
+| `logs` | reads the three log groups since the check started | this request's `QUEUED` and `ACCEPTED` lines are there, and no `ERROR`, `FAILED`, `QUEUE_UNAVAILABLE` or `BAD_SIGNATURE` line other than the one `bad_hmac` caused |
+| `alarms` | `ListStackResources` names the stack's alarms, `DescribeAlarms` reads their state | none is in `ALARM` (`INSUFFICIENT_DATA` is a quiet alarm, not a failure) |
+| `cleanup` | deletes the two items the check stored (`--keep` leaves them) | always, once something was stored |
+
+After the table it prints the consumer's last five log lines (status, shop, request ID, type, replayed: the
+consumer never logs IDs of people), and the record counts them by status. The `bad_hmac` probe adds one to the
+`HmacFailures` metric; the alarm's default threshold is more than 5 in 5 minutes, so the check doesn't trip it.
+Alarm states are as CloudWatch last evaluated them (5-minute periods), so they describe the stack before the
+check more than the check itself.
+
+It writes `evidence/aws-deploy-<UTC>.json`: each step's result and the AWS request IDs (CloudFormation, every
+Function URL invocation, DynamoDB, CloudWatch, the Lambda request IDs in the logs) and alarm states, never the key
+or a signature; the webhook host and any Ring IDs are hashed. Commit that file. Exit 0 means every step passed.
+Besides reading the stack, secret, table and logs, the sign-in needs `cloudformation:ListStackResources` and
+`cloudwatch:DescribeAlarms` (an admin role has both). `--dry-run` rehearses the same steps in-process: moto for
+the table, queue, secret and log groups, the real Lambda handlers behind httpx's MockTransport for the two URLs,
+and botocore's Stubber for CloudFormation and the alarms. It writes its record anywhere but `evidence/`. The
+tests ([tests/test_check_deploy.py](../tests/test_check_deploy.py)) also drive the failure probes and the alarm
+reader on MockTransport and Stubber alone: a URL that accepts anything fails both refusal probes, an alarm in
+`ALARM` fails the check by name, and a second `BAD_SIGNATURE` line (someone else's) fails `logs`. None of this
+has run against a deployed stack yet.
 
 ### Sign dispute packs with KMS (optional)
 
