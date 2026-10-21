@@ -80,7 +80,9 @@ def test_request_forces_one_tool_with_an_enum_and_guards_against_text_in_the_fra
     schema = tool["toolSpec"]["inputSchema"]["json"]
     assert sent["toolConfig"]["toolChoice"] == {"tool": {"name": TOOL_NAME}}
     # Bedrock sees who it is, so it never answers "doorbell_press" (the rules' label for a press nobody looked at)
-    assert schema["properties"]["type"]["enum"] == [t.value for t in VisitType if t is not VisitType.DOORBELL_PRESS]
+    # and never "person", which only Ring's own Smart Alert says
+    assert schema["properties"]["type"]["enum"] == [t.value for t in VisitType
+                                                    if t not in (VisitType.DOORBELL_PRESS, VisitType.PERSON)]
     assert "doorbell_press" not in schema["properties"]["type"]["enum"]
     assert schema["properties"]["confidence"]["type"] == "number" and schema["properties"]["reason"]["type"] == "string"
     assert schema["required"] == ["type", "confidence", "reason"] and schema["additionalProperties"] is False

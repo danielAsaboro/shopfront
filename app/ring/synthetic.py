@@ -2,6 +2,11 @@
 
 Not Ring data. The same date always produces the same events, so "vs last week" comparisons
 are stable. Each event carries `truth` (the generator's answer key) for tests only.
+
+Like a doorbell with Ring's Smart Alerts on, some motion by people carries `ring_subtype="human"` (API
+reference, Notifications > Motion Detection: sub_type `human`, "Human detected"), so the demo shows the path
+Ring's own person signal takes. They are drawn from a separate seed, so the events themselves don't change, and
+they stay `source="synthetic"`: every page and pack names them demo data, never Ring's alerts.
 """
 
 from __future__ import annotations
@@ -13,6 +18,10 @@ from zoneinfo import ZoneInfo
 
 from app.models import DoorEvent, VisitType
 from app.ring.base import RingClient
+
+# Share of people's motion events that the demo marks the way Ring's Smart Alert would ("human"); the rest stay
+# plain motion, as from a doorbell with Smart Alerts off or a person Ring didn't classify
+HUMAN_SHARE = {VisitType.CUSTOMER: 0.7, VisitType.STAFF: 0.7, VisitType.AFTER_HOURS: 0.4}
 
 # Relative customer traffic per hour of the day (morning coffee + lunch peaks).
 HOURLY_WEIGHT = {8: 6, 9: 8, 10: 5, 11: 6, 12: 10, 13: 8, 14: 4, 15: 4, 16: 5, 17: 6, 18: 3}
@@ -74,6 +83,9 @@ class SyntheticRingClient(RingClient):
 
         now = datetime.now(self.tz)
         raw = sorted((r for r in raw if r[0] <= now), key=lambda r: r[0])  # no events from the future
+        alerts = random.Random(int(hashlib.sha256(f"{day.isoformat()}:smart-alert".encode()).hexdigest()[:8], 16))
         return [DoorEvent(id=f"syn-{day.isoformat()}-{i:04d}", device_id=self.device_id, timestamp=ts,
-                          kind=kind, source="synthetic", truth=truth)
+                          kind=kind, source="synthetic", truth=truth,
+                          ring_subtype="human" if kind == "motion" and alerts.random() < HUMAN_SHARE.get(truth, 0)
+                          else None)
                 for i, (ts, truth, kind) in enumerate(raw)]

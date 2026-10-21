@@ -46,8 +46,8 @@ def test_history_pages_until_older_than_the_day_and_maps_events():
     def handler(req: httpx.Request):
         calls.append(req)
         assert req.headers["Authorization"] == "Bearer playground-token"
-        if req.url.params.get("event_types") == "motion.package_delivery":
-            return httpx.Response(200, json={"data": [], "links": {}})  # no courier alerts that day
+        if req.url.params.get("event_types") in ("motion.package_delivery", "motion.human"):
+            return httpx.Response(200, json={"data": [], "links": {}})  # no courier or person alerts that day
         return httpx.Response(200, json=page2 if "page%5Bkey%5D=x" in str(req.url) or "page[key]=x" in str(req.url) else page1)
 
     ring, _ = client(handler)
@@ -58,7 +58,7 @@ def test_history_pages_until_older_than_the_day_and_maps_events():
                                                            ("motion", 17)]
     assert all(e.source == "ring" for e in events)
     assert events[2].ends == datetime.fromtimestamp((ms(12) + 20000) / 1000, TZ)
-    main = [c for c in calls if c.url.params.get("event_types") != "motion.package_delivery"]
+    main = [c for c in calls if c.url.params.get("event_types") not in ("motion.package_delivery", "motion.human")]
     assert len(main) == 2  # stopped at the first event older than the day
     assert calls[0].url.params["event_types"] == "ding,motion,on_demand"
 
@@ -368,15 +368,17 @@ def test_rate_limit_page_says_when_to_try_again(monkeypatch):
 # API reference, Event History > Event type filtering: event_types takes composite values like
 # motion.vehicle ("filters by event type AND detection subtype"); history items carry no sub_type field.
 # package_delivery is a motion detection subtype (Notifications > Motion Detection, Smart Alerts enabled).
-def _history_handler(calls, main_items, package_items, package_status=200):
+def _history_handler(calls, main_items, package_items, package_status=200, human_items=(), human_status=200):
     def handler(req: httpx.Request):
         calls.append(req)
         if req.method != "GET":
             return httpx.Response(416, json={"errors": [{"code": "MEDIA_NOT_FOUND"}]})
-        if req.url.params.get("event_types") == "motion.package_delivery":
-            if package_status != 200:
-                return httpx.Response(package_status, json={"errors": [{"code": "BAD_REQUEST"}]})
-            return httpx.Response(200, json={"data": package_items, "links": {}})
+        for sub, items, status in (("package_delivery", package_items, package_status),
+                                   ("human", list(human_items), human_status)):
+            if req.url.params.get("event_types") == f"motion.{sub}":
+                if status != 200:
+                    return httpx.Response(status, json={"errors": [{"code": "BAD_REQUEST"}]})
+                return httpx.Response(200, json={"data": items, "links": {}})
         return httpx.Response(200, json={"data": main_items, "links": {}})
     return handler
 

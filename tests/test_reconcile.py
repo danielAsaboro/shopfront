@@ -73,10 +73,12 @@ def test_no_door_data_means_no_judgement():
 
 
 minute = st.integers(0, 24 * 60 - 1)
+# Ring's person alert comes from Ring's sub_type, never from a classifier's label: tested by example elsewhere
+LABELS = [t for t in VisitType if t is not VisitType.PERSON]
 
 
 @settings(max_examples=300, deadline=None)
-@given(minute, st.lists(st.tuples(minute, st.sampled_from(list(VisitType)), st.sampled_from(["bedrock", "rules", "ring"])),
+@given(minute, st.lists(st.tuples(minute, st.sampled_from(LABELS), st.sampled_from(["bedrock", "rules", "ring"])),
                         max_size=6))
 def test_outcome_matches_the_evidence(attempt_min, raw):
     vs = [visit(m // 60, m % 60, k, s, eid=f"ev-{i}") for i, (m, k, s) in enumerate(raw)]

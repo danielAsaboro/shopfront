@@ -170,7 +170,7 @@ def test_funnel_counts_and_dedupes_against_history(tmp_path):
     vs = classify_day(ring, RulesClassifier(), DAY, parse_hours(""), webhooks=log, stats=stats)
     same = [v for v in vs if v.event.kind == "ding" and abs(v.event.timestamp - ding.timestamp) <= timedelta(seconds=5)]
     assert len(same) == 1 and same[0].event.source == "ring-webhook"  # one press, not two; the webhook copy wins
-    assert stats["skipped_stage0"] == 1 and stats["labelled_by_ring"] == 1 and stats["reached_bedrock"] == 0
+    assert stats["skipped_stage0"] == 1 and stats["labelled_by_ring"] - stats["ring_people"] == 1 and stats["reached_bedrock"] == 0
     assert stats["events"] == len(vs) + 1 and stats["webhook_events"] >= 2 and not stats["replayed"]
     assert any(v.source == "ring" and v.event.timestamp.strftime("%H:%M") == "13:05" for v in vs)
 
@@ -197,7 +197,8 @@ def test_closed_scan_while_open_and_busy_with_no_courier():
     r = check_closed_scan(at(14, 5), vs, OPEN)
     assert r["outcome"] == OPEN_NO_COURIER and r["claim"] == "business_closed"
     assert r["activity"] == {"from": "13:35", "to": "14:35", "events": 4, "motion": 4, "presses": 0, "customers": 1,
-                             "guessed_customers": 2, "staff": 0, "seen": 1, "near": 1}
+                             "guessed_customers": 2, "staff": 0, "seen": 1, "people": 0, "people_source": [],
+                             "near": 1}
     assert "posted hours had you open (08:00–18:00)" in r["text"]
     assert "4 motion events between 13:35 and 14:35 (1 of them confirmed from the camera frame as a customer)" in r["text"]
     assert "labelled from the frame as not a courier" in r["text"] and "doesn't prove" in r["text"]
@@ -231,10 +232,12 @@ def test_closed_scan_other_outcomes():
 
 
 minute = st.integers(0, 24 * 60 - 1)
+# Ring's person alert comes from Ring's sub_type, never from a classifier's label: tested by example elsewhere
+LABELS = [t for t in VisitType if t is not VisitType.PERSON]
 
 
 @settings(max_examples=300, deadline=None)
-@given(minute, st.lists(st.tuples(minute, st.sampled_from(list(VisitType)), st.sampled_from(["bedrock", "rules", "ring"])),
+@given(minute, st.lists(st.tuples(minute, st.sampled_from(LABELS), st.sampled_from(["bedrock", "rules", "ring"])),
                         max_size=6), st.booleans())
 def test_closed_scan_outcome_matches_the_evidence(scan_min, raw, has_hours):
     vs = [visit(m // 60, m % 60, k, s, eid=f"ev-{i}") for i, (m, k, s) in enumerate(raw)]
@@ -260,7 +263,7 @@ def test_closed_scan_outcome_matches_the_evidence(scan_min, raw, has_hours):
     elif around and not guessed:
         assert r["outcome"] == OPEN_NO_COURIER and r["activity"]["events"] == len(around)
     elif later:
-        assert r["outcome"] == COURIER_LATER and r["visit"]["time"] == "{:02d}:{:02d}".format(*divmod(min(later)[1], 60))
+        assert r["outcome"] == COURIER_LATER and r["visit"]["time"] == "{:02d}:{:02d}".format(*divmod(min(x[1] for x in later), 60))
     elif guessed:
         assert r["outcome"] == UNVERIFIED  # only a guess near the scan: never "no courier", never "open"
     else:  # nothing within 30 minutes and no Ring status notice: the camera may not have been watching

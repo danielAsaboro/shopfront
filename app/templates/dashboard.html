@@ -195,7 +195,7 @@
     <summary><h2>Every door event ({{ b.visits|length }})</h2></summary>
     <table>
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
-      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td{% if v.classifier not in ('ring', 'bedrock') %} class="muted"{% endif %}>{{ v.type|visit_label(v.classifier in ('ring', 'bedrock')) }}</td><td class="why">{{ v.classifier|how(v.reason, v.event_source) }}</td></tr>{% endfor %}
+      {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td{% if v.classifier not in ('ring', 'bedrock') %} class="muted"{% endif %}>{{ v.type|visit_label(v.classifier in ('ring', 'bedrock'), v.event_source) }}</td><td class="why">{{ v.classifier|how(v.reason, v.event_source) }}</td></tr>{% endfor %}
     </table>
   </details>
 

@@ -1,9 +1,11 @@
 """Where a door label came from, said exactly, for pages, packs and drafts.
 
-A courier label can rest on six different things, and they are not equally strong:
+A door label can rest on seven different things, and they are not equally strong:
 
 - `ring_alert`: Ring's own motion `sub_type: package_delivery` (a Smart Alert, pushed by webhook or in Event
   History). Ring says a courier came; Shopfront holds no frame of it unless it downloaded one.
+- `ring_person`: Ring's own motion `sub_type: human` ("Human detected", Smart Alerts enabled; `motion.human` in Event
+  History). Ring says a person was at the door, not who: never a courier, never proof there wasn't one.
 - `replay`: an event from Shopfront's signed webhook replay feeder (`ring-webhook-replay`), not a Ring
   notification, whatever it was labelled.
 - `bedrock_ring_frame`: Bedrock read the frame Shopfront downloaded from Ring for that event.
@@ -17,12 +19,12 @@ Each kind has its own wording; nothing says "the frame" when there is no frame.
 
 from __future__ import annotations
 
-RING_ALERT, REPLAY, BEDROCK_RING, BEDROCK_LIVE, RULES, SYNTHETIC = (
-    "ring_alert", "replay", "bedrock_ring_frame", "bedrock_live_frame", "rules", "synthetic")
+RING_ALERT, RING_PERSON, REPLAY, BEDROCK_RING, BEDROCK_LIVE, RULES, SYNTHETIC = (
+    "ring_alert", "ring_person", "replay", "bedrock_ring_frame", "bedrock_live_frame", "rules", "synthetic")
 
 
-def kind(labelled_by: str | None, event_source: str | None) -> str:
-    """One of the six kinds above. Anything that isn't Ring, Bedrock or synthetic/replayed data is a rules
+def kind(labelled_by: str | None, event_source: str | None, visit_type: str | None = None) -> str:
+    """One of the seven kinds above. Anything that isn't Ring, Bedrock or synthetic/replayed data is a rules
     guess, the weakest reading."""
     src = event_source or ""
     if src == "synthetic":
@@ -30,7 +32,7 @@ def kind(labelled_by: str | None, event_source: str | None) -> str:
     if src == "ring-webhook-replay":
         return REPLAY
     if labelled_by == "ring":
-        return RING_ALERT
+        return RING_PERSON if visit_type == "person" else RING_ALERT
     if labelled_by == "bedrock":
         return BEDROCK_LIVE if src.startswith("ring-live") else BEDROCK_RING
     return RULES
@@ -39,18 +41,24 @@ def kind(labelled_by: str | None, event_source: str | None) -> str:
 def of(row: dict | None) -> str:
     """The kind for a visit row (deliveries._visit_row, reconcile._visit, dispute._timeline)."""
     row = row or {}
-    return kind(row.get("labelled_by"), row.get("event_source"))
+    return kind(row.get("labelled_by"), row.get("event_source"), row.get("type"))
 
 
-def how_known(labelled_by: str | None, event_source: str | None, has_frame: bool = False) -> str:
+def how_known(labelled_by: str | None, event_source: str | None, has_frame: bool = False,
+              visit_type: str | None = None) -> str:
     """What the label rests on, in the owner's words: 'Ring's package_delivery alert, no frame'."""
-    k = kind(labelled_by, event_source)
+    k = kind(labelled_by, event_source, visit_type)
+    person = labelled_by == "ring" and visit_type == "person"
     if k == SYNTHETIC:
+        if person:
+            return "Synthetic demo event standing in for Ring's person alert (sub_type human); no camera recorded it"
         return "Synthetic demo event, no camera recorded it; guess from the time of day"
     if k == REPLAY:
-        what = "package_delivery alert" if labelled_by == "ring" else "event"
+        what = "person alert" if person else "package_delivery alert" if labelled_by == "ring" else "event"
         tail = "" if labelled_by == "ring" else "; guess from the time of day"
         return f"Replayed Ring {what} from Shopfront's feeder, not a Ring notification, no frame{tail}"
+    if k == RING_PERSON:
+        return "Ring's person alert (Smart Alert sub_type human): someone was at the door, not who"
     if k == RING_ALERT:
         return "Ring's package_delivery alert" + ("; Shopfront holds its Ring frame" if has_frame else ", no frame")
     if k == BEDROCK_LIVE:
@@ -63,6 +71,7 @@ def how_known(labelled_by: str | None, event_source: str | None, has_frame: bool
 # The same, as the source of a statement in a pack or a draft: "(Ring's package_delivery alert)"
 SAID_BY = {
     RING_ALERT: "Ring's package_delivery alert",
+    RING_PERSON: "Ring's person alert",
     REPLAY: "a replayed Ring package_delivery alert, not a Ring notification",
     BEDROCK_RING: "Bedrock saw them in the Ring frame",
     BEDROCK_LIVE: "Bedrock saw them in a frame captured in the owner's browser from a Ring live-view session",
@@ -73,6 +82,7 @@ SAID_BY = {
 # Why a courier label can't say whose order it was, per kind
 NOT_WHOSE = {
     RING_ALERT: "Ring's package_delivery alert says a courier came, not whose order it was",
+    RING_PERSON: "Ring's person alert says someone was at the door, not who or whose order",
     REPLAY: "the replayed package_delivery alert says a courier came, not whose order it was",
     BEDROCK_RING: "the Ring frame shows a courier, not whose order it was",
     BEDROCK_LIVE: "the frame captured in your browser from Ring live view shows a courier, not whose order it was",

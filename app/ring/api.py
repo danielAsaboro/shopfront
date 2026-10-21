@@ -6,8 +6,8 @@ Calls, all against https://api.amazonvision.com:
   GET  /v1/devices/{id}/status                       online right now (sampled every few minutes, app/ring/status.py)
   GET  /v1/history/devices/{id}/events               the day's dings, motion and live views (on_demand), paged
                                                      newest first, and again with event_types=
-                                                     motion.package_delivery to learn which motion events were
-                                                     Ring's courier alerts
+                                                     motion.package_delivery and motion.human to learn which
+                                                     motion events were Ring's courier and person alerts
   POST /v1/devices/{id}/media/image/download         the frame at an event's time (303 -> pre-signed GET)
   POST /v1/devices/{id}/media/streaming/whep/sessions live view (the Developer Playground's simulator), + DELETE
 Tokens come from POST https://oauth.ring.com/oauth/token (refresh_token grant), or are a
@@ -54,7 +54,10 @@ MAX_CACHED_DAYS = 120
 TODAY_TTL = 60.0  # seconds today's Event History is reused for
 MAX_RETRY_WAIT = 2  # seconds: a longer Retry-After is reported, not waited out in a page load
 REMEMBERED_FRAME_ERRORS = {403, 416, 422}
-TAGGED_SUBTYPES = ("package_delivery",)  # motion subtypes asked for by composite filter, for stage 0
+# Motion subtypes asked for by composite filter, for stage 0 (API reference, Event History > Event type filtering):
+# package_delivery makes a courier with no model call; human (`motion.human`, listed under Event types) is Ring's
+# own "a person was at the door", which beats a time-of-day guess (app/ring/webhooks.py, ring_person).
+TAGGED_SUBTYPES = ("package_delivery", "human")
 # API reference, Event History > Event types: motion, on_demand ("User or partner initiated a live view
 # session") and ding. A Developer Playground scene files an on_demand event, never motion or ding.
 KINDS = ("ding", "motion", "on_demand")
@@ -348,12 +351,14 @@ class RingApiClient(RingClient):
         otherwise motion events are asked for again as `motion.<subtype>` for each subtype stage 0 acts on
         (`TAGGED_SUBTYPES`), and the events in that answer, by Ring's event ID, get the subtype.
         `package_delivery` is a detection subtype in the API reference (Notifications > Motion Detection,
-        Smart Alerts enabled); the Event History table lists human, vehicle, animal and other_motion.
+        Smart Alerts enabled); the Event History table lists human, vehicle, animal and other_motion, and its
+        own example asks for `motion.human`. An event in both answers keeps the first tag (package_delivery).
         If Ring refuses a composite filter (400, "malformed query parameters"), it isn't asked again and
         those events go to the classifier untagged, as with Smart Alerts off.
 
-        A tag is only as good as the filter, and a package_delivery tag makes an event a courier with no model
-        call, so a filter that looks ignored tags nothing: another team's friction log shows the Developer
+        A tag is only as good as the filter: a package_delivery tag makes an event a courier with no model
+        call, and a human tag makes it a person where the rules only guessed, so a filter that looks ignored
+        tags nothing (each subtype is checked on its own): another team's friction log shows the Developer
         Playground answering a motion.vehicle query with its on_demand events. If a composite answer holds
         any event type the query didn't ask for, or a motion.<subtype> answer is every one of the day's
         motion events (more than one), the filter is marked unreliable for that device, isn't asked again,

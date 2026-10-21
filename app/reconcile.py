@@ -139,8 +139,29 @@ def ambiguous(t: datetime) -> bool:
 
 
 def confirmed(v: ClassifiedVisit) -> bool:
-    """Labelled by something that looked at the door, not guessed from the clock."""
-    return v.source in SEEN_SOURCES and v.visit_type != VisitType.UNKNOWN
+    """Labelled by something that looked at the door and said who, not guessed from the clock. Ring's person alert
+    says someone was there, not who: a courier is a person too, so a person is never confirmed as a courier or as
+    not one (`person`)."""
+    return v.source in SEEN_SOURCES and v.visit_type not in (VisitType.UNKNOWN, VisitType.PERSON)
+
+
+def person(v: ClassifiedVisit) -> bool:
+    """Ring's own Smart Alert classified the event as a person (motion sub_type `human`), whoever labelled it."""
+    return v.event.kind == "motion" and v.event.ring_subtype == "human"
+
+
+def people_text(vs: list[ClassifiedVisit]) -> str:
+    """"Ring classified 4 of these 6 door events as people": Ring's own person signal around a scan, said as Ring
+    said it. Demo (synthetic) and replayed alerts are named as such, never as Ring's. Empty when there are none."""
+    people = [v for v in vs if person(v)]
+    if not people:
+        return ""
+    who = "Ring" if all(v.event.source in ("ring", "ring-webhook") for v in people) else \
+        "Shopfront's demo stand-in for Ring's person alert" if all(v.event.source == "synthetic" for v in people) \
+        else "Ring's person alert (some replayed or demo)"
+    n, m = len(people), len(vs)
+    return f"{who} classified {n} of {'these' if m > 1 else 'this'} {m} door event{'' if m == 1 else 's'} as " \
+           f"{'a person' if n == 1 else 'people'}"
 
 
 def seen_courier(v: ClassifiedVisit) -> bool:
@@ -192,15 +213,32 @@ def _kinds(vs: list[ClassifiedVisit]) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+def _person_at(v: ClassifiedVisit) -> str:
+    """A person by Ring's alert, said for where the alert came from: Ring, a replay, or the demo generator."""
+    return {"synthetic": "a person (demo person alert)", "ring-webhook-replay": "a person (replayed Ring alert)"}.get(
+        v.event.source, "a person Ring detected")
+
+
 def unidentified_text(vs: list[ClassifiedVisit], scan: datetime) -> str:
     """"an unidentified doorbell press at 14:36" / "unidentified motion at 14:25 and an unidentified doorbell
     press at 14:36": what Ring recorded near the scan that nothing looked at. Never who it was."""
     vs = sorted(vs, key=lambda v: utc(v.event.timestamp))[:4]
-    parts = [{"ding": "an unidentified doorbell press", "motion": "unidentified motion"}.get(
-        v.event.kind, "an unidentified live-view visit") + f" at {_hhmm(v.event.timestamp)}" for v in vs]
+    parts = [(_person_at(v) if person(v) else {"ding": "an unidentified doorbell press",
+                                                         "motion": "unidentified motion"}.get(
+        v.event.kind, "an unidentified live-view visit")) + f" at {_hhmm(v.event.timestamp)}" for v in vs]
     if not parts:
         return ""
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _cust(around: list[ClassifiedVisit], customers: int) -> str:
+    """" (Ring classified 4 of these 6 door events as people; 1 of them confirmed from the camera frame as a customer)":
+    what something that looked at the door said about who used it around the scan. Nothing when nothing did:
+    the counts of motion and presses then speak for themselves, with no guess about who."""
+    parts = [people_text(around)] + ([f"{customers} of them confirmed from the camera frame as "
+                                      f"{'a customer' if customers == 1 else 'customers'}"] if customers else [])
+    parts = [x for x in parts if x]
+    return f" ({'; '.join(parts)})" if parts else ""
 
 
 def _base(claim: str, attempt: datetime, tolerance: timedelta) -> dict:
@@ -256,11 +294,12 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
                 "guessed_customers": sum(1 for v in around if v.visit_type == VisitType.CUSTOMER and not confirmed(v)),
                 "staff": sum(1 for v in around if v.visit_type == VisitType.STAFF and confirmed(v)),
                 "seen": sum(1 for v in around if confirmed(v)),
+                "people": sum(1 for v in around if person(v)),  # Ring's person alert (sub_type human)
+                "people_source": sorted({v.event.source for v in around if person(v)}),
                 "near": len(near)}
     fmt = {"attempt": _hhmm(scan), "hours": base["posted_hours"], "lo": activity["from"],
            "hi": activity["to"], "tol": tol, "activity": _kinds(around),
-           "cust": f" ({customers} of them confirmed from the camera frame as "
-                   f"{'a customer' if customers == 1 else 'customers'})" if customers else "",
+           "cust": _cust(around, customers),
            "near": f"no courier within {tol} minutes of the scan: "
                    + ("nothing was recorded that close" if not near else
                       f"{'the visit' if len(near) == 1 else 'all ' + str(len(near)) + ' visits'} recorded that close "

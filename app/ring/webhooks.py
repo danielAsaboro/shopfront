@@ -10,6 +10,8 @@ https://developer.amazon.com/docs/ring/release-notes.html) decides, for free, wh
 - `package_delivery`: Ring's own vision saw a delivery. It becomes a courier visit labelled "ring",
   with no Bedrock call.
 - `human`, plain `motion` (Smart Alerts off, so no sub_type) and doorbell presses go on to the classifier.
+  Where only the time-of-day rules labelled a `human` event, Ring's word wins: it is a person, labelled
+  "ring" (`ring_person`), not a rules-guessed customer.
 - `vehicle` and `other_motion` are logged and counted, and never reach the classifier.
 
 Whose door: Ring sends every event for the account, from every device, with the Ring user's Account ID
@@ -86,6 +88,27 @@ def stage0_route(e: DoorEvent) -> str:
 def ring_alert(e: DoorEvent) -> ClassifiedVisit:
     """The courier visit for a package_delivery event: Ring's label, not ours."""
     return ClassifiedVisit(e, VisitType.DELIVERY, 0.8, "Ring Smart Alert: package_delivery", "ring")
+
+
+PERSON_REASON = "Ring Smart Alert: human"
+
+
+def ring_person(v: ClassifiedVisit, no_frame: str = "") -> ClassifiedVisit:
+    """A classified event, with Ring's own person signal applied (API reference, Notifications > Motion Detection,
+    Smart Alerts enabled: sub_type `human`, "Human detected"; Event History > Event types: `motion.human`).
+
+    Only where nothing better looked: a Bedrock label from the frame stands. A rules guess of "customer" (motion
+    during open hours) becomes a person, labelled by Ring: Ring saw someone, which the clock only guessed. Other
+    rules guesses (staff before opening, after-hours motion) keep their guess and say Ring saw a person. `no_frame`
+    is why Bedrock didn't look (kept in the reason, as the rules fallback keeps it). A person
+    is never a courier, or proof there wasn't one: a courier is a person too (app/reconcile.py)."""
+    e = v.event
+    if e.kind != "motion" or e.ring_subtype != "human" or v.source != "rules":
+        return v
+    if v.visit_type == VisitType.CUSTOMER:
+        return ClassifiedVisit(e, VisitType.PERSON, 0.8, PERSON_REASON + (f" ({no_frame})" if no_frame else ""), "ring")
+    return ClassifiedVisit(e, v.visit_type, v.confidence, v.reason + "; Ring's Smart Alert said a person", v.source,
+                           v.request_id)
 
 
 def replay_key(key: str) -> str:

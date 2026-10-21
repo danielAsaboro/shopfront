@@ -34,6 +34,8 @@ def test_rules_agree_with_the_synthetic_generator():
     for i in range(14):
         day = date(2026, 9, 28) + timedelta(days=i)
         for v in classify_day(RING, rules, day, HOURS):
+            if v.source != "rules":  # the demo's stand-in for Ring's person alert labelled it, not the rules
+                continue
             total += 1
             ok = v.visit_type == v.event.truth
             right += ok

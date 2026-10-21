@@ -12,7 +12,7 @@ from app.hours import posted_hours
 from app.models import Briefing, ClassifiedVisit, DoorEvent, VisitType
 from app.ring.api import RingApiClient, RingError
 from app.ring.base import RingClient
-from app.ring.webhooks import ring_alert, stage0_route
+from app.ring.webhooks import ring_alert, ring_person, stage0_route
 
 SAME_EVENT = timedelta(seconds=5)  # a webhook and its Event History record name the same press or motion
 
@@ -67,7 +67,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
         visits.append(v)
     for e in events:
         if not isinstance(classifier, BedrockClassifier):
-            visits.append(classifier.classify(e, open_hours))
+            visits.append(ring_person(classifier.classify(e, open_hours)))
             continue
         hit = cache.get(e.id, classifier.model_id) if cache else None
         if hit:
@@ -87,7 +87,7 @@ def classify_day(ring: RingClient, classifier: Classifier, day: date,
         if v.source == "bedrock" and cache:
             cache.put(e.id, {"type": v.visit_type.value, "confidence": v.confidence, "reason": v.reason,
                              "model": classifier.model_id, "request_id": v.request_id})
-        visits.append(v)
+        visits.append(ring_person(v, no_frame))  # Bedrock's label stands; a rules fallback defers to Ring's alert
     if stats is not None:
         stats.update(funnel(visits, {"skipped": list((stage0 or {}).get("skipped", [])) + skipped,
                                      "live_views": live_views}))
@@ -108,6 +108,9 @@ def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
     live_views = len((stage0 or {}).get("live_views", []))
     return {"events": len(visits) + skipped + live_views, "skipped_stage0": skipped, "ring_live_views": live_views,
             "labelled_by_ring": sum(1 for v in visits if v.source == "ring"),
+            "ring_people": sum(1 for v in visits if v.source == "ring" and v.visit_type == VisitType.PERSON),
+            "demo_people": sum(1 for v in visits if v.source == "ring" and v.visit_type == VisitType.PERSON
+                               and v.event.source in ("synthetic", "ring-webhook-replay")),
             "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
             "bedrock_live": sum(1 for v in visits if v.source == "bedrock" and v.event.source.startswith("ring-live")),
             "labelled_by_rules": sum(1 for v in visits if v.source == "rules"),
@@ -118,8 +121,8 @@ def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
 
 def _hourly(visits: list[ClassifiedVisit]) -> list[int]:
     counts = [0] * 24
-    for v in visits:
-        if v.visit_type == VisitType.CUSTOMER:
+    for v in visits:  # people Ring detected count with customers: during open hours they are the door's traffic
+        if v.visit_type in (VisitType.CUSTOMER, VisitType.PERSON):
             counts[v.event.timestamp.hour] += 1
     return counts
 

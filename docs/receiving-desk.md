@@ -40,22 +40,24 @@ is a free first filter on signed webhooks:
 | sub_type | What happens |
 |---|---|
 | `package_delivery` | Courier visit labelled **by ring**, no Bedrock call. In live mode the Ring frame at that time is kept as the receipt when the download works |
-| `human`, none (Smart Alerts off), doorbell press | On to the classifier (Bedrock with a frame, else rules) |
+| `human` | On to the classifier. Bedrock's label from the frame stands; where only the time-of-day rules labelled it "customer", it becomes a **person, labelled by ring** ("person (Ring)"): Ring saw someone, the clock only guessed. A person is never a courier, or proof there wasn't one (a courier is a person too) |
+| none (Smart Alerts off), doorbell press | On to the classifier (Bedrock with a frame, else rules) |
 | `vehicle`, `other_motion` | Logged and counted, never classified |
 
 **Event History gets the same stage 0** (`stage0_route`, used by `app/briefing.py`). A history item has
 no sub_type field, but `event_types` takes composite values that filter "by event type AND detection
 subtype" ([API reference](https://developer.amazon.com/docs/ring/api-documentation.html), Event History >
-Event type filtering). So `RingApiClient` asks for the day twice: `ding,motion,on_demand`, then
-`motion.package_delivery`; motion events in the second answer (by Ring's event ID) get
-`ring_subtype = "package_delivery"` and become couriers **by ring** with no model call. The Event History
+Event type filtering). So `RingApiClient` asks for the day, then once per subtype it acts on:
+`motion.package_delivery` and `motion.human` (the API reference's own example of the syntax); motion events
+in those answers (by Ring's event ID) get that `ring_subtype`. `package_delivery` events become couriers
+**by ring** with no model call; `human` events become people as above. The Event History
 table lists `motion.human`, `.vehicle`, `.animal` and `.other_motion`; `package_delivery` is a detection
 subtype from the Motion Detection webhook section, so whether history honours `motion.package_delivery`
 is **unverified live**. If Ring answers 400, the filter isn't asked again and those events go to the
 classifier untagged, as with Smart Alerts off. When `RING_EVENT_TYPES` has a single composite motion
 value (`ding,motion.human`), every motion event carries that subtype with no extra call. A filter that
 looks ignored tags nothing: if an answer holds an event type the query didn't ask for (another team saw
-the Playground answer `motion.vehicle` with `on_demand` events), or the `motion.package_delivery` answer
+the Playground answer `motion.vehicle` with `on_demand` events), or a `motion.<subtype>` answer
 is every one of the day's motion events (more than one), that filter is marked unreliable for the
 doorbell and its motion events go to the classifier untagged. Live views (`on_demand`) are counted in the
 footer and never become visitors.

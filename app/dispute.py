@@ -240,7 +240,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
         "order": o, "frame": frame, "timeline": timeline,
         "timeline_window_min": int(WINDOW.total_seconds() // 60) if centre else None,
         "door_events_that_day": len(visits),
-        "seen_by_vision_that_day": sum(1 for v in visits if v.source in SEEN_SOURCES),
+        "seen_by_vision_that_day": sum(1 for v in visits if rc.confirmed(v)),  # who it was: not Ring's person alerts
         "event_sources": sources, "cited_sources": cited_sources, "limits": limits,
     }
     ds, pack["no_draft_reason"] = drafts(pack, visits)
@@ -265,7 +265,8 @@ def _supported(p: dict) -> bool:
     f = p["finding"]
     if f["outcome"] in (rc.OPEN_COURIER_CAME, rc.SOMEONE_NOT_COURIER):
         return True
-    return f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY) and bool((f.get("activity") or {}).get("seen"))
+    a = f.get("activity") or {}
+    return f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY) and bool(a.get("seen") or a.get("people"))
 
 
 def _facts(p: dict) -> str:
@@ -275,8 +276,8 @@ def _facts(p: dict) -> str:
     tol = p.get("tolerance_min", 10)
     if f["outcome"] in OPEN_FINDINGS:
         kinds = _kinds_text(a)
-        conf = (f", {a['customers']} of them confirmed from the camera frame as "
-                f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else ""
+        conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
+                              f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
         line = f"Our posted hours that day were {p['posted_hours']}, and our doorbell camera recorded {kinds} " \
                f"between {a['from']} and {a['to']}{conf}."
         if f["outcome"] == rc.OPEN_COURIER_CAME:
@@ -294,6 +295,17 @@ def _facts(p: dict) -> str:
         return f"The visit our doorbell camera recorded nearest that time, at {v['time']}, was not a courier, " \
                f"judged from the camera frame."
     return f["text"]
+
+
+def _people(a: dict) -> str:
+    """", and Ring's person detection classified 4 of them as people": Ring's own signal, in the shop's voice. A
+    demo or replayed alert is never written as Ring's (the draft is watermarked too)."""
+    n = a.get("people") or 0
+    if not n:
+        return ""
+    real = set(a.get("people_source") or []) <= {"ring", "ring-webhook"}
+    who = "Ring's person detection" if real else "the demo's stand-in for Ring's person detection"
+    return f", and {who} classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
 
 
 def _kinds_text(a: dict) -> str:

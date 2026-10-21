@@ -12,6 +12,9 @@ class VisitType(str, Enum):
     # neighbour, so they say what Ring recorded, never "delivery". Bedrock never answers it (it sees who).
     DOORBELL_PRESS = "doorbell_press"
     STAFF = "staff"
+    # Ring's own Smart Alert said a person (motion sub_type `human`): someone was at the door, not who. Never from
+    # a classifier; a courier is a person too, so it never rules a courier in or out.
+    PERSON = "person"
     AFTER_HOURS = "after_hours"
     UNKNOWN = "unknown"
 

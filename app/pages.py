@@ -75,17 +75,18 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     reason = reason or ""
     for note in _SAID_ALREADY:
         reason = reason.replace(note, "")
+    person = source == "ring" and reason.startswith("Ring Smart Alert: human")
     if source == "ring" and reason.lower().startswith("ring smart alert"):
-        reason = reason[len("Ring Smart Alert: package_delivery"):].strip(" ;:")  # the prefix says it
+        reason = reason.split(":", 1)[1].strip().removeprefix("human").removeprefix("package_delivery").strip(" ;:")
     if source not in ("ring", "bedrock", "rules"):  # e.g. a live session nothing labelled ("none")
         return f"{by(source)}: {reason}" if reason else by(source)
-    known = provenance.how_known(source, event_source, bool(frame_url))
+    known = provenance.how_known(source, event_source, bool(frame_url), "person" if person else None)
     return f"{known}: {reason}" if reason else known
 
 
 # One short word for what a label rests on (app/provenance.py), for the badge on a desk row; the full sentence
 # from how() sits behind it
-BADGE = {provenance.RING_ALERT: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
+BADGE = {provenance.RING_ALERT: "ring", provenance.RING_PERSON: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
          provenance.BEDROCK_LIVE: "bedrock", provenance.RULES: "guess", provenance.SYNTHETIC: "demo"}
 
 
@@ -117,9 +118,12 @@ def pack_stills(p: dict, limit: int = 2) -> list[dict]:
 TYPE_LABEL = {"doorbell_press": "doorbell press", "after_hours": "after hours"}
 
 
-def visit_label(visit_type: str | None, confirmed: bool = True) -> str:
-    """'customer', or 'doorbell press (guess)' when nothing looked at the door to say it."""
+def visit_label(visit_type: str | None, confirmed: bool = True, event_source: str | None = None) -> str:
+    """'customer', or 'doorbell press (guess)' when nothing looked at the door to say it, or 'person (Ring)' when
+    Ring's own Smart Alert said a person ('person (demo)' on demo or replayed events: no Ring alert)."""
     t = str(visit_type or "")
+    if t == "person":
+        return "person (demo)" if event_source in ("synthetic", "ring-webhook-replay") else "person (Ring)"
     return TYPE_LABEL.get(t, t.replace("_", " ")) + ("" if confirmed else " (guess)")
 
 
@@ -188,8 +192,16 @@ def labelled_by_text(funnel: dict, classifier: str) -> str:
     if not funnel or not funnel.get("events"):
         return "Bedrock vision, rules when there is no frame" if classifier == "bedrock" else "time-of-day rules"
     parts = []
-    if funnel.get("labelled_by_ring"):
-        parts.append(f"{funnel['labelled_by_ring']} by Ring's package_delivery alert")
+    alerts = funnel.get("labelled_by_ring", 0) - funnel.get("ring_people", 0)
+    if alerts:
+        parts.append(f"{alerts} by Ring's package_delivery alert")
+    if funnel.get("ring_people"):
+        demo = funnel.get("demo_people", 0)
+        real = funnel["ring_people"] - demo
+        if real:
+            parts.append(f"{real} as people by Ring's person alert")
+        if demo:
+            parts.append(f"{demo} as people by the demo's stand-in for Ring's person alert")
     ring_frames = funnel.get("reached_bedrock", 0) - funnel.get("bedrock_live", 0)
     if ring_frames:
         parts.append(f"{ring_frames} by Bedrock from a Ring frame")

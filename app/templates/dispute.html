@@ -60,7 +60,7 @@
     <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.unidentified %} ({{ p.order.unidentified }}, not identified){% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.time }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
     {% if p.claim and p.draft and p.order and p.order.amount %}<dt>At stake</dt><dd>{{ p.order.amount }} of stock{% set dflt = default_cost('$' if p.order.amount.startswith('$') else p.order.amount[:1]) %}{% if dflt is not none %}, and about {{ p.order.amount[:1] }}{{ '%.2f'|format(dflt) }} for a redelivery (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}</dd>{% endif %}
     <dt>Posted hours</dt><dd>{{ p.posted_hours }}</dd>
-    {% if p.finding and p.finding.activity %}<dt>Door around the scan</dt><dd>{{ p.finding.activity.events }} events {{ p.finding.activity.from }}–{{ p.finding.activity.to }}{% if p.finding.activity.customers %} · {{ p.finding.activity.customers }} labelled customers{% endif %} · {{ p.finding.activity.seen }} confirmed by Ring or Bedrock</dd>{% endif %}
+    {% if p.finding and p.finding.activity %}{% set a = p.finding.activity %}<dt>Door around the scan</dt><dd>{{ a.events }} events {{ a.from }}–{{ a.to }}{% if a.people %} · {{ a.people }} classified as people by {{ "Ring's person alert" if a.people_source|reject('in', ['ring', 'ring-webhook'])|list|length == 0 else "the demo's stand-in for Ring's person alert" }}{% else %} · no person alerts from Ring, so these are motion counts{% endif %}{% if a.customers %} · {{ a.customers }} confirmed customers{% endif %}</dd>{% endif %}
     {% if p.coverage %}<dt>Camera around the scan</dt><dd>{{ p.coverage.text }}</dd>{% endif %}
     <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
   </dl>
@@ -86,14 +86,14 @@
     {% if stills %}
     <div class="stills" role="list" aria-label="Door around {{ 'the scan' if p.claim else 'the courier' }}">
       {% for t in stills %}{% set drawn = t|illustration %}
-      <figure role="listitem">{% if t.frame_url %}<a href="{{ t.frame_url }}"><img src="{{ t.frame_url }}" alt="{{ t|frame_label }} at {{ t.time[:5] }}" loading="lazy"></a><figcaption>{{ t.time[:5] }} · {{ t.type|visit_label(t.confirmed) }} · {{ t|frame_label }}</figcaption>{% else %}{% set ns.drawn = ns.drawn + 1 %}<img src="{{ drawn }}" alt="{{ t.type|illustration_alt }} ({{ t.time[:5] }})" title="Illustration, not a camera frame" loading="lazy"><figcaption>{{ t.time[:5] }} · {{ t.ring_event }}, {{ t.type|visit_label(t.confirmed) }} · illustration</figcaption>{% endif %}</figure>
+      <figure role="listitem">{% if t.frame_url %}<a href="{{ t.frame_url }}"><img src="{{ t.frame_url }}" alt="{{ t|frame_label }} at {{ t.time[:5] }}" loading="lazy"></a><figcaption>{{ t.time[:5] }} · {{ t.type|visit_label(t.confirmed, t.event_source) }} · {{ t|frame_label }}</figcaption>{% else %}{% set ns.drawn = ns.drawn + 1 %}<img src="{{ drawn }}" alt="{{ t.type|illustration_alt }} ({{ t.time[:5] }})" title="Illustration, not a camera frame" loading="lazy"><figcaption>{{ t.time[:5] }} · {{ t.ring_event }}, {{ t.type|visit_label(t.confirmed) }} · illustration</figcaption>{% endif %}</figure>
       {% endfor %}
     </div>
     {% if ns.drawn > 1 %}<p class="why" style="margin:6px 0 0">Both pictures are illustrations, not camera frames: Shopfront drew them for its demo events. No camera took them, and they aren't in the zip.</p>{% elif ns.drawn %}<p class="why" style="margin:6px 0 0">{{ "The picture is" if stills|length == 1 else "The drawn picture is" }} an illustration, not a camera frame: Shopfront drew it for a demo event. No camera took it, and it isn't in the zip.</p>{% endif %}
     {% endif %}
     <table class="log">
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
-      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td{% if not t.confirmed %} class="muted"{% endif %}>{{ t.type|visit_label(t.confirmed) }}</td><td class="why">{{ t.labelled_by|how(t.reason, none if t.event_source == 'synthetic' else t.event_source, t.frame_url) }}</td></tr>{% endfor %}
+      {% for t in p.timeline %}<tr><td class="t">{{ t.time }}</td><td>{{ t.ring_event }}</td><td{% if not t.confirmed and t.type != 'person' %} class="muted"{% endif %}>{{ t.type|visit_label(t.confirmed, t.event_source) }}</td><td class="why">{{ t.labelled_by|how(t.reason, none if t.event_source == 'synthetic' and t.type != 'person' else t.event_source, t.frame_url) }}</td></tr>{% endfor %}
     </table>
     <details class="tech">
       <summary>Details</summary>
