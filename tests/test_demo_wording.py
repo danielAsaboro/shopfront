@@ -94,3 +94,12 @@ def test_the_pack_page_warns_once_in_its_watermark_not_the_banner_too(demo_clien
     assert "Demo data: don't send this pack as evidence." in page
     assert '<a class="no-print" href="/connect">Connect Ring</a> to use your doorbell.' in page
     assert 'class="banner warn-bg"' in client.get("/", params={"date": q["date"]}).text
+
+
+def test_the_pack_never_credits_ring_for_the_days_demo_or_replayed_alerts(demo_client):
+    """Round 7: "Door that day: 70 events, 1 confirmed from a Ring frame or Ring's own alert" on the demo pack,
+    where the one was Shopfront's replayed alert."""
+    client, q = demo_client
+    page = client.get("/dispute", params={**q, "at": demo.SCAN_AT, "claim": "business_closed"}).text
+    door = page.split("<dt>Door that day</dt>")[1].split("</dd>")[0]
+    assert "Ring frame or Ring" not in door and "the door log says which" in door
