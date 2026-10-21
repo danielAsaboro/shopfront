@@ -36,6 +36,14 @@ def test_sample_names_no_real_carrier():
         assert mark not in text
 
 
+def test_the_demo_day_has_no_doorbell_press_in_the_scanned_orders_window():
+    at = lambda h, m: datetime(2026, 10, 20, h, m, tzinfo=TZ)  # noqa: E731
+    assert not demo.bell_quiet([at(10, 9), at(14, 36)], date(2026, 10, 20), TZ)  # round 7's demo day
+    assert demo.bell_quiet([at(10, 9), at(12, 59), at(16, 1)], date(2026, 10, 20), TZ)
+    assert not demo.has_scan_slot(date(2026, 10, 20), TZ)
+    assert demo.demo_day(date(2026, 10, 21), usable=lambda d: demo.has_scan_slot(d, TZ)) == date(2026, 10, 19)
+
+
 def test_the_scan_is_a_fixed_afternoon_minute_not_a_quiet_one():
     """Round 2: the demo used to hunt for a minute with nothing near it. It now takes 14:30 in the dairy
     window, and only asks that the door was in use 10 to 30 minutes either side."""
@@ -88,8 +96,13 @@ def test_demo_story_matches_the_receiving_desk_and_yields_a_pack(day, monkeypatc
     assert pack["coverage"]["state"] == "online_by_status" and pack["coverage"]["demo"]
     assert pack["coverage"]["text"].startswith("Demo status checks, not asked of Ring")
     assert dispute.NO_STATUS_LIMIT not in pack["limits"]
-    if pack["order"]["possible"]:  # the desk's "Possible courier" for the dairy order is named in the pack
-        assert pack["order"]["unidentified"] in dispute.as_text(pack)
+    # Round 7: a doorbell press six minutes after the scan made the pack say "1 doorbell press" and "Possible
+    # courier", handing the carrier "our driver rang and nobody answered". The demo day has none in the window.
+    assert not pack["order"]["possible"] and pack["order"]["door_status"] != "possible"
+    assert not [t for t in pack["timeline"] if t["ring_event"] == "ding"]
+    for d in pack["drafts"]:
+        assert "doorbell press" not in d["body"]
+    assert "doorbell press" not in dispute.as_text(pack).split("Door log")[0]
     page = client.get("/", params={"date": day.isoformat()}).text
     assert "Hillside Mill" in page and demo.PACKAGE_AT in page
 

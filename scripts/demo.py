@@ -4,8 +4,9 @@
 
 What it does, in order:
 
-1. Picks the demo day: the most recent day before today when the demo shop is open and its synthetic
-   door was in use around the scan time, so nothing it shows is in the future.
+1. Picks the demo day: the most recent day before today when the demo shop is open, its synthetic
+   door was in use around the scan time, and nobody rang the bell in the scanned order's delivery window
+   (a press there would hand the carrier "our driver rang"), so nothing it shows is in the future.
 2. Copies samples/orders.csv with its dates moved to that day and imports it into a fresh data
    folder (.data/demo, git-ignored), the same way the CSV upload on /setup does.
 3. Starts Shopfront on that folder with synthetic door events (no Ring account needed; every page
@@ -108,16 +109,26 @@ def _scan_at(day: date, tz: ZoneInfo) -> datetime:
     return datetime.combine(day, datetime.strptime(SCAN_AT, "%H:%M").time(), tzinfo=tz)
 
 
+def bell_quiet(presses: list[datetime], day: date, tz: ZoneInfo) -> bool:
+    """No doorbell press in the dairy order's delivery window (SCAN_WINDOW). A press there, say six minutes after
+    the 14:30 scan, made the pack's "At the door" row and its draft cite a doorbell press nobody identified, and
+    handed the carrier its reply: "our driver rang and nobody answered"."""
+    lo, hi = (datetime.combine(day, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in SCAN_WINDOW)
+    return not any(lo <= t <= hi for t in presses)
+
+
 def has_scan_slot(day: date, tz: ZoneInfo) -> bool:
-    """Whether the demo's synthetic door that day was in use around SCAN_AT. The same generator, hours and
-    time zone the demo server uses."""
+    """Whether `day` tells the demo's story: the synthetic door was in use around SCAN_AT (people, not the
+    courier), and nobody rang the bell in the dairy order's window. The same generator, hours and time zone the
+    demo server uses; the demo picks its day, it doesn't change what the generator makes."""
     from app.hours import parse_hours
     from app.ring.synthetic import SyntheticRingClient
 
     if not open_hours(SHOP_HOURS, day):
         return False
-    events = [e.timestamp for e in SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)]
-    return door_in_use(events, _scan_at(day, tz))
+    events = SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)
+    return door_in_use([e.timestamp for e in events], _scan_at(day, tz)) and \
+        bell_quiet([e.timestamp for e in events if e.kind == "ding"], day, tz)
 
 
 def _port_busy(port: int) -> bool:
