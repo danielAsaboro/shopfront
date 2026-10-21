@@ -118,6 +118,8 @@ def funnel(visits: list[ClassifiedVisit], stage0: dict | None) -> dict:
             "ring_people": sum(1 for v in visits if v.source == "ring" and v.visit_type == VisitType.PERSON),
             "demo_people": sum(1 for v in visits if v.source == "ring" and v.visit_type == VisitType.PERSON
                                and v.event.source in ("synthetic", "ring-webhook-replay")),
+            "replayed_alerts": sum(1 for v in visits if v.source == "ring" and v.visit_type != VisitType.PERSON
+                                   and v.event.source == "ring-webhook-replay"),
             "reached_bedrock": sum(1 for v in visits if v.source == "bedrock"),
             "bedrock_live": sum(1 for v in visits if v.source == "bedrock" and v.event.source.startswith("ring-live")),
             "labelled_by_rules": sum(1 for v in visits if v.source == "rules"),

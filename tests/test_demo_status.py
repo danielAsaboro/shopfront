@@ -30,9 +30,8 @@ def test_coverage_says_demo_checks_were_made_up_and_real_ones_are_rings():
     scan = datetime(2026, 10, 7, 14, 30, tzinfo=TZ)
     demo = coverage.check(scan, [], ring.status_samples(DAY), timedelta(minutes=10))
     assert demo["state"] == coverage.ONLINE_BY_STATUS and demo["demo"] and demo["status_covered"]
-    assert demo["text"].startswith("Demo status checks, made up by Shopfront's demo and not asked of Ring, said "
-                                   "online every 5 minutes from 14:20 to 14:40 (10 minutes either side of the 14:30 "
-                                   "scan).")
+    assert demo["text"].startswith("Demo status checks, not asked of Ring, said online every 5 minutes from 14:20 "
+                                   "to 14:40 (10 minutes either side of the 14:30 scan).")
     real = [{**x, "demo": False} for x in ring.status_samples(DAY)]
     live = coverage.check(scan, [], real, timedelta(minutes=10))
     assert "demo" not in live and live["text"].startswith("Shopfront asked Ring every 5 minutes")

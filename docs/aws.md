@@ -328,6 +328,29 @@ Differences from the file log, on purpose: events from another device or account
 stored, so `ignored()` is 0; and `recent()` reads the shop's whole table (bounded by the TTL), newest by
 Ring's timestamp first.
 
+### Mac runbook: deploy, then check it
+
+On a Mac, from the repo, with an AWS sign-in that can create the stack (an admin role is simplest):
+
+```sh
+brew install aws-sam-cli               # or pipx install aws-sam-cli; Docker isn't needed
+aws login                              # or aws sso login --profile <p>; then export AWS_PROFILE=<p>
+cd infra && sam build && sam deploy --guided && cd ..   # stack name: shopfront
+aws secretsmanager put-secret-value --secret-id <HmacSecretArn> \
+  --secret-string '{"RING_HMAC_KEY": "<the key Ring issued>"}'
+.venv/bin/python -m scripts.check_deploy --stack shopfront   # add --region if it isn't your default
+```
+
+`scripts/check_deploy.py` reads the stack's outputs, opens `<DemoUrl>healthz`, sends one signed replay
+(`motion_detected`, sub_type `other_motion`, marked replay inside the signed body) to `WebhookUrl`, waits for the
+queue consumer to store it in DynamoDB, reads the three log groups for this request's `QUEUED` and `ACCEPTED`
+lines and for any `ERROR`, `FAILED`, `QUEUE_UNAVAILABLE` or `BAD_SIGNATURE` line, and deletes the two items it
+stored (`--keep` leaves them). It writes `evidence/aws-deploy-<UTC>.json`: each step's result and the AWS request
+IDs (CloudFormation, both Function URL invocations, DynamoDB, the Lambda request IDs in the logs), never the key or
+a signature; the webhook host and any Ring IDs are hashed. Commit that file. Exit 0 means every step passed.
+`--dry-run` rehearses the same steps in-process against moto and the real Lambda handlers and writes its record
+anywhere but `evidence/` ([tests/test_check_deploy.py](../tests/test_check_deploy.py)).
+
 ### Sign dispute packs with KMS (optional)
 
 Every dispute pack zip carries `manifest.sig`, a signature over its `manifest.sha256`, and a `VERIFY.txt`

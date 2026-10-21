@@ -107,7 +107,8 @@ def test_keep_recomputes_the_check_and_the_desk_shows_the_record(monkeypatch):
     desk = c.get("/", params={"date": "2026-10-14"}).text
     assert "Carrier record, October 2026" in desk
     assert "Northline Parcel scanned you closed once in October, during posted hours." in desk
-    assert "1 disputed scan, about $17.20 of redeliveries at stake (all demo)" in desk
+    assert "1 disputed scan, about $17.20 of redeliveries at stake" in desk and "(all demo)" not in desk
+    assert '<span class="badge b-demo">demo</span>' in desk.split("Carrier record")[1]  # one chip for the section
     assert "the survey average" in desk  # the sourced default, said as such
     page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
                               "carrier": "Northline Parcel", "tracking": "NP4471002958"}).text

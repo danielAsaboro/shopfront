@@ -65,7 +65,7 @@ def test_busy_door_is_three_short_facts():
 def test_demo_people_are_never_called_rings():
     vs = [person(14, 2, "synthetic"), person(14, 12, "synthetic"), visit(14, 50, src="synthetic")]
     c = rc.check_closed_scan(at(14, 30), vs, OPEN, now=NOW)
-    assert texts(c)[1] == (True, "3 door events 14:00–15:00, 2 people (demo alerts)")
+    assert texts(c)[1] == (True, "3 door events 14:00–15:00, 2 person alerts")  # the chip says demo
     assert pages.chip(c["event_source"]) == "demo"
 
 
@@ -190,6 +190,6 @@ def test_pack_page_has_the_same_picture_and_prints_its_words(client):
     assert '<p class="strip-words">Door from 14:00 to 15:00.' in page
     assert "Courier not identified" in page
     css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
-    assert ".strip-words { position: static;" in css  # the words print under the picture
+    assert ".strip-words { display: block;" in css.split("@media print")[1]  # the words print under the picture
     p = client.get(f"/api/dispute?date={DAY}&at=14:30&claim=business_closed").json()
     assert p["finding"]["text"] in dispute.as_text(p)  # the zip keeps the whole reasoning

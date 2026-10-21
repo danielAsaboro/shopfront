@@ -49,14 +49,14 @@ def how_known(labelled_by: str | None, event_source: str | None, has_frame: bool
     """What the label rests on, in the owner's words: 'Ring's package_delivery alert, no frame'."""
     k = kind(labelled_by, event_source, visit_type)
     person = labelled_by == "ring" and visit_type == "person"
+    # Demo and replayed events: a few words, since the row's badge and the page's banner already say what
+    # they are (round 4: "demo" fifteen times a page)
     if k == SYNTHETIC:
-        if person:
-            return "Synthetic demo event standing in for Ring's person alert (sub_type human); no camera recorded it"
-        return "Synthetic demo event, no camera recorded it; guess from the time of day"
+        return "Demo person alert, no camera" if person else "Demo event; guess from the time of day"
     if k == REPLAY:
-        what = "person alert" if person else "package_delivery alert" if labelled_by == "ring" else "event"
+        what = "person alert" if person else "package alert" if labelled_by == "ring" else "event"
         tail = "" if labelled_by == "ring" else "; guess from the time of day"
-        return f"Replayed Ring {what} from Shopfront's feeder, not a Ring notification, no frame{tail}"
+        return f"Replayed {what}, not from Ring, no frame{tail}"
     if k == RING_PERSON:
         return "Ring's person alert (Smart Alert sub_type human): someone was at the door, not who"
     if k == RING_ALERT:

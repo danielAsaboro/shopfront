@@ -181,12 +181,12 @@ def test_demo_has_person_alerts_and_never_calls_them_rings():
     vs = classify_day(ring, RulesClassifier(), DAY, parse_hours(""), stats=stats)
     people = [v for v in vs if v.visit_type == VisitType.PERSON]
     footer = pages.labelled_by_text(stats, "rules")
-    assert f"{len(people)} as people by the demo's stand-in for Ring's person alert" in footer
-    assert "by Ring's person alert" not in footer.replace("stand-in for Ring's person alert", "")
+    assert f"{len(people)} as people by demo person alerts" in footer
+    assert "by Ring's person alert" not in footer
     assert people and all(v.source == "ring" and v.event.source == "synthetic" for v in people)
     v = people[0]
-    assert pages.visit_label("person", False, "synthetic") == "person (demo)"
-    assert "Synthetic demo event standing in for Ring's person alert" in pages.how("ring", v.reason, "synthetic")
+    assert pages.visit_label("person", False, "synthetic") == "person"  # the row's how-we-know says demo, once
+    assert pages.how("ring", v.reason, "synthetic").startswith("Demo person alert, no camera")
     scan = v.event.timestamp + timedelta(minutes=12)
     r = rc.check_closed_scan(scan, vs, OPEN, now=at(23, 0))
     assert "Shopfront's demo stand-in for Ring's person alert classified" in r["text"]

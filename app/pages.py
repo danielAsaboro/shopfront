@@ -126,10 +126,11 @@ TYPE_LABEL = {"doorbell_press": "doorbell press", "after_hours": "after hours"}
 
 def visit_label(visit_type: str | None, confirmed: bool = True, event_source: str | None = None) -> str:
     """'customer', or 'doorbell press (guess)' when nothing looked at the door to say it, or 'person (Ring)' when
-    Ring's own Smart Alert said a person ('person (demo)' on demo or replayed events: no Ring alert)."""
+    Ring's own Smart Alert said a person ('person' on demo or replayed events, whose row says where they came from:
+    never Ring's)."""
     t = str(visit_type or "")
     if t == "person":
-        return "person (demo)" if event_source in ("synthetic", "ring-webhook-replay") else "person (Ring)"
+        return "person" if event_source in ("synthetic", "ring-webhook-replay") else "person (Ring)"
     return TYPE_LABEL.get(t, t.replace("_", " ")) + ("" if confirmed else " (guess)")
 
 
@@ -199,15 +200,18 @@ def labelled_by_text(funnel: dict, classifier: str) -> str:
         return "Bedrock vision, rules when there is no frame" if classifier == "bedrock" else "time-of-day rules"
     parts = []
     alerts = funnel.get("labelled_by_ring", 0) - funnel.get("ring_people", 0)
-    if alerts:
-        parts.append(f"{alerts} by Ring's package_delivery alert")
+    replayed = min(alerts, funnel.get("replayed_alerts", 0))  # Shopfront's feeder, never Ring's own alert
+    if alerts - replayed:
+        parts.append(f"{alerts - replayed} by Ring's package_delivery alert")
+    if replayed:
+        parts.append(f"{replayed} by a replayed package alert")
     if funnel.get("ring_people"):
         demo = funnel.get("demo_people", 0)
         real = funnel["ring_people"] - demo
         if real:
             parts.append(f"{real} as people by Ring's person alert")
         if demo:
-            parts.append(f"{demo} as people by the demo's stand-in for Ring's person alert")
+            parts.append(f"{demo} as people by demo person alerts")
     ring_frames = funnel.get("reached_bedrock", 0) - funnel.get("bedrock_live", 0)
     if ring_frames:
         parts.append(f"{ring_frames} by Bedrock from a Ring frame")
@@ -301,17 +305,16 @@ def _person(row: dict) -> bool:
     return row.get("type") == "person" or (row.get("ring_event") == "motion" and row.get("ring_subtype") == "human")
 
 
-def _people_src(rows: list[dict]) -> str:
-    """'Ring' when every person alert came from the shop's Ring camera, else what they were."""
-    srcs = {r.get("event_source") for r in rows if _person(r)}
-    if srcs <= {"ring", "ring-webhook"}:
-        return "Ring"
-    return "demo alerts" if srcs <= {"synthetic"} else "replayed or demo alerts"
-
-
 def _people(rows: list[dict]) -> str:
-    n = sum(1 for r in rows if _person(r))
-    return f", {n} {'person' if n == 1 else 'people'} ({_people_src(rows)})" if n else ""
+    """', 4 people (Ring)' when every person alert came from the shop's Ring camera; ', 4 person alerts' when any
+    came from the demo or a replay (the verdict's chip says which), never credited to Ring."""
+    people = [r for r in rows if _person(r)]
+    n = len(people)
+    if not n:
+        return ""
+    if all(r.get("event_source") in ("ring", "ring-webhook") for r in people):
+        return f", {n} {'person' if n == 1 else 'people'} (Ring)"
+    return f", {n} person alert{'' if n == 1 else 's'}"
 
 
 def _events(n: int) -> str:

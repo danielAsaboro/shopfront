@@ -79,14 +79,15 @@ def test_every_page_has_the_nav_banner_and_the_saved_shop_name(c):
     for path in PAGES:
         page = c.get(path).text
         assert 'nav aria-label="Shopfront"' in page and 'href="/setup"' in page and 'href="/"' in page, path
-        assert "Synthetic demo data" in page, path
+        assert "Demo data: these door events were made up on this computer" in page, path
+        assert '<span class="b-short">Demo data, not from Ring.' in page, path  # one line on a phone
         assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
 
 
 def test_replays_are_named_in_the_banner(c):
     replayed_courier(main.webhook_log, datetime(2026, 10, 7, 13, 2, tzinfo=TZ))
     for path in ["/setup", "/live", f"/?date={WEDNESDAY}"]:
-        assert "replayed by Shopfront's demo feeder" in c.get(path).text, path
+        assert "replayed by Shopfront's feeder" in c.get(path).text, path
 
 
 def test_dispute_banner_prints():
@@ -433,7 +434,7 @@ def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
     row = page.split(f'action="/deliveries/{e.id}/received"')[0].rsplit("<tr>", 1)[1] + \
         page.split(f'action="/deliveries/{e.id}/received"')[1].split("</tr>")[0]
     assert '<span class="badge b-demo">demo</span>' in row
-    assert '<details class="src"><summary title="Synthetic demo event' in row
+    assert '<details class="src"><summary title="Demo event; guess from the time of day' in row
 
 
 def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypatch):

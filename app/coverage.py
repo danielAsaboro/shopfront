@@ -148,10 +148,9 @@ def check(scan: datetime, visits: list[ClassifiedVisit], status: list[dict] | No
                         + f", so the camera may not have been watching at {_hhmm(scan, tz)}."}
     if samples and not gaps and any(s.get("demo") for s in near):
         return {**facts, "state": ONLINE_BY_STATUS, "demo": True,
-                "text": f"Demo status checks, made up by Shopfront's demo and not asked of Ring, said online every "
-                        f"{_every(near)} {window} ({int(tolerance.total_seconds() // 60)} minutes either side of the "
-                        f"{_hhmm(scan, tz)} scan). With Ring connected, Shopfront asks Ring itself and this line "
-                        f"quotes its answers."}
+                "text": f"Demo status checks, not asked of Ring, said online every {_every(near)} {window} "
+                        f"({int(tolerance.total_seconds() // 60)} minutes either side of the {_hhmm(scan, tz)} scan). "
+                        f"With Ring connected, Shopfront asks Ring itself."}
     if samples and not gaps:
         return {**facts, "state": ONLINE_BY_STATUS,
                 "text": f"Shopfront asked Ring every {_every(near)} whether the doorbell was online, and every "

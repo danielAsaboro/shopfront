@@ -24,10 +24,10 @@ CASES = [  # labelled_by, event_source, has_frame -> kind, how_known, not_whose
     ("rules", "ring", False, provenance.RULES, "Guess from the time of day",
      "the time-of-day rules only guessed a courier, and can't say whose order it was"),
     ("ring", "ring-webhook-replay", False, provenance.REPLAY,
-     "Replayed Ring package_delivery alert from Shopfront's feeder, not a Ring notification, no frame",
+     "Replayed package alert, not from Ring, no frame",
      "the replayed package_delivery alert says a courier came, not whose order it was"),
     ("rules", "synthetic", False, provenance.SYNTHETIC,
-     "Synthetic demo event, no camera recorded it; guess from the time of day",
+     "Demo event; guess from the time of day",
      "it's a synthetic demo event: no camera saw a courier, let alone whose order it was"),
 ]
 
@@ -46,7 +46,7 @@ def test_page_reason_drops_what_the_prefix_already_says():
     assert pages.how("ring", "Ring Smart Alert: package_delivery", "ring-webhook") == \
         "Ring's package_delivery alert, no frame"
     assert pages.how("rules", "doorbell press during open hours (synthetic event has no frame)", "synthetic") == \
-        "Synthetic demo event, no camera recorded it; guess from the time of day: doorbell press during open hours"
+        "Demo event; guess from the time of day: doorbell press during open hours"
     assert pages.how("none", "no frames labelled", "ring-live-browser") == "none: no frames labelled"
 
 

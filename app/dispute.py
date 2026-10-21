@@ -364,8 +364,9 @@ def _people(a: dict) -> str:
     if not n:
         return ""
     real = set(a.get("people_source") or []) <= {"ring", "ring-webhook"}
-    who = "Ring's person detection" if real else "the demo's stand-in for Ring's person detection"
-    return f", and {who} classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
+    if not real:  # the draft's first line already says it is demo data
+        return f", {'one of them a person alert' if n == 1 else f'{n} of them person alerts'}"
+    return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
 
 
 def _kinds_text(a: dict) -> str:

@@ -86,7 +86,7 @@ def test_demo_story_matches_the_receiving_desk_and_yields_a_pack(day, monkeypatc
     assert pack["demo_data"] and all(d["subject"].startswith("[DEMO] ") for d in pack["drafts"])
     # the camera line takes the status-check path, and says the checks were made up
     assert pack["coverage"]["state"] == "online_by_status" and pack["coverage"]["demo"]
-    assert pack["coverage"]["text"].startswith("Demo status checks, made up by Shopfront's demo and not asked of Ring")
+    assert pack["coverage"]["text"].startswith("Demo status checks, not asked of Ring")
     assert dispute.NO_STATUS_LIMIT not in pack["limits"]
     if pack["order"]["possible"]:  # the desk's "Possible courier" for the dairy order is named in the pack
         assert pack["order"]["unidentified"] in dispute.as_text(pack)
