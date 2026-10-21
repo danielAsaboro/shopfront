@@ -36,6 +36,7 @@ from app.cache import ClassificationCache  # noqa: E402
 from app.classify.rules import RulesClassifier  # noqa: E402
 from app.deliveries import DeliveryBook, FrameStore  # noqa: E402
 from app.live import LiveLog  # noqa: E402
+from app.owner import OwnerGate  # noqa: E402
 from app.ring import RingSource  # noqa: E402
 from app.ring.webhooks import WebhookLog  # noqa: E402
 from app.shop import ShopProfile  # noqa: E402
@@ -103,3 +104,7 @@ def no_local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "webhook_log", WebhookLog(d / "ring-webhooks.jsonl"))
     monkeypatch.setattr(main, "live", LiveLog(d, main.settings.tz))
     monkeypatch.setattr(main, "classifier", RulesClassifier())
+    # Starlette's TestClient connects as client "testclient" to host "testserver". Production never
+    # treats either as this machine, so only the tests add them.
+    monkeypatch.setattr(main, "gate", OwnerGate(d / "owner-secret", hosts={"testserver"},
+                                               local_clients={"testclient"}))

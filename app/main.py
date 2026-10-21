@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+                               Response)
 from fastapi.templating import Jinja2Templates
 
 from app import agent as shop_agent
@@ -17,6 +18,7 @@ from app.classify import _aws_creds_available
 from app.config import settings
 from app import dispute
 from app.orders import parse_orders
+from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
                             receipts)
@@ -40,6 +42,50 @@ cache = ClassificationCache(DATA / "classifications.json")
 webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl")
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
+
+
+def make_gate(s, secret_file: Path) -> OwnerGate:
+    return OwnerGate(secret_file, hosts=s.allowed_hosts.split(","))
+
+
+gate = make_gate(settings, DATA / "owner-secret")
+
+
+def _safe_next(value: str | None) -> str:
+    value = value or "/"
+    return value if value.startswith("/") and not value.startswith("//") and "\\" not in value else "/"
+
+
+def _not_owner(request: Request) -> Response:
+    detail = ("Shopfront only answers the shop owner. To use it on this device, open Set up on the shop's "
+              "computer and enter the pairing code it shows at /pair.")
+    path = request.url.path
+    if path.startswith(("/api/", "/frames/", "/dispute.zip")):
+        return JSONResponse({"error": "OWNER_ONLY", "detail": detail}, status_code=403)
+    nxt = path + (f"?{request.url.query}" if request.url.query else "")
+    return templates.TemplateResponse(request, "pair.html", {"next": nxt if request.method == "GET" else "/",
+                                                             "error": None, "shop": profile.get().name},
+                                      status_code=403)
+
+
+@app.middleware("http")
+async def owner_only(request: Request, call_next):
+    """Everything but Ring's webhook and /healthz is the owner's. See app/owner.py."""
+    path, headers = request.url.path, request.headers
+    if path == "/webhooks/ring":  # Ring signs it (HMAC) and reaches it under whatever public name the shop uses
+        return await call_next(request)
+    if not gate.host_ok(headers.get("host")):
+        return PlainTextResponse("Shopfront doesn't answer to this address. Open it at http://localhost:<port> "
+                                 "or add the name to SHOPFRONT_ALLOWED_HOSTS.", status_code=400)
+    if gate.cross_site(request.method, headers.get("host"), headers):
+        return JSONResponse({"error": "CROSS_SITE", "detail": "This request came from another website, so "
+                             "Shopfront ignored it. Use Shopfront's own pages."}, status_code=403)
+    if request.method in UNSAFE and path.startswith("/api/") and not gate.api_body_ok(headers.get("content-type")):
+        return JSONResponse({"error": "BAD_CONTENT_TYPE", "detail": "send application/json"}, status_code=415)
+    if path not in PUBLIC_PATHS and not gate.is_owner(request.client.host if request.client else None,
+                                                       headers, request.cookies):
+        return _not_owner(request)
+    return await call_next(request)
 
 
 def _parse_day(value: str | None) -> date:
@@ -85,12 +131,6 @@ def _week_money(day: date) -> str | None:
         closed += sum(1 for v in vs if v.visit_type.value == "delivery" and not _is_open(v, oh))
         missing += sum(1 for x in r["expected"] if x["status"] == "not_seen")
     return money_line(closed, missing, p.redelivery_cost, p.currency)
-
-
-def _local_only(request: Request) -> None:
-    # The token page writes a credential to disk, so it only answers this machine.
-    if not request.client or request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
-        raise HTTPException(403, "/connect is only available from this machine")
 
 
 def _ring_error_body(exc: RingError) -> dict:
@@ -149,7 +189,6 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
 
 @app.get("/connect", response_class=HTMLResponse)
 def connect_page(request: Request):
-    _local_only(request)
     return templates.TemplateResponse(request, "connect.html", {
         "shop": settings.shop_name, "connected": bool(source.pasted_token()),
         "env_mode": settings.ring_mode})
@@ -157,7 +196,6 @@ def connect_page(request: Request):
 
 @app.post("/connect")
 def connect_save(request: Request, token: str = Form(...)):
-    _local_only(request)
     if not token.strip():
         raise HTTPException(400, "paste a token")
     source.save_token(token)
@@ -166,7 +204,6 @@ def connect_save(request: Request, token: str = Form(...)):
 
 @app.post("/connect/forget")
 def connect_forget(request: Request):
-    _local_only(request)
     source.forget_token()
     return RedirectResponse("/", status_code=303)
 
@@ -263,9 +300,44 @@ def healthz():
             "token_pasted": bool(source.pasted_token())}
 
 
+@app.get("/pair", response_class=HTMLResponse)
+def pair_page(request: Request, next: str = Query("/")):
+    if gate.is_owner(request.client.host if request.client else None, request.headers, request.cookies):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    return templates.TemplateResponse(request, "pair.html", {"next": _safe_next(next), "error": None,
+                                                             "shop": profile.get().name})
+
+
+@app.post("/pair")
+def pair_device(request: Request, code: str = Form(""), next: str = Form("/")):
+    value = gate.pair(code)
+    if not value:
+        return templates.TemplateResponse(request, "pair.html", {
+            "next": _safe_next(next), "shop": profile.get().name,
+            "error": "That code didn't match or has expired. Use the code Set up shows on the shop's computer now."},
+            status_code=403)
+    r = RedirectResponse(_safe_next(next), status_code=303)
+    r.set_cookie(COOKIE, value, max_age=COOKIE_DAYS * 86400, httponly=True, samesite="strict",
+                 secure=request.url.scheme == "https")
+    return r
+
+
+@app.post("/pair/forget")
+def pair_forget():
+    gate.forget_devices()
+    return RedirectResponse("/setup#pairing", status_code=303)
+
+
+def _pairing(request: Request) -> dict | None:
+    """The code a phone pairs with, shown only on the shop's own computer."""
+    if not gate.is_local(request.client.host if request.client else None, request.headers):
+        return None
+    code, expires = gate.pairing_code()
+    return {"code": code, "minutes": max(1, round((expires - datetime.now().timestamp()) / 60))}
+
+
 @app.get("/setup", response_class=HTMLResponse)
 def setup_page(request: Request, error: str | None = None, imported: str | None = None):
-    _local_only(request)
     p = profile.get()
     try:
         ring, ring_error = source.get(), None
@@ -276,12 +348,11 @@ def setup_page(request: Request, error: str | None = None, imported: str | None 
         "p": p, "days": list(zip(DAYS, hours_for_form(p.hours))), "error": error, "imported": imported,
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
         "expected": [e for i in (-1, 0, 1) for e in book.for_day(today + timedelta(days=i))],
-        "shop": p.name})
+        "shop": p.name, "pairing": _pairing(request)})
 
 
 @app.post("/setup")
 async def setup_save(request: Request):
-    _local_only(request)
     form = await request.form()
     try:
         cost = str(form.get("redelivery_cost", "")).strip()
@@ -299,7 +370,6 @@ async def setup_save(request: Request):
 
 @app.post("/deliveries")
 async def delivery_add(request: Request):
-    _local_only(request)
     form = await request.form()
     back = str(form.get("back", "/setup#deliveries"))
     back = back if back.startswith("/") and not back.startswith("//") else "/"
@@ -314,7 +384,6 @@ async def delivery_add(request: Request):
 
 @app.post("/deliveries/{expected_id}/remove")
 def delivery_remove(request: Request, expected_id: str):
-    _local_only(request)
     book.remove(expected_id)
     return RedirectResponse("/setup#deliveries", status_code=303)
 
@@ -408,7 +477,6 @@ def api_dispute(date: str | None = Query(None), at: str | None = Query(None), cl
 def dispute_zip(request: Request, date: str | None = Query(None), at: str | None = Query(None),
                 claim: str | None = Query(None), order: str | None = Query(None),
                 carrier: str = Query(""), tracking: str = Query("")):
-    _local_only(request)  # the zip carries the Ring frame, which stays on this machine
     p = _pack(_parse_day(date), at, claim, order, carrier, tracking)
     name = f"shopfront-dispute-{p['day']}" + (f"-{p['claim']['time'][-5:].replace(':', '')}" if p["claim"] else "")
     return Response(dispute.as_zip(p, frames), media_type="application/zip",
@@ -417,7 +485,6 @@ def dispute_zip(request: Request, date: str | None = Query(None), at: str | None
 
 @app.post("/orders/import")
 async def orders_import(request: Request):
-    _local_only(request)
     form = await request.form()
     upload = form.get("file")
     text = ""
@@ -438,7 +505,6 @@ async def orders_import(request: Request):
 
 @app.post("/deliveries/{expected_id}/received")
 async def delivery_received(request: Request, expected_id: str):
-    _local_only(request)
     form = await request.form()
     try:
         e = book.mark_received(expected_id, str(form.get("status", "")), str(form.get("note", "")),
@@ -452,7 +518,6 @@ async def delivery_received(request: Request, expected_id: str):
 
 @app.get("/frames/{name}")
 def frame(request: Request, name: str):
-    _local_only(request)  # door frames stay on this machine
     if frame_name(name.removesuffix(".jpg")) != name:
         raise HTTPException(404)
     path = frames.path(name.removesuffix(".jpg"))
@@ -492,7 +557,6 @@ def _agent_tools(today: date) -> shop_agent.ShopTools:
 
 @app.post("/api/ask")
 async def api_ask(request: Request):
-    _local_only(request)
     body = await request.json()
     try:
         return shop_agent.ask(str(body.get("question", "")), _agent_tools(datetime.now(settings.tz).date()),

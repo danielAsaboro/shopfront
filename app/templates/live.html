@@ -109,7 +109,7 @@
     stopping = true; stopBtn.disabled = true;
     await sendFrame().catch(() => {});
     cleanup();
-    const r = await fetch(`/api/live/${session}/stop`, { method: 'POST' });
+    const r = await fetch(`/api/live/${session}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const b = await r.json().catch(() => ({}));
     session = null; stopping = false; startBtn.disabled = false;
     say(`${typeof why === 'string' ? why + '. ' : ''}Saved as ${b.label ? b.label.type.replace('_', ' ') : 'a visit'}. Reload to see it in the list.`);

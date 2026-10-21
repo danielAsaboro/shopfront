@@ -16,6 +16,7 @@ from app.ring.api import RingApiClient, RingAuth, RingError, RingStatus
 TZ = ZoneInfo("America/Los_Angeles")
 DEV = "ava1.ring.device.TEST"
 JPEG = b"\xff\xd8\xff\xe0fakejpeg"
+JPEG_TYPE = {"Content-Type": "image/jpeg"}
 SESSION_URL = f"https://api.amazonvision.com/v1/devices/{DEV}/media/streaming/whep/sessions/abc?location=x"
 
 
@@ -119,12 +120,12 @@ def test_live_endpoints_end_to_end(monkeypatch, tmp_path):
     assert "Start live view" in c.get("/live").text
     start = c.post("/api/live/start", content="v=0\r\no=- offer\r\n", headers={"Content-Type": "application/sdp"}).json()
     assert start["answer"].startswith("v=0") and start["ring_request_id"] == "rid-whep"
-    frame = c.post(f"/api/live/{start['session']}/frame", content=JPEG).json()
+    frame = c.post(f"/api/live/{start['session']}/frame", content=JPEG, headers=JPEG_TYPE).json()
     assert frame["frames_seen"] == 1
-    stop = c.post(f"/api/live/{start['session']}/stop").json()
+    stop = c.post(f"/api/live/{start['session']}/stop", json={}).json()
     assert stop["ring_stop_error"] is None and calls[-1].method == "DELETE"
     assert c.get("/api/live/sessions").json()[0]["id"] == start["session"]
-    assert c.post(f"/api/live/{start['session']}/frame", content=JPEG).json()["error"] == "UNKNOWN_SESSION"
+    assert c.post(f"/api/live/{start['session']}/frame", content=JPEG, headers=JPEG_TYPE).json()["error"] == "UNKNOWN_SESSION"
 
 
 def test_live_view_needs_ring_connected(monkeypatch, tmp_path):
@@ -132,7 +133,7 @@ def test_live_view_needs_ring_connected(monkeypatch, tmp_path):
 
     monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
     c = TestClient(main.app)
-    assert c.post("/api/live/start", content="v=0").status_code == 409
+    assert c.post("/api/live/start", content="v=0", headers={"Content-Type": "application/sdp"}).status_code == 409
     assert "Connect Ring" in c.get("/live").text
 
 

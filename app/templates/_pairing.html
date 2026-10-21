@@ -1,0 +1,7 @@
+{% if pairing %}
+  <section class="setup-step" id="pairing">
+    <h2>Use Shopfront on your phone</h2>
+    <p>On a phone on the same network, open this computer's address and enter <strong style="font-variant-numeric:tabular-nums;letter-spacing:.08em">{{ pairing.code }}</strong> when asked. The code works once and changes within {{ pairing.minutes }} minute{{ '' if pairing.minutes == 1 else 's' }}.</p>
+    <form method="post" action="/pair/forget"><button type="submit" class="linkish" style="font:inherit;background:none;border:0;color:var(--muted);cursor:pointer;text-decoration:underline;padding:0">Sign out every paired device</button></form>
+  </section>
+{% endif %}
