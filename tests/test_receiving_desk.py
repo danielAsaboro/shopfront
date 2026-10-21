@@ -12,19 +12,27 @@ from fastapi.testclient import TestClient
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-import app.main as main
-from app import dispute
+from app import dispute, main
 from app.briefing import classify_day
 from app.classify.rules import RulesClassifier
 from app.deliveries import DeliveryBook, Expected, FrameStore, receipts
+from app.hours import parse_hours
 from app.models import ClassifiedVisit, DoorEvent, VisitType
 from app.orders import parse_orders
-from app.reconcile import (ACTIVITY, NO_DOOR_DATA, OPEN_BY_HOURS_ONLY, OPEN_COURIER_CAME, OPEN_NO_COURIER,
-                           POSTED_CLOSED, TOLERANCE, check_attempt, check_closed_scan)
+from app.reconcile import (
+    COURIER_LATER,
+    NO_DOOR_DATA,
+    OPEN_BY_HOURS_ONLY,
+    OPEN_COURIER_CAME,
+    OPEN_NO_COURIER,
+    POSTED_CLOSED,
+    UNVERIFIED,
+    check_attempt,
+    check_closed_scan,
+)
 from app.ring import RingSource
 from app.ring.synthetic import SyntheticRingClient
 from app.ring.webhooks import WebhookLog, sign
-from app.hours import parse_hours
 from app.shop import ShopProfile
 
 TZ = ZoneInfo("America/Los_Angeles")
@@ -182,12 +190,16 @@ def test_signed_replay_is_marked_through_the_api(tmp_path, monkeypatch):
 # ---- "business closed" scans ----------------------------------------------------------------
 
 def test_closed_scan_while_open_and_busy_with_no_courier():
-    vs = [visit(13, 40), visit(13, 55), visit(14, 20), visit(14, 30, VisitType.STAFF), visit(9, 0, VisitType.DELIVERY, "bedrock")]
+    # the one visit within 10 minutes of the scan was looked at (Bedrock) and wasn't a courier
+    vs = [visit(13, 40), visit(13, 55, VisitType.CUSTOMER, "bedrock"), visit(14, 20), visit(14, 30, VisitType.STAFF),
+          visit(9, 0, VisitType.DELIVERY, "bedrock")]
     r = check_closed_scan(at(14, 5), vs, OPEN)
     assert r["outcome"] == OPEN_NO_COURIER and r["claim"] == "business_closed"
-    assert r["activity"] == {"from": "13:35", "to": "14:35", "events": 4, "customers": 3, "staff": 1, "seen": 0}
-    assert "posted hours had you open (08:00–18:00)" in r["text"] and "4 door events between 13:35 and 14:35 (3 labelled customers)" in r["text"]
-    assert "doesn't prove" in r["text"]
+    assert r["activity"] == {"from": "13:35", "to": "14:35", "events": 4, "motion": 4, "presses": 0, "customers": 1,
+                             "guessed_customers": 2, "staff": 0, "seen": 1, "near": 1}
+    assert "posted hours had you open (08:00–18:00)" in r["text"]
+    assert "4 motion events between 13:35 and 14:35 (1 of them confirmed from the camera frame as a customer)" in r["text"]
+    assert "labelled from the frame as not a courier" in r["text"] and "doesn't prove" in r["text"]
 
 
 def test_closed_scan_with_a_courier_seen_by_ring_or_bedrock():
@@ -198,9 +210,12 @@ def test_closed_scan_with_a_courier_seen_by_ring_or_bedrock():
         assert "4 min after the scan" in r["text"] and r["visit"]["frame_url"] == "/frames/c.jpg"
 
 
-def test_closed_scan_rules_courier_is_not_a_courier_sighting():
+def test_closed_scan_rules_courier_is_neither_a_sighting_nor_proof_nobody_came():
+    """This test used to assert open_no_courier, which let a draft tell the carrier "no courier at our door"
+    while an unlabelled doorbell press sat one minute after the scan. Nothing looked at that press, so
+    the honest answer is "unverified", with no draft."""
     r = check_closed_scan(at(14, 5), [visit(14, 6, VisitType.DELIVERY, "rules", ring_event="ding")], OPEN)
-    assert r["outcome"] == OPEN_NO_COURIER and r["visit"] is None
+    assert r["outcome"] == UNVERIFIED and r["visit"]["labelled_by"] == "rules" and not r["visit"]["confirmed"]
 
 
 def test_closed_scan_other_outcomes():
@@ -222,15 +237,21 @@ def test_closed_scan_outcome_matches_the_evidence(scan_min, raw, has_hours):
     scan = at(scan_min // 60, scan_min % 60)
     r = check_closed_scan(scan, vs, OPEN if has_hours else None)
     posted_open = has_hours and OPEN[0] <= scan.time() < OPEN[1]
-    around = [v for v in vs if abs(v.event.timestamp - scan) <= ACTIVITY]
-    couriers = [v for v in vs if abs(v.event.timestamp - scan) <= TOLERANCE and v.visit_type == VisitType.DELIVERY
-                and v.source in ("bedrock", "ring")]
+    mins = [(m, k, s) for m, k, s in raw]
+    around = [x for x in mins if abs(x[0] - scan_min) <= 30]
+    near = [x for x in mins if abs(x[0] - scan_min) <= 10]
+    couriers = [x for x in near if x[1] == VisitType.DELIVERY and x[2] != "rules"]
+    later = [x for x in mins if x[0] - scan_min > 10 and x[1] == VisitType.DELIVERY and x[2] != "rules"]
     if not posted_open:
         assert r["outcome"] == POSTED_CLOSED  # never claim "open" against the shop's own hours
     elif not vs:
         assert r["outcome"] == NO_DOOR_DATA
     elif couriers:
-        assert r["outcome"] == OPEN_COURIER_CAME and r["visit"]["event_id"] in {v.event.id for v in couriers}
+        assert r["outcome"] == OPEN_COURIER_CAME and r["visit"]["confirmed"]
+    elif later:
+        assert r["outcome"] == COURIER_LATER and r["visit"]["time"] == "{:02d}:{:02d}".format(*divmod(min(later)[0], 60))
+    elif any(s == "rules" or k == VisitType.UNKNOWN for _, k, s in near):
+        assert r["outcome"] == UNVERIFIED  # a guess near the scan is never "no courier"
     elif around:
         assert r["outcome"] == OPEN_NO_COURIER and r["activity"]["events"] == len(around)
     else:
@@ -247,7 +268,8 @@ def frames_with(tmp_path, *ids):
 
 
 def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_facts(tmp_path):
-    vs = [visit(13, 40), visit(13, 55), visit(14, 20), visit(9, 30, VisitType.DELIVERY, "bedrock", eid="c1")]
+    vs = [visit(13, 40), visit(13, 55, VisitType.CUSTOMER, "bedrock"), visit(14, 20),
+          visit(9, 30, VisitType.DELIVERY, "bedrock", eid="c1")]
     order = Expected("exp-1", DAY.isoformat(), "Bay Mills", "13:00", "16:00", order_ref="PO-1042", carrier="UPS",
                      tracking="1Z999", items="Flour 25kg x4")
     check = check_closed_scan(at(14, 5), vs, OPEN)
@@ -257,7 +279,7 @@ def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_fa
     d = p["draft"]
     assert d["to"] == "UPS" and d["subject"] == "Business closed scan, 2026-10-07 14:05, 1Z999"
     assert ("We were open: our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 door "
-            "events between 13:35 and 14:35, 3 of them customers. It recorded no courier at our door within 10 "
+            "events between 13:35 and 14:35, 1 of them customers. It recorded no courier at our door within 10 "
             "minutes of your scan.") in d["body"]
     assert "Your posted hours" not in d["body"]  # written to the carrier, not to the owner
     assert "order PO-1042 from Bay Mills (Flour 25kg x4)" in d["body"]
@@ -355,13 +377,22 @@ def test_import_page_flow_and_staff_tap(isolated):
     assert c.get("/dispute?date=2026-10-11").status_code == 400
 
 
-def test_business_closed_check_on_the_dashboard_and_api(isolated):
+def lunchtime(d):
+    """A busy Wednesday lunchtime that Bedrock looked at: customers, no courier near 12:30."""
+    tz = main.settings.tz
+    return [ClassifiedVisit(DoorEvent(f"lunch-{m}", "d", datetime.combine(d, time(12, m), tzinfo=tz), "motion", "ring"),
+                            VisitType.CUSTOMER, 0.9, "customer at the counter", "bedrock", f"rid-{m}")
+            for m in (5, 15, 25, 35, 50)] if d == DAY else []
+
+
+def test_business_closed_check_on_the_dashboard_and_api(isolated, monkeypatch):
+    monkeypatch.setattr(main, "_visits", lunchtime)
     c = TestClient(main.app)
     page = c.get("/", params={"date": "2026-10-07", "claim": "business_closed", "attempt": "12:30"}).text
     assert "The carrier scanned &#34;business closed&#34; at 12:30" in page or 'scanned "business closed" at 12:30' in page
     j = c.get("/api/attempt", params={"at": "2026-10-07T12:30", "claim": "business_closed"}).json()
-    assert j["claim"] == "business_closed" and j["outcome"] in (OPEN_NO_COURIER, OPEN_COURIER_CAME)
-    assert j["activity"]["events"] > 0  # lunchtime on a synthetic Wednesday is busy
+    assert j["claim"] == "business_closed" and j["outcome"] == OPEN_NO_COURIER
+    assert j["activity"]["events"] == 5 and j["activity"]["customers"] == 5
     if j["outcome"] == OPEN_NO_COURIER:
         assert "Build the dispute pack" in page
         page = c.get("/", params={"date": "2026-10-07", "claim": "business_closed", "attempt": "12:30",
