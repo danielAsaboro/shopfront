@@ -65,7 +65,7 @@ def sign(raw: bytes, key: str) -> str:
 
 
 def verify(raw: bytes, header: str | None, key: str) -> bool:
-    return bool(header) and hmac.compare_digest(sign(raw, key), header.strip())
+    return header is not None and hmac.compare_digest(sign(raw, key), header.strip())
 
 
 def replay_key(key: str) -> str:
@@ -130,7 +130,7 @@ class WebhookLog:
 
     def ignored(self, day: date, tz: ZoneInfo) -> int:
         """Door events that day from another device or account: logged, never put on the shop's door."""
-        return sum(1 for r in self._rows() if KINDS.get(r.get("type")) and not self._ours(r)
+        return sum(1 for r in self._rows() if KINDS.get(str(r.get("type"))) and not self._ours(r)
                    and (ts := self._when(r, tz)) is not None and ts.date() == day)
 
     def day(self, day: date, tz: ZoneInfo) -> dict:
@@ -138,7 +138,7 @@ class WebhookLog:
         events, ring_labelled, skipped = [], [], []
         seen = set()
         for r in self._rows():
-            kind = KINDS.get(r.get("type"))
+            kind = KINDS.get(str(r.get("type")))
             ts = self._when(r, tz)
             key = r.get("id") or r.get("request_id")  # Ring's data.id, else the delivery's own request_id
             if not kind or ts is None or ts.date() != day or key in seen or not self._ours(r):

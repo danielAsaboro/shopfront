@@ -309,8 +309,10 @@ def live_stop(session_id: str):
     ring_error = None
     try:
         _live_ring().whep_stop(s.session_url)
-    except (RingError, HTTPException) as exc:  # still record the session; report why the stop failed
-        ring_error = getattr(exc, "status", None) and exc.status.value
+    except RingError as exc:  # still record the session; report why the stop failed
+        ring_error = exc.status.value
+    except HTTPException:  # Ring was disconnected meanwhile
+        ring_error = "NOT_CONNECTED"
     return {**live.stop(session_id), "ring_stop_error": ring_error}
 
 

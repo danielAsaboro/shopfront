@@ -200,7 +200,7 @@ def test_only_sensors_means_no_camera():
         "data": [_device("ava1.ring.device.CONTACT", "c1")], "included": [_caps("c1", None)]})))
     ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
     with pytest.raises(RingError) as err:
-        ring.device_id
+        _ = ring.device_id
     assert err.value.status == RingStatus.NO_DEVICES and "camera" in err.value.detail
 
 

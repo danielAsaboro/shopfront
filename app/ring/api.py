@@ -277,6 +277,8 @@ class RingApiClient(RingClient):
         params: dict | None = {"event_types": self.event_types} if self.event_types else None
         events: list[DoorEvent] = []
         for _ in range(MAX_PAGES):
+            if path is None:
+                break
             body = self._json(self._request("GET", path, params=params))
             items = body.get("data", [])
             older = False

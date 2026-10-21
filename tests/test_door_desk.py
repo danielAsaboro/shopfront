@@ -1,7 +1,7 @@
 """Expected deliveries, receipts, the owner's profile and the Ask agent. Local tests only: synthetic
 events and a fake agent, never Ring or Bedrock."""
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
