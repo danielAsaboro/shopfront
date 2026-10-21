@@ -1,0 +1,4 @@
+day,supplier,window_start,window_end,order_ref,carrier,tracking,items,amount
+2026-10-20,Hillside Mill,10:00,11:00,PO-1041,Northline Parcel,NP4471002931,"Bread flour 25kg x4",$212.40
+2026-10-20,Valley Creamery,13:00,16:00,PO-1042,Northline Parcel,NP4471002958,"Butter 10kg; cream 12L",$318.75
+2026-10-20,Pinecrest Paper Goods,,,INV-2208,,,"Pastry boxes x500",$96.00
