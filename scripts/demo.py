@@ -132,6 +132,10 @@ def _fresh(data: Path) -> None:
     (data / MARKER).write_text("made by scripts/demo.py; deleted on the next demo run\n")
 
 
+def _show(path: Path) -> str:
+    return str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path)
+
+
 def _import_orders(data: Path, text: str) -> int:
     from app.deliveries import DeliveryBook
     from app.orders import parse_orders
@@ -196,7 +200,7 @@ Shopfront demo is running at {base}
 {SHOP_NAME}, {day:%A %d %B %Y}, open {hours[0]:02d}:00-{hours[1]:02d}:00. Door events are synthetic and the
 Ring webhook is a signed replay: every page says so. Nothing here is sent to anyone.
 
-1. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {orders_csv}).
+1. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
    The flour courier (PO-1041) was announced at {PACKAGE_AT} by Ring's package_delivery Smart Alert.
    {desk}
 
@@ -209,7 +213,7 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    and a draft you copy and send yourself:
    {pack_url}
 
-Ctrl-C stops the server. {data} is wiped on the next demo run; your own .data is untouched.
+Ctrl-C stops the server. {_show(data)} is wiped on the next demo run; your own .data is untouched.
 """, flush=True)
         server.wait()
     except KeyboardInterrupt:
