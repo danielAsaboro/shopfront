@@ -400,6 +400,12 @@ def _pairing(request: Request) -> dict | None:
     return {"code": code, "minutes": max(1, round((expires - datetime.now().timestamp()) / 60))}
 
 
+def _typed_hours(request: Request, saved: list[str]) -> list[str]:
+    """After a refused save, the hours as the owner typed them (h0..h6 in the query), else the saved ones."""
+    q = request.query_params
+    return [q.get(f"h{i}", saved[i]) for i in range(7)] if "h0" in q else saved
+
+
 @app.get("/setup", response_class=HTMLResponse)
 def setup_page(request: Request, error: str | None = None, imported: str | None = None):
     p = profile.get()
@@ -409,7 +415,8 @@ def setup_page(request: Request, error: str | None = None, imported: str | None 
         ring, ring_error = None, exc.status.value
     today = datetime.now(settings.tz).date()
     return templates.TemplateResponse(request, "setup.html", {
-        "p": p, "days": list(zip(DAYS, hours_for_form(p.hours))), "error": error, "imported": imported,
+        "p": p, "days": list(zip(DAYS, _typed_hours(request, hours_for_form(p.hours)))), "error": error,
+        "imported": imported,
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
         "expected": [e for i in (-1, 0, 1) for e in book.for_day(today + timedelta(days=i))],
         "shop": p.name, "pairing": _pairing(request)})
@@ -427,8 +434,9 @@ async def setup_save(request: Request):
         if p.redelivery_cost is not None and not 0 <= p.redelivery_cost < 100_000:
             raise ValueError("redelivery cost looks wrong")
         profile.save(p)
-    except ValueError as exc:
-        return RedirectResponse(f"/setup?error={quote(str(exc))}", status_code=303)
+    except ValueError as exc:  # send back what the owner typed, so the form shows it next to the error
+        typed = "".join(f"&h{i}={quote(str(form.get(f'h{i}', ''))[:40])}" for i in range(7))
+        return RedirectResponse(f"/setup?error={quote(str(exc))}{typed}", status_code=303)
     return RedirectResponse("/setup#deliveries", status_code=303)
 
 

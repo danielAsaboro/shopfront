@@ -22,7 +22,7 @@ os.environ.update({
     "RING_ACCOUNT_ID": "",
     "RING_HMAC_KEY": "",
     "SHOPFRONT_ALLOWED_HOSTS": "",
-    "SHOP_HOURS": "",
+    "SHOP_HOURS": "8-18,8-18,8-18,8-18,8-19,9-16,closed",
     "SHOP_NAME": "Corner Bakery",
     "SHOP_TIMEZONE": "America/Los_Angeles",
     "HYPOTHESIS_STORAGE_DIRECTORY": os.path.join(_SCRATCH, "hypothesis"),

@@ -21,7 +21,7 @@ def _env(name: str, default: str = "") -> str:
 class Settings:
     shop_name: str = _env("SHOP_NAME", "Corner Bakery")
     timezone: str = _env("SHOP_TIMEZONE", "America/Los_Angeles")
-    shop_hours: str = _env("SHOP_HOURS", DEFAULT_HOURS)
+    shop_hours: str = _env("SHOP_HOURS") or DEFAULT_HOURS
 
     # Ring: "synthetic" (default, generated demo data) or "live" (Ring Partner API).
     ring_mode: str = _env("RING_MODE", "synthetic")

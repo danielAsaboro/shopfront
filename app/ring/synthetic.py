@@ -34,29 +34,35 @@ class SyntheticRingClient(RingClient):
     def _at(self, day: date, hour: int, minute: int, second: int = 0) -> datetime:
         return datetime.combine(day, time(hour, minute, second), tzinfo=self.tz)
 
+    def _at_min(self, day: date, minutes: int) -> datetime:
+        minutes = max(0, min(minutes, 24 * 60 - 1))
+        return self._at(day, minutes // 60, minutes % 60)
+
     def events_for_day(self, day: date) -> list[DoorEvent]:
         rng = self._rng(day)
         hours = self.hours[day.weekday()]
         raw: list[tuple[datetime, VisitType, str]] = []
 
         if hours:
-            open_h, close_h = hours
+            open_m, close_m = hours  # minutes since midnight (app.hours)
+            open_h, close_h = open_m // 60, -(-close_m // 60)
             # Staff arrive before open and leave after close.
-            raw.append((self._at(day, open_h - 1, rng.randint(35, 55)), VisitType.STAFF, "motion"))
-            raw.append((self._at(day, close_h % 24, rng.randint(5, 25)), VisitType.STAFF, "motion"))
+            raw.append((self._at_min(day, (open_h - 1) * 60 + rng.randint(35, 55)), VisitType.STAFF, "motion"))
+            raw.append((self._at_min(day, close_m + rng.randint(5, 25)), VisitType.STAFF, "motion"))
 
             # Customers: busier on Fridays/Saturdays, with daily noise.
             day_factor = {4: 1.25, 5: 1.4}.get(day.weekday(), 1.0) * rng.uniform(0.8, 1.2)
             for h in range(open_h, close_h):
                 n = max(0, round(rng.gauss(HOURLY_WEIGHT.get(h, 3) * day_factor, 1.5)))
                 for _ in range(n):
-                    raw.append((self._at(day, h, rng.randint(0, 59), rng.randint(0, 59)),
-                                VisitType.CUSTOMER, "motion"))
+                    ts = self._at(day, h, rng.randint(0, 59), rng.randint(0, 59))
+                    if open_m <= ts.hour * 60 + ts.minute < close_m:
+                        raw.append((ts, VisitType.CUSTOMER, "motion"))
 
             # Deliveries ring the bell; some arrive before open or after close.
             for _ in range(rng.randint(2, 4)):
                 h = rng.choice([open_h - 1, open_h, 10, 11, 14, 15, close_h % 24])
-                raw.append((self._at(day, h, rng.randint(0, 59)), VisitType.DELIVERY, "ding"))
+                raw.append((self._at(day, max(0, min(h, 23)), rng.randint(0, 59)), VisitType.DELIVERY, "ding"))
         else:
             # Closed day: a courier rings anyway.
             raw.append((self._at(day, 11, rng.randint(0, 59)), VisitType.DELIVERY, "ding"))
