@@ -12,11 +12,21 @@ Steps, each recorded with the AWS request IDs it produced:
              `motion_detected` with sub_type `other_motion`, which Shopfront skips at stage 0 anyway. 200 QUEUED.
 4. stored    the queue consumer stored it: the DynamoDB request marker and the event item appear (polled), and
              the stored row says replayed.
-5. logs      CloudWatch Logs since the check started: the webhook function logged QUEUED and the consumer
+5. bad_hmac  the same body with a wrong X-Signature: 401 BAD_SIGNATURE, nothing queued. (One such request is
+             below the HmacFailures alarm's default threshold of 5 in 5 minutes, so it doesn't page anyone.)
+6. malformed a body signed correctly but not a Ring v1.1 payload: 400 MALFORMED.
+7. replay    the step-3 body and signature sent again (what Ring's retry looks like): 200 QUEUED, then the
+             consumer logs DUPLICATE for that request_id and the table still holds the one event.
+8. logs      CloudWatch Logs since the check started: the webhook function logged QUEUED and the consumer
              ACCEPTED for this request_id, and no log group (webhook, consumer, demo) has an ERROR line,
-             FAILED, QUEUE_UNAVAILABLE or BAD_SIGNATURE.
-6. cleanup   the two items the check stored are deleted again (--keep leaves them), so the owner's door and
+             FAILED, QUEUE_UNAVAILABLE or BAD_SIGNATURE, other than the one BAD_SIGNATURE step 5 caused.
+             The consumer's recent lines are printed and their statuses counted in the record.
+9. alarms    CloudFormation ListStackResources names the stack's CloudWatch alarms; DescribeAlarms gives each
+             one's state. Passes when none is in ALARM (INSUFFICIENT_DATA is a quiet alarm, not a failure).
+10. cleanup  the two items the check stored are deleted again (--keep leaves them), so the owner's door and
              replay banner don't carry the test.
+
+At the end it prints a pass/fail table of the steps.
 
 The record goes to evidence/aws-deploy-<UTC>.json. It holds request IDs, statuses and counts, never the HMAC
 key, a token or a signature; the webhook URL's host and any Ring account or device ID are hashed (CLAUDE.md).
@@ -24,8 +34,9 @@ A --dry-run builds the stack's pieces in moto (the table, queue, secret and log 
 answered by botocore's Stubber with the stack's outputs), answers the two URLs with the real Lambda handlers in-process, and writes its
 record to --out (never evidence/: a rehearsal on mocks is not evidence). Exit 0 when every step passed.
 
-Needs, for a real run: an AWS sign-in that can DescribeStacks, GetSecretValue on HmacSecretArn, GetItem and
-DeleteItem on the table, and FilterLogEvents on the three log groups (an admin sign-in has them).
+Needs, for a real run: an AWS sign-in that can DescribeStacks and ListStackResources, GetSecretValue on
+HmacSecretArn, GetItem and DeleteItem on the table, FilterLogEvents on the three log groups, and CloudWatch
+DescribeAlarms (an admin sign-in has them all).
 """
 
 from __future__ import annotations
@@ -48,6 +59,12 @@ import httpx
 ROOT = Path(__file__).resolve().parent.parent
 EVIDENCE = ROOT / "evidence"
 BAD_LOG_TERMS = ("FAILED", "QUEUE_UNAVAILABLE", "BAD_SIGNATURE")
+WRONG_KEY = "check-deploy-wrong-key"  # signs the bad_hmac probe; never a key anything accepts
+MALFORMED_BODY = b'{"check_deploy": "signed, but not a Ring v1.1 payload"}'
+PROBES = (("bad_hmac", 401, "BAD_SIGNATURE"), ("malformed", 400, "MALFORMED"), ("replay", 200, "QUEUED"))
+ALARMS = ("DeadLetterQueueAlarm", "HmacFailureAlarm", "ConsumerErrorsAlarm", "WebhookErrorsAlarm",
+          "DemoThrottlesAlarm")  # infra/template.yaml's alarms, for the dry run
+CONSUMER_TAIL = 5  # recent consumer log lines printed after the table
 NEEDED = ("DemoUrl", "WebhookUrl", "HmacSecretArn", "WebhookTableName", "LogGroupName", "ConsumerLogGroupName",
           "DemoLogGroupName")
 
@@ -70,6 +87,7 @@ class Check:
     def __init__(self, stack: str, region: str, dry_run: bool):
         self.record: dict[str, Any] = {"kind": "shopfront-aws-deploy-check", "stack": stack, "region": region,
                                        "dry_run": dry_run, "started_at": now_iso(), "steps": []}
+        self.consumer_tail: list[str] = []  # printed, not recorded
 
     def step(self, name: str, ok: bool, detail: str, **facts: Any) -> bool:
         self.record["steps"].append({"step": name, "ok": ok, "detail": detail, **facts})
@@ -79,6 +97,101 @@ class Check:
     @property
     def ok(self) -> bool:
         return bool(self.record["steps"]) and all(s["ok"] for s in self.record["steps"])
+
+
+def answer_status(r: httpx.Response) -> str | None:
+    if not r.headers.get("content-type", "").startswith("application/json"):
+        return None
+    try:
+        return r.json().get("status")
+    except (ValueError, AttributeError):
+        return None
+
+
+def failure_probes(http: httpx.Client, url: str, raw: bytes, signature: str,
+                   malformed_signature: str) -> dict[str, tuple[bool, str, dict]]:
+    """POST the webhook URL's failure paths: a wrong signature, a signed body that isn't Ring's, and the
+    step-3 body again. {name: (answered as expected, detail, facts)}; the replay's dedupe is checked after."""
+    sends = {"bad_hmac": (raw, sign_raw(raw, WRONG_KEY)), "malformed": (MALFORMED_BODY, malformed_signature),
+             "replay": (raw, signature)}
+    out: dict[str, tuple[bool, str, dict]] = {}
+    for name, code, status in PROBES:
+        body, sig = sends[name]
+        try:
+            r = http.post(url, content=body, headers={"X-Signature": sig, "Content-Type": "application/json"})
+        except httpx.HTTPError as exc:
+            out[name] = (False, f"POST failed: {type(exc).__name__}", {})
+            continue
+        got = answer_status(r)
+        out[name] = (r.status_code == code and got == status, f"POST -> {r.status_code} {got} (want {code} {status})",
+                     {"status_code": r.status_code, "lambda_request_id": http_request_id(r)})
+    return out
+
+
+def sign_raw(raw: bytes, key: str) -> str:
+    from app.ring.webhooks import sign
+    return sign(raw, key)
+
+
+def alarm_states(cfn: Any, cw: Any, stack: str) -> tuple[dict[str, str], str | None]:
+    """The stack's CloudWatch alarms by logical ID (DeadLetterQueueAlarm, ...) -> StateValue (OK, ALARM,
+    INSUFFICIENT_DATA), and the DescribeAlarms request ID. The template doesn't name its alarms, so their
+    physical names come from the stack's resources."""
+    names: dict[str, str] = {}
+    token = None
+    while True:
+        page = cfn.list_stack_resources(StackName=stack, **({"NextToken": token} if token else {}))
+        for res in page.get("StackResourceSummaries", []):
+            if res.get("ResourceType") == "AWS::CloudWatch::Alarm" and res.get("PhysicalResourceId"):
+                names[res["PhysicalResourceId"]] = res["LogicalResourceId"]
+        token = page.get("NextToken")
+        if not token:
+            break
+    states: dict[str, str] = {}
+    request_id, token = None, None
+    while names:
+        resp = cw.describe_alarms(AlarmNames=sorted(names)[:100], **({"NextToken": token} if token else {}))
+        request_id = request_id or aws_request_id(resp)
+        for a in resp.get("MetricAlarms", []) + resp.get("CompositeAlarms", []):
+            if a.get("AlarmName") in names:
+                states[names[a["AlarmName"]]] = a.get("StateValue", "")
+        token = resp.get("NextToken")
+        if not token:
+            break
+    for logical in names.values():
+        states.setdefault(logical, "MISSING")  # in the stack but DescribeAlarms didn't return it
+    return dict(sorted(states.items())), request_id
+
+
+def log_message(message: str) -> str:
+    """The app's own line inside Lambda's JSON log format, else the line as logged."""
+    try:
+        inner = json.loads(message).get("message")
+    except (ValueError, AttributeError):
+        inner = None
+    return str(inner if inner is not None else message).strip()
+
+
+def consumer_statuses(messages: list[str]) -> dict[str, int]:
+    """ACCEPTED / DUPLICATE / IGNORED / FAILED counts in the consumer's lines (each logs {"status": ...})."""
+    counts: dict[str, int] = {}
+    for m in messages:
+        try:
+            status = json.loads(log_message(m)).get("status")
+        except (ValueError, AttributeError):
+            continue
+        if status:
+            counts[status] = counts.get(status, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def summary_table(c: Check) -> str:
+    """The run as a short pass/fail table."""
+    steps = c.record["steps"]
+    width = max([len(s["step"]) for s in steps] + [4])
+    lines = [f"{'step':<{width}}  result  detail"]
+    lines += [f"{s['step']:<{width}}  {'pass' if s['ok'] else 'FAIL':<6}  {s['detail']}" for s in steps]
+    return "\n".join(lines)
 
 
 def now_iso() -> str:
@@ -100,7 +213,7 @@ def wait_for(fn: Callable[[], Any], timeout: float, every: float, tick: Callable
 
 def run(stack: str, clients: Callable[[str], Any], http: httpx.Client, *, region: str, timeout: float = 90,
         every: float = 3.0, keep: bool = False, dry_run: bool = False, tick: Callable[[], None] | None = None) -> Check:
-    from app.ring.webhooks import REPLAY_MARKER
+    from app.ring.webhooks import REPLAY_MARKER, replay_key
     from app.store.dynamodb import EventTable
     from scripts.feed_webhook import payload, signed
 
@@ -154,6 +267,7 @@ def run(stack: str, clients: Callable[[str], Any], http: httpx.Client, *, region
         body["meta"]["account_id"] = params["RingAccountId"]
     assert body["meta"][REPLAY_MARKER] is True
     raw, signature = signed(body, key.strip())
+    malformed_signature = sign_raw(MALFORMED_BODY, replay_key(key.strip()))
     del key, raw_secret, secret
     ms = body["data"]["attributes"]["timestamp"]
     try:
@@ -187,7 +301,6 @@ def run(stack: str, clients: Callable[[str], Any], http: httpx.Client, *, region
            f"nothing stored for {rid} after {timeout:.0f} s (consumer IGNORED it, failed, or is behind)",
            dynamodb_request_id=aws_request_id(got or marker), shop=shop)
 
-    # 5. the logs
     logs = clients("logs")
     groups = {"webhook": outputs["LogGroupName"], "consumer": outputs["ConsumerLogGroupName"],
               "demo": outputs["DemoLogGroupName"]}
@@ -205,23 +318,66 @@ def run(stack: str, clients: Callable[[str], Any], http: httpx.Client, *, region
             if not token:
                 return out
 
+    # 5-7. the failure paths: a wrong signature and a body that isn't Ring's are refused; the same body again is
+    # queued (the Function URL answers fast) and the consumer stores it once
+    probes = failure_probes(http, outputs["WebhookUrl"], raw, signature, malformed_signature)
+    for name in ("bad_hmac", "malformed"):
+        ok, detail, facts = probes[name]
+        c.step(name, ok, detail, **facts)
+    replay_ok, replay_detail, replay_facts = probes["replay"]
+
+    def deduped():
+        return [e for e in events(groups["consumer"]) if rid in e["message"] and "DUPLICATE" in e["message"]]
+    dup = wait_for(deduped, timeout, every, tick) if replay_ok else []
+    again = ddb.get_item(TableName=table, Key=event_key, ConsistentRead=True) if dup else {}
+    c.step("replay", bool(replay_ok and dup and again.get("Item")),
+           replay_detail + ("; consumer logged DUPLICATE, the table holds one event" if dup and again.get("Item") else
+                            "; consumer stored it once but the event is gone" if dup else
+                            f"; no DUPLICATE line for {rid} after {timeout:.0f} s" if replay_ok else ""),
+           **replay_facts)
+
+    # 8. the logs
     def ours_logged():
         w = [e for e in events(groups["webhook"]) if rid in e["message"] and "QUEUED" in e["message"]]
         k = [e for e in events(groups["consumer"]) if rid in e["message"] and "ACCEPTED" in e["message"]]
         return (w, k) if w and k else None
     found = wait_for(ours_logged, timeout, every, tick) or ([], [])
-    bad = {}
+    bad, consumer_lines = {}, []
+    expected_bad_signatures = 1 if probes["bad_hmac"][2].get("status_code") == 401 else 0
     for name, group in groups.items():
         lines = [e["message"] for e in events(group)]
+        if name == "consumer":
+            consumer_lines = lines
         hits = [m for m in lines if '"level": "ERROR"' in m or '"level":"ERROR"' in m
                 or any(t in m for t in BAD_LOG_TERMS)]
+        if name == "webhook":  # the bad_hmac probe's own line is expected; any more is someone else's
+            probe_lines = [m for m in hits if "BAD_SIGNATURE" in m and "ERROR" not in m]
+            if len(probe_lines) <= expected_bad_signatures:
+                hits = [m for m in hits if m not in probe_lines]
         if hits:
             bad[name] = len(hits)
     c.step("logs", bool(found[0] and found[1]) and not bad,
            ("QUEUED and ACCEPTED logged for this request" if found[0] and found[1] else
             "this request's QUEUED/ACCEPTED lines not found") + (f"; error lines: {bad}" if bad else "; no errors"),
            log_lambda_request_ids=sorted({lambda_rid(e["message"]) for e in found[0] + found[1]} - {None}),
-           error_lines=bad)
+           error_lines=bad, consumer_statuses=consumer_statuses(consumer_lines))
+    c.consumer_tail = [log_message(m)[:200] for m in consumer_lines[-CONSUMER_TAIL:]]
+
+    # 9. the alarms
+    try:
+        states, cw_rid = alarm_states(clients("cloudformation"), clients("cloudwatch"), stack)
+    except Exception as exc:
+        c.step("alarms", False, f"couldn't read the alarms: {type(exc).__name__}")
+    else:
+        firing = sorted(k for k, v in states.items() if v != "OK" and v != "INSUFFICIENT_DATA")
+        counts: dict[str, int] = {}
+        for v in states.values():
+            counts[v] = counts.get(v, 0) + 1
+        c.step("alarms", bool(states) and not firing,
+               (f"{len(states)} alarms: " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items()))
+                if states else "the stack has no CloudWatch alarms")
+               + (f"; not OK: {', '.join(f'{k} {states[k]}' for k in firing)}" if firing else ""),
+               alarms=states, cloudwatch_request_id=cw_rid)
 
     # 6. clean up
     if keep:
@@ -260,8 +416,11 @@ DRY_KEY = "dry-run-hmac-key"
 
 
 @contextmanager
-def rehearsal(stack_name: str = "shopfront", region: str = "us-east-1", account_id: str = "", device_id: str = ""):
-    """Yields (clients, http, tick) wired to an in-process copy of the stack."""
+def rehearsal(stack_name: str = "shopfront", region: str = "us-east-1", account_id: str = "", device_id: str = "",
+              alarms: dict[str, str] | None = None):
+    """Yields (clients, http, tick) wired to an in-process copy of the stack. `alarms` is each alarm's state
+    (logical ID -> OK | ALARM | INSUFFICIENT_DATA), answered by botocore's Stubber; default: the template's
+    five, all OK."""
     import os
 
     import boto3
@@ -281,7 +440,7 @@ def rehearsal(stack_name: str = "shopfront", region: str = "us-east-1", account_
             from botocore.stub import Stubber
 
             def client(name: str):
-                return cfn if name == "cloudformation" else boto3.client(name, region_name=region)
+                return {"cloudformation": cfn, "cloudwatch": cw}.get(name) or boto3.client(name, region_name=region)
             sm, sqs, ddb, logs = (boto3.client(n, region_name=region) for n in ("secretsmanager", "sqs", "dynamodb", "logs"))
             # moto's CloudFormation needs extras the app doesn't install; DescribeStacks is answered by botocore's
             # Stubber, in the documented response shape, with the outputs and parameters of the stack built here.
@@ -311,7 +470,23 @@ def rehearsal(stack_name: str = "shopfront", region: str = "us-east-1", account_
                                {"ParameterKey": "RingDeviceId", "ParameterValue": device_id}]}],
                 "ResponseMetadata": {"RequestId": "dry-run-cfn", "HTTPStatusCode": 200, "HTTPHeaders": {}, "RetryAttempts": 0}},
                 {"StackName": stack_name})
+            states = alarms if alarms is not None else {a: "OK" for a in ALARMS}
+            physical = {logical: f"{stack_name}-{logical}-DRYRUN" for logical in states}
+            meta = {"HTTPStatusCode": 200, "HTTPHeaders": {}, "RetryAttempts": 0}
+            stub.add_response("list_stack_resources", {"StackResourceSummaries": [
+                {"LogicalResourceId": logical, "PhysicalResourceId": name, "ResourceType": "AWS::CloudWatch::Alarm",
+                 "LastUpdatedTimestamp": datetime.now(timezone.utc), "ResourceStatus": "CREATE_COMPLETE"}
+                for logical, name in physical.items()], "ResponseMetadata": {"RequestId": "dry-run-cfn-2", **meta}},
+                {"StackName": stack_name})
             stack.enter_context(stub)
+            cw = boto3.client("cloudwatch", region_name=region)
+            cw_stub = Stubber(cw)
+            if physical:
+                cw_stub.add_response("describe_alarms", {"MetricAlarms": [
+                    {"AlarmName": physical[logical], "StateValue": state} for logical, state in states.items()],
+                    "ResponseMetadata": {"RequestId": "dry-run-cloudwatch", **meta}},
+                    {"AlarmNames": sorted(physical.values())})
+            stack.enter_context(cw_stub)
 
             def ship(group: str, records: list[logging.LogRecord], request_id: str) -> None:
                 """What Lambda's JSON log format would put in CloudWatch for these log calls."""
@@ -405,7 +580,11 @@ def main(argv: list[str] | None = None) -> int:
                     timeout=a.timeout, keep=a.keep)
         out = a.out
     path = write(c, out)
-    print(f"{'PASSED' if c.ok else 'FAILED'}; record: {path}")
+    print("\n" + summary_table(c))
+    if c.consumer_tail:
+        print("\nRecent consumer log lines:")
+        print("\n".join(f"  {line}" for line in c.consumer_tail))
+    print(f"\n{'PASSED' if c.ok else 'FAILED'}; record: {path}")
     return 0 if c.ok else 1
 
 
