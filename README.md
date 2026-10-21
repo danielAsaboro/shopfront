@@ -2,15 +2,53 @@
 
 **The carrier scanned "business closed". Your doorbell says you were open.**
 
-Shopfront is a receiving desk for a one-door shop (a bakery, café or boutique) that already has a
-Ring doorbell. When a carrier's tracking says "business closed" or "delivery attempted", Shopfront
-checks that scan against the shop's posted hours and what the Ring doorbell recorded at the door,
-then builds a dispute pack the owner reviews and sends themselves.
+Shopfront is a receiving desk for a one-door shop (a bakery, café or boutique) with a Ring doorbell. It
+checks a carrier's "business closed" or "delivery attempted" scan against the shop's posted hours and what
+the doorbell recorded, and builds a dispute pack the owner reviews and sends themselves.
 
-**For:** the owner who orders stock from suppliers and loses a day of trading when a courier scans
-the shop closed while customers were walking in.
+## What only Shopfront does
 
-**How Ring and AWS do the work:**
+A doorbell clip can show who came to the door. On its own it's evidence of a visit, not an answer to the
+carrier's scan. Shopfront takes four steps past "the doorbell as evidence":
+
+1. **It ties the scan to the order.** The carrier's scan is linked to the purchase order or invoice it was
+   for, from the shop's own CSV (by the tracking number, or from the order's row on the desk), so the pack
+   names the order, its supplier, its items and its delivery window, not just a time.
+2. **It checks "business closed" against the shop's hours and its door.** The scan time is compared with the
+   posted hours and with the door activity 30 minutes either side: "you were open, and the door was in use".
+   When the door recorded nothing it says so, and that only the hours back you, or that it can't tell.
+3. **It keeps a record per carrier, month by month.** Each checked scan can be kept. The desk shows, per
+   carrier, how many "business closed" scans it made this month and how many fell in posted hours, and
+   `/report` prints that record as one page for the carrier's account manager or the supplier.
+4. **It makes a signed pack anyone can check offline, addressed to the supplier.** The supplier is the
+   carrier's customer and can get a scan corrected, so the draft goes to them. The zip's manifest is signed
+   (Ed25519, or an AWS KMS key), and `scripts/verify_pack.py` checks it against the shop's key ID with no
+   account and no network.
+
+## How many shops this could help: an estimate (US)
+
+| Factor | Value | Source |
+|---|---|---|
+| Retail shops with fewer than 20 employees | 877,627 | US Census Bureau, [County Business Patterns 2023](https://www2.census.gov/programs-surveys/cbp/datasets/2023/cbp23us.zip), retail trade (NAICS 44-45), size classes under 5, 5-9 and 10-19 employees: 457,825 + 248,198 + 171,604 |
+| Parcel deliveries to a shop in a week | 5 | **Assumption.** We found no survey of how many parcels small shops receive |
+| First deliveries that fail | 8% | Loqate, [*Fixing Failed Deliveries* 2021](https://info.loqate.com/hubfs/Loqate%202021/Fixing%20Failed%20Deliveries/Fixing%20Failed%20Deliveries%20-%20Final.pdf), US: "8% of first-time deliveries fail" (retailers' parcels to their customers, used here as a stand-in for deliveries to shops) |
+| What a failed delivery costs the sender | $17.20 | The same Loqate report: "at an average cost of $17.20" |
+
+877,627 shops × 5 deliveries × 52 weeks = 228.2 million deliveries a year. 8% of them is 18.3 million failed
+first attempts, and at $17.20 each that's about **$314 million a year** in senders' costs. For one shop it's
+5 × 52 × 8% ≈ 21 failed deliveries a year, about $358 at the survey average, before any lost trade.
+
+What the estimate leaves out, because we found no source: how many failed attempts are "business closed"
+scans while the shop was open, and how many of these shops have a Ring doorbell. So $314 million is the pool
+of failed deliveries the check works on, not the size of Shopfront's market. Cafés and restaurants (NAICS 722:
+another 495,905 places with fewer than 20 employees in the same Census file) aren't counted.
+
+**What's live and what isn't:** Shopfront calls the Ring Partner API live against the Ring Developer
+Playground. A Ring frame, a webhook sent by Ring itself and a Bedrock label haven't been captured yet, so the
+demo runs on synthetic door events and a signed webhook replay, and every page says so.
+[Status and proof](#status-whats-live-and-what-isnt).
+
+## How Ring and AWS do the work
 
 1. **Orders in.** Import a CSV of orders or invoices (any POS, inventory or accounting export), so
    Shopfront knows what should arrive, from whom and when.
@@ -24,12 +62,6 @@ the shop closed while customers were walking in.
 4. **Dispute pack.** You get the finding, the door log, the posted hours, the order, and the request
    IDs of the Ring and Bedrock calls it rests on. It also lists what it can't show and drafts a
    message. Shopfront never sends anything.
-
-**What's real today:** Shopfront calls the Ring Partner API live against the Ring Developer
-Playground: it reads devices and Event History and opens a live-view session. The request IDs are
-in the [proof table](#proof). Three things haven't been captured live yet: a Ring frame, a webhook
-sent by Ring itself, and a Bedrock label. So the demo runs on synthetic door events plus one signed
-webhook replay, and every page says so.
 
 ## Run the demo
 
@@ -143,7 +175,15 @@ Door frames are pictures of people, so Shopfront deletes them after `SHOPFRONT_F
   posted hours and a door that was busy with customers. It needs no package in view, and it ties the
   scan to the order it was for.
 
-## Hackathon requirements
+## Status: what's live and what isn't
+
+**What's real today:** Shopfront calls the Ring Partner API live against the Ring Developer
+Playground: it reads devices and Event History and opens a live-view session. The request IDs are
+in the [proof table](#proof). Three things haven't been captured live yet: a Ring frame, a webhook
+sent by Ring itself, and a Bedrock label. So the demo runs on synthetic door events plus one signed
+webhook replay, and every page says so.
+
+### Hackathon requirements
 
 Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AWS Builder mini challenge.
 
@@ -155,7 +195,7 @@ Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AW
 | Setup and run instructions | ✓ [Run the demo](#run-the-demo) |
 | Repo access for judges | ✓ [MIT](LICENSE) licence. ✗ Not yet on GitHub (private, shared with the Amazon reviewers at submission) |
 
-## Proof
+### Proof
 
 Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. Everything else says what it is.
 
