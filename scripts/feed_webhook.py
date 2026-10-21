@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.config import settings
-from app.ring.webhooks import sign
+from app.ring.webhooks import REPLAY_MARKER, replay_key, sign
 
 SUB_TYPES = ["motion", "human", "vehicle", "package_delivery", "other_motion"]
 
@@ -31,8 +31,15 @@ def payload(kind: str, at: datetime, device: str, sub_type: str | None) -> dict:
     if kind == "motion_detected" and sub_type:
         attrs["sub_type"] = sub_type
     return {"meta": {"version": "1.1", "time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     "request_id": f"replay-{uuid.uuid4().hex[:12]}", "account_id": "replay"},
+                     "request_id": f"replay-{uuid.uuid4().hex[:12]}", "account_id": "replay",
+                     REPLAY_MARKER: True},
             "data": {"id": f"{device}_{kind}_{ms}", "type": kind, "attributes": attrs}}
+
+
+def signed(body: dict, key: str) -> tuple[bytes, str]:
+    """Raw bytes and X-Signature for a replay: signed with the replay-only key, never Ring's own."""
+    raw = json.dumps(body).encode()
+    return raw, sign(raw, replay_key(key))
 
 
 def main() -> None:
@@ -47,8 +54,8 @@ def main() -> None:
     if not key:
         raise SystemExit("set RING_HMAC_KEY (the same value the server runs with)")
     at = datetime.now(settings.tz) if a.at == "now" else datetime.fromisoformat(a.at).replace(tzinfo=settings.tz)
-    raw = json.dumps(payload(a.type, at, a.device, a.sub_type)).encode()
-    r = httpx.post(a.url, content=raw, headers={"X-Signature": sign(raw, key), "X-Shopfront-Replay": "1",
+    raw, signature = signed(payload(a.type, at, a.device, a.sub_type), key)
+    r = httpx.post(a.url, content=raw, headers={"X-Signature": signature, "X-Shopfront-Replay": "1",
                                                 "Content-Type": "application/json"})
     print(r.status_code, r.text)
 

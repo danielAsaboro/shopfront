@@ -1,7 +1,8 @@
 """Ring Partner API client (https://developer.amazon.com/docs/ring/api-documentation.html).
 
 Calls, all against https://api.amazonvision.com:
-  GET  /v1/devices                                   find the doorbell when RING_DEVICE_ID is empty
+  GET  /v1/devices?include=capabilities              find the doorbell when RING_DEVICE_ID is empty
+  GET  /v1/users/me                                  the Ring Account ID, to match webhooks' meta.account_id
   GET  /v1/history/devices/{id}/events               the day's dings and motion events (paged, newest first)
   POST /v1/devices/{id}/media/image/download         the frame at an event's start time (303 -> pre-signed GET)
   POST /v1/devices/{id}/media/streaming/whep/sessions live view (the Developer Playground's simulator), + DELETE
@@ -138,6 +139,8 @@ class RingApiClient(RingClient):
         self.event_types = event_types
         self._http = http or httpx.Client(timeout=30, follow_redirects=True)
         self.last_request_id: str | None = None
+        self._account_id: str | None = None
+        self._account_asked = False
 
     def _request(self, method: str, path: str, **kw) -> httpx.Response:
         url = path if path.startswith("http") else f"{API_BASE}{path}"
@@ -167,14 +170,48 @@ class RingApiClient(RingClient):
     def list_devices(self) -> list[dict]:
         return self._json(self._request("GET", "/v1/devices")).get("data", [])
 
+    def _cameras(self) -> list[str]:
+        """IDs of devices with a camera, in Ring's order.
+
+        API reference, Device Discovery: GET /v1/devices returns sensors and chimes alongside cameras and
+        doorbells ("Filter your device collection before calling a media endpoint"); the device resource
+        has no type field, and ?include=capabilities side-loads each device's capabilities into `included`,
+        matched by the type and id in its relationships. A chime's `video` capability is always null, and no
+        sensor has a camera, so a camera is a device whose capabilities carry a `video` object.
+        """
+        body = self._json(self._request("GET", "/v1/devices", params={"include": "capabilities"}))
+        devices = body.get("data") or []
+        if not devices:
+            raise RingError(RingStatus.NO_DEVICES, "the token can't see any Ring devices")
+        caps = {(x.get("type"), x.get("id")): x.get("attributes") or {} for x in body.get("included") or []}
+        if not caps:  # capabilities weren't side-loaded: keep Ring's order, as before
+            return [d["id"] for d in devices]
+        out = []
+        for d in devices:
+            ref = ((d.get("relationships") or {}).get("capabilities") or {}).get("data") or {}
+            if (caps.get((ref.get("type"), ref.get("id"))) or {}).get("video"):
+                out.append(d["id"])
+        if not out:
+            raise RingError(RingStatus.NO_DEVICES, "the token sees Ring devices, but no camera or doorbell")
+        return out
+
     @property
     def device_id(self) -> str:
         if not self._device_id:
-            devices = self.list_devices()
-            if not devices:
-                raise RingError(RingStatus.NO_DEVICES, "the token can't see any Ring devices")
-            self._device_id = devices[0]["id"]
+            self._device_id = self._cameras()[0]
         return self._device_id
+
+    def account_id(self) -> str | None:
+        """The Ring user's Account ID (API reference, Users API: GET /v1/users/me, data.id), which webhooks
+        carry as meta.account_id. None when Ring won't say; asked once per client."""
+        if not self._account_asked:
+            self._account_asked = True
+            try:
+                data = self._json(self._request("GET", "/v1/users/me")).get("data")
+                self._account_id = data.get("id") if isinstance(data, dict) and data.get("type") == "users" else None
+            except (RingError, AttributeError):
+                self._account_id = None
+        return self._account_id
 
     def events_for_day(self, day: date) -> list[DoorEvent]:
         start = datetime.combine(day, time.min, tzinfo=self.tz)

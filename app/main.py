@@ -28,6 +28,7 @@ from app.live import LiveError, LiveLog
 from app.ring import RingSource
 from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
+from app.ring.webhooks import MAX_BODY as MAX_WEBHOOK_BODY
 from app.ring.webhooks import WebhookLog, WebhookStatus
 from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 
@@ -40,7 +41,7 @@ book = DeliveryBook(DATA / "expected-deliveries.json")
 frames = FrameStore(DATA)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
-webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl")
+webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl", settings.ring_device_id, settings.ring_account_id)
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
 
@@ -102,6 +103,10 @@ def _ring():
     ring = source.get()
     if isinstance(ring, SyntheticRingClient):
         ring.hours = profile.hours()  # demo days follow the hours the owner set
+    elif isinstance(ring, RingApiClient):
+        # webhooks count only for the shop's own doorbell and Ring account (app/ring/webhooks.py)
+        webhook_log.device_id = settings.ring_device_id or ring.device_id
+        webhook_log.account_id = settings.ring_account_id or ring.account_id() or ""
     return ring
 
 
@@ -282,10 +287,30 @@ def live_sessions():
     return live.rows()
 
 
+async def _capped_body(request: Request, limit: int) -> bytes | None:
+    """The body, or None once it passes `limit` bytes (checked while reading, not after)."""
+    try:
+        if int(request.headers.get("content-length") or 0) > limit:
+            return None
+    except ValueError:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 @app.post("/webhooks/ring")
 async def ring_webhook(request: Request):
-    status = webhook_log.handle(await request.body(), request.headers.get("X-Signature"),
-                                settings.ring_hmac_key, replayed=request.headers.get("X-Shopfront-Replay") == "1")
+    raw = await _capped_body(request, MAX_WEBHOOK_BODY)
+    if raw is None:
+        return JSONResponse({"status": "TOO_LARGE"}, status_code=413)
+    # A replay is told apart by its signing key and body marker (app/ring/webhooks.py); the header can only
+    # ever mark one as a replay, never vouch for it being Ring's.
+    status = webhook_log.handle(raw, request.headers.get("X-Signature"), settings.ring_hmac_key,
+                                replayed=request.headers.get("X-Shopfront-Replay") == "1")
     code = {WebhookStatus.ACCEPTED: 200, WebhookStatus.DUPLICATE: 200, WebhookStatus.MALFORMED: 400,
             WebhookStatus.BAD_SIGNATURE: 401, WebhookStatus.NOT_CONFIGURED: 503}[status]
     return JSONResponse({"status": status.value}, status_code=code)

@@ -161,3 +161,59 @@ def test_missing_frame_labels_that_event_by_rules_and_says_why():
     ring, _ = client(handler)
     [v] = classify_day(ring, BedrockClassifier("us-east-1", "m", client=NoCall()), DAY, parse_hours(""))
     assert v.source == "rules" and "no Ring frame: MEDIA_NOT_FOUND" in v.reason
+
+
+# ---- which device is the doorbell ----------------------------------------------------------------------
+def _device(dev_id, caps_id):
+    return {"type": "devices", "id": dev_id, "attributes": {"name": dev_id},
+            "relationships": {"capabilities": {"data": {"type": "device-capabilities", "id": caps_id},
+                                               "links": {"related": f"/v1/devices/{dev_id}/capabilities"}}}}
+
+
+def _caps(caps_id, video):
+    return {"type": "device-capabilities", "id": caps_id,
+            "attributes": {"video": video, "motion_detection": {"configurations": ["enabled"]},
+                           "image_enhancements": None}}
+
+
+def test_device_pick_skips_sensors_and_chimes():
+    # API reference, Device Discovery: GET /v1/devices returns sensors and chimes alongside cameras; a chime's
+    # video capability is null, and no sensor has a camera ("Filter your device collection before calling a
+    # media endpoint"). Capabilities are side-loaded with ?include=capabilities.
+    seen = {}
+
+    def handler(req):
+        seen["params"] = dict(req.url.params)
+        return httpx.Response(200, json={
+            "data": [_device("ava1.ring.device.CONTACT", "c1"), _device("ava1.ring.device.CHIME", "c2"),
+                     _device("ava1.ring.device.DOORBELL", "c3")],
+            "included": [_caps("c1", None), _caps("c2", None),
+                         _caps("c3", {"codecs": ["AVC"], "max_resolution": 1080})]})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
+    assert ring.device_id == "ava1.ring.device.DOORBELL" and seen["params"]["include"] == "capabilities"
+
+
+def test_only_sensors_means_no_camera():
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={
+        "data": [_device("ava1.ring.device.CONTACT", "c1")], "included": [_caps("c1", None)]})))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
+    with pytest.raises(RingError) as err:
+        ring.device_id
+    assert err.value.status == RingStatus.NO_DEVICES and "camera" in err.value.detail
+
+
+def test_account_id_comes_from_users_me_and_failures_are_not_fatal():
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        return httpx.Response(200, json={"data": {"type": "users", "id": "ava1.ring.account.SHOP",
+                                                  "attributes": {"first_name": "A"}}})
+
+    ring, _ = client(handler)
+    assert ring.account_id() == "ava1.ring.account.SHOP" and ring.account_id() == "ava1.ring.account.SHOP"
+    assert calls == ["/v1/users/me"]  # asked once
+    broken, _ = client(lambda r: httpx.Response(403))
+    assert broken.account_id() is None

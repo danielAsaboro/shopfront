@@ -30,7 +30,10 @@ class Settings:
     ring_refresh_token: str = _env("RING_REFRESH_TOKEN")
     ring_client_id: str = _env("RING_CLIENT_ID")
     ring_client_secret: str = _env("RING_CLIENT_SECRET")
-    ring_device_id: str = _env("RING_DEVICE_ID")  # empty = first device the token can see
+    ring_device_id: str = _env("RING_DEVICE_ID")  # empty = first camera or doorbell the token can see
+    # The shop owner's Ring Account ID (GET /v1/users/me data.id); empty = learned from the live token.
+    # Webhooks from any other account are ignored.
+    ring_account_id: str = _env("RING_ACCOUNT_ID")
     ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion")
     ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
 
