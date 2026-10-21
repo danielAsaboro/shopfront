@@ -161,3 +161,184 @@ def test_missing_frame_labels_that_event_by_rules_and_says_why():
     ring, _ = client(handler)
     [v] = classify_day(ring, BedrockClassifier("us-east-1", "m", client=NoCall()), DAY, parse_hours(""))
     assert v.source == "rules" and "no Ring frame: MEDIA_NOT_FOUND" in v.reason
+
+
+# ---- which device is the doorbell ----------------------------------------------------------------------
+def _device(dev_id, caps_id):
+    return {"type": "devices", "id": dev_id, "attributes": {"name": dev_id},
+            "relationships": {"capabilities": {"data": {"type": "device-capabilities", "id": caps_id},
+                                               "links": {"related": f"/v1/devices/{dev_id}/capabilities"}}}}
+
+
+def _caps(caps_id, video):
+    return {"type": "device-capabilities", "id": caps_id,
+            "attributes": {"video": video, "motion_detection": {"configurations": ["enabled"]},
+                           "image_enhancements": None}}
+
+
+def test_device_pick_skips_sensors_and_chimes():
+    # API reference, Device Discovery: GET /v1/devices returns sensors and chimes alongside cameras; a chime's
+    # video capability is null, and no sensor has a camera ("Filter your device collection before calling a
+    # media endpoint"). Capabilities are side-loaded with ?include=capabilities.
+    seen = {}
+
+    def handler(req):
+        seen["params"] = dict(req.url.params)
+        return httpx.Response(200, json={
+            "data": [_device("ava1.ring.device.CONTACT", "c1"), _device("ava1.ring.device.CHIME", "c2"),
+                     _device("ava1.ring.device.DOORBELL", "c3")],
+            "included": [_caps("c1", None), _caps("c2", None),
+                         _caps("c3", {"codecs": ["AVC"], "max_resolution": 1080})]})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
+    assert ring.device_id == "ava1.ring.device.DOORBELL" and seen["params"]["include"] == "capabilities"
+
+
+def test_only_sensors_means_no_camera():
+    http = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, json={
+        "data": [_device("ava1.ring.device.CONTACT", "c1")], "included": [_caps("c1", None)]})))
+    ring = RingApiClient(auth=RingAuth(access_token="t", http=http), tz=TZ, http=http)
+    with pytest.raises(RingError) as err:
+        _ = ring.device_id
+    assert err.value.status == RingStatus.NO_DEVICES and "camera" in err.value.detail
+
+
+def test_account_id_comes_from_users_me_and_failures_are_not_fatal():
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        return httpx.Response(200, json={"data": {"type": "users", "id": "ava1.ring.account.SHOP",
+                                                  "attributes": {"first_name": "A"}}})
+
+    ring, _ = client(handler)
+    assert ring.account_id() == "ava1.ring.account.SHOP" and ring.account_id() == "ava1.ring.account.SHOP"
+    assert calls == ["/v1/users/me"]  # asked once
+    broken, _ = client(lambda r: httpx.Response(403))
+    assert broken.account_id() is None
+
+
+# ---- fewer Ring calls -----------------------------------------------------------------------------------
+from collections import Counter  # noqa: E402
+from datetime import timedelta  # noqa: E402
+
+
+def counting(calls, events_per_day=0, frame_status=416):
+    def handler(req: httpx.Request):
+        path = req.url.path
+        calls[(req.method, path.split("/")[2] if path.startswith("/v1/") else path)] += 1
+        if path == "/v1/users/me":
+            return httpx.Response(200, json={"data": {"type": "users", "id": "ava1.ring.account.SHOP"}})
+        if path.endswith("/image/download"):
+            return httpx.Response(frame_status, json={"errors": [{"code": "x"}]})
+        return httpx.Response(200, json={"data": [hist("ding", ms(9, i)) for i in range(events_per_day)], "links": {}})
+    return handler
+
+
+def test_past_days_are_fetched_once_and_today_briefly():
+    calls = Counter()
+    ring, _ = client(counting(calls))
+    ring.events_for_day(DAY)
+    ring.events_for_day(DAY)
+    assert calls[("GET", "history")] == 1
+    today = datetime.now(TZ).date()
+    ring.events_for_day(today)
+    ring.events_for_day(today)
+    assert calls[("GET", "history")] == 2  # within the short TTL
+    ring._history[(today, ring.event_types)] = (0.0, [])  # pretend the TTL ran out
+    ring.events_for_day(today)
+    assert calls[("GET", "history")] == 3
+
+
+def test_missing_and_forbidden_frames_are_remembered():
+    for status in (416, 403):
+        calls = Counter()
+        ring, _ = client(counting(calls, frame_status=status))
+        e = DoorEvent(id="e1", device_id=DEV, timestamp=datetime.fromtimestamp(ms(9) / 1000, TZ), kind="ding")
+        for _ in range(3):
+            with pytest.raises(RingError):
+                ring.snapshot(e)
+        assert calls[("POST", "devices")] == 1, status
+
+
+def test_not_ready_frames_are_asked_again():
+    calls = Counter()
+    ring, _ = client(counting(calls, frame_status=425))
+    e = DoorEvent(id="e1", device_id=DEV, timestamp=datetime.fromtimestamp(ms(9) / 1000, TZ), kind="ding")
+    for _ in range(2):
+        with pytest.raises(RingError):
+            ring.snapshot(e)
+    assert calls[("POST", "devices")] == 2
+
+
+def test_rate_limit_is_named_with_retry_after_and_retried_once_when_short():
+    ring, _ = client(lambda r: httpx.Response(429, headers={"Retry-After": "30", "X-Request-ID": "rid-429"}))
+    with pytest.raises(RingError) as err:
+        ring.events_for_day(DAY)
+    assert err.value.status == RingStatus.RATE_LIMITED and err.value.retry_after == 30
+    n = {"calls": 0}
+
+    def once(req):
+        n["calls"] += 1
+        return httpx.Response(429, headers={"Retry-After": "1"}) if n["calls"] == 1 else \
+            httpx.Response(200, json={"data": [], "links": {}})
+    ring, _ = client(once)
+    slept = []
+    ring.sleep = slept.append
+    assert ring.events_for_day(DAY) == [] and slept == [1] and n["calls"] == 2
+
+
+def test_one_dashboard_load_asks_ring_once_per_day_and_a_reload_asks_nothing(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.classify.bedrock import BedrockClassifier
+    from app.shop import Profile
+
+    class NoCall:
+        def converse(self, **kw):
+            raise AssertionError("no frame, no Bedrock call")
+
+    calls = Counter()
+    ring, _ = client(counting(calls, events_per_day=3))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
+    monkeypatch.setattr(main, "classifier", BedrockClassifier("us-east-1", "m", client=NoCall()))
+    main.profile.save(Profile("Shop", "", 15.0, "$"))
+    c = TestClient(main.app)
+    assert c.get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    days = {DAY - timedelta(days=i) for i in range(8)}  # the day, the week for the money line, last week
+    assert calls[("GET", "history")] == len(days)
+    first_frames = calls[("POST", "devices")]
+    calls.clear()
+    assert c.get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    assert calls[("GET", "history")] == 0 and calls[("POST", "devices")] == 0 and first_frames > 0
+
+
+def test_a_dashboard_load_labels_each_day_once(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    from app.shop import Profile
+
+    seen = Counter()
+    real = main.classify_day
+
+    def counted(ring, classifier, day, *a, **kw):
+        seen[day] += 1
+        return real(ring, classifier, day, *a, **kw)
+    monkeypatch.setattr(main, "classify_day", counted)
+    main.profile.save(Profile("Shop", "", 15.0, "$"))
+    assert TestClient(main.app).get(f"/?date={DAY.isoformat()}&attempt=12:00").status_code == 200
+    assert seen[DAY] == 1 and len(seen) == 7
+
+
+def test_rate_limit_reaches_the_api_caller_with_retry_after(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.main as main
+    ring, _ = client(lambda r: httpx.Response(429, headers={"Retry-After": "30", "X-Request-ID": "rid-429"}))
+    monkeypatch.setattr(main, "source", type("Src", (), {"get": lambda self: ring, "pasted_token": lambda self: "t"})())
+    r = TestClient(main.app).get(f"/api/events?date={DAY.isoformat()}")
+    assert r.status_code == 429 and r.json()["error"] == "RATE_LIMITED" and r.json()["retry_after"] == 30
+    assert r.headers["retry-after"] == "30"

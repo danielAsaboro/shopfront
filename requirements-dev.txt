@@ -1,0 +1,7 @@
+# Tests, lint and types: pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==9.1.1
+hypothesis==6.170.5  # property tests for the delivery matcher and attempt checks
+coverage==7.16.2
+ruff==0.17.1
+mypy==2.4.0

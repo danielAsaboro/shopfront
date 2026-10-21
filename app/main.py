@@ -3,13 +3,16 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
+import time
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+                               Response)
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -20,16 +23,19 @@ from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
 from app import dispute, pages
+from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
+from app.owner import COOKIE, COOKIE_DAYS, PUBLIC_PATHS, UNSAFE, OwnerGate
 from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, frame_name, headline, money_line,
                             receipts)
-from app.hours import posted_hours
+from app.hours import normalize_clock, posted_hours
 from app.live import LiveError, LiveLog
 from app.ring import RingSource
 from app.ring.base import RingClient
 from app.ring.synthetic import SyntheticRingClient
 from app.ring.api import RingApiClient, RingError, RingStatus
+from app.ring.webhooks import MAX_BODY as MAX_WEBHOOK_BODY
 from app.ring.webhooks import WebhookLog, WebhookStatus
 from app.shop import DAYS, Profile, ShopProfile, hours_for_form, hours_from_form
 
@@ -40,15 +46,62 @@ templates.env.filters.update(
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how)
 
-DATA = Path(settings.data_dir)
+DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
 book = DeliveryBook(DATA / "expected-deliveries.json")
 frames = FrameStore(DATA)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
-webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl")
+webhook_log = WebhookLog(DATA / "ring-webhooks.jsonl", settings.ring_device_id, settings.ring_account_id)
 source = RingSource(settings, DATA / "ring-access-token")
 live = LiveLog(DATA, settings.tz)
+
+
+def make_gate(s, secret_file: Path) -> OwnerGate:
+    return OwnerGate(secret_file, hosts=s.allowed_hosts.split(","))
+
+
+gate = make_gate(settings, DATA / "owner-secret")
+
+
+def _safe_next(value: str | None) -> str:
+    value = value or "/"
+    return value if value.startswith("/") and not value.startswith("//") and "\\" not in value else "/"
+
+
+def _not_owner(request: Request) -> Response:
+    detail = ("Shopfront only answers the shop owner. To use it on this device, open Set up on the shop's "
+              "computer and enter the pairing code it shows at /pair.")
+    path = request.url.path
+    if path.startswith(("/api/", "/frames/", "/dispute.zip")):
+        return JSONResponse({"error": "OWNER_ONLY", "detail": detail}, status_code=403)
+    nxt = path + (f"?{request.url.query}" if request.url.query else "")
+    return _page(request, "pair.html", {"next": nxt if request.method == "GET" else "/", "error": None}, 403)
+
+
+@app.middleware("http")
+async def owner_only(request: Request, call_next):
+    """Everything but Ring's webhook and /healthz is the owner's. See app/owner.py."""
+    path, headers = request.url.path, request.headers
+    if path == "/webhooks/ring":  # Ring signs it (HMAC) and reaches it under whatever public name the shop uses
+        return await call_next(request)
+    if not gate.host_ok(headers.get("host")):
+        return PlainTextResponse("Shopfront doesn't answer to this address. Open it at http://localhost:<port> "
+                                 "or add the name to SHOPFRONT_ALLOWED_HOSTS.", status_code=400)
+    if gate.cross_site(request.method, headers.get("host"), headers):
+        return JSONResponse({"error": "CROSS_SITE", "detail": "This request came from another website, so "
+                             "Shopfront ignored it. Use Shopfront's own pages."}, status_code=403)
+    if request.method in UNSAFE and path.startswith("/api/") and not gate.api_body_ok(headers.get("content-type")):
+        return JSONResponse({"error": "BAD_CONTENT_TYPE", "detail": "send application/json"}, status_code=415)
+    if path not in PUBLIC_PATHS and not gate.is_owner(request.client.host if request.client else None,
+                                                       headers, request.cookies):
+        return _not_owner(request)
+    await run_in_threadpool(_housekeeping)
+    token = _request_visits.set({})
+    try:
+        return await call_next(request)
+    finally:
+        _request_visits.reset(token)
 
 
 def _parse_day(value: str | None) -> date:
@@ -84,6 +137,10 @@ def _ring():
     ring = _ring_override.get() or source.get()
     if isinstance(ring, SyntheticRingClient):
         ring.hours = profile.hours()  # demo days follow the hours the owner set
+    elif isinstance(ring, RingApiClient):
+        # webhooks count only for the shop's own doorbell and Ring account (app/ring/webhooks.py)
+        webhook_log.device_id = settings.ring_device_id or ring.device_id
+        webhook_log.account_id = settings.ring_account_id or ring.account_id() or ""
     return ring
 
 
@@ -92,8 +149,18 @@ def _briefing(day: date, stats: dict | None = None):
                           webhook_log, stats)
 
 
+_request_visits: ContextVar[dict | None] = ContextVar("request_visits", default=None)
+
+
 def _visits(day: date):
-    return classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
+    """The day's labelled visits, built once per request however many parts of the page need them."""
+    memo = _request_visits.get()
+    if memo is not None and day in memo:
+        return list(memo[day])
+    vs = classify_day(_ring(), classifier, day, profile.hours(), cache, live, frames, webhook_log)
+    if memo is not None:
+        memo[day] = vs
+    return list(vs)
 
 
 def _receipts(day: date, visits=None) -> dict:
@@ -108,21 +175,18 @@ def _week_money(day: date) -> str | None:
     closed = missing = 0
     for i in range(7):
         d = day - timedelta(days=i)
-        r = _receipts(d)
+        try:
+            r = _receipts(d)
+        except RingError:  # e.g. RATE_LIMITED on one past day: leave the week's line out, keep the page
+            return None
         closed += r["closed_couriers"]  # Ring- or Bedrock-confirmed couriers only, staff not in
         missing += sum(1 for x in r["expected"] if x["status"] == "not_seen")
     return money_line(closed, missing, p.redelivery_cost, p.currency)
 
 
-def _local_only(request: Request) -> None:
-    # The token page writes a credential to disk, so it only answers this machine.
-    if not request.client or request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
-        raise HTTPException(403, "/connect is only available from this machine")
-
-
 def _ring_error_body(exc: RingError) -> dict:
     return {"error": exc.status.value, "detail": exc.detail, "http_status": exc.http_status,
-            "request_id": exc.request_id}
+            "request_id": exc.request_id, "retry_after": exc.retry_after}
 
 
 @app.exception_handler(RingError)
@@ -131,10 +195,17 @@ def ring_error(request: Request, exc: RingError):
     code = 401 if exc.status in (RingStatus.TOKEN_REJECTED, RingStatus.REFRESH_FAILED) else 502
     if exc.status == RingStatus.NOT_CONFIGURED:
         code = 503
+    headers = None
+    if exc.status == RingStatus.RATE_LIMITED:  # Ring said slow down: say when to try again
+        code = 429
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
     _ring_seen(exc)
     if request.url.path.startswith("/api/"):
-        return JSONResponse(_ring_error_body(exc), status_code=code)
-    return _page(request, "ring_error.html", {"e": exc}, code)
+        return JSONResponse(_ring_error_body(exc), status_code=code, headers=headers)
+    page = _page(request, "ring_error.html", {"e": exc}, code)
+    if headers:
+        page.headers.update(headers)
+    return page
 
 
 # --- What every HTML page shares: the header, the data-source banner and Ring's last known state ---
@@ -276,13 +347,11 @@ def _desk(day: date, when: datetime | None, claim: str) -> dict:
 
 @app.get("/connect", response_class=HTMLResponse)
 def connect_page(request: Request):
-    _local_only(request)
     return _page(request, "connect.html", {"connected": bool(source.pasted_token()), "env_mode": settings.ring_mode})
 
 
 @app.post("/connect")
 def connect_save(request: Request, token: str = Form(...)):
-    _local_only(request)
     if not token.strip():
         raise HTTPException(400, "paste a token")
     source.save_token(token)
@@ -291,7 +360,6 @@ def connect_save(request: Request, token: str = Form(...)):
 
 @app.post("/connect/forget")
 def connect_forget(request: Request):
-    _local_only(request)
     source.forget_token()
     return RedirectResponse("/", status_code=303)
 
@@ -319,7 +387,8 @@ def _live_ring() -> RingApiClient:
 
 @app.exception_handler(LiveError)
 def live_error(request: Request, exc: LiveError):
-    return JSONResponse({"error": exc.code, "detail": str(exc)}, status_code=404 if exc.code == "UNKNOWN_SESSION" else 400)
+    code = {"UNKNOWN_SESSION": 404, "BAD_KEY": 403, "TOO_MANY_SESSIONS": 409}.get(exc.code, 400)
+    return JSONResponse({"error": exc.code, "detail": str(exc)}, status_code=code)
 
 
 @app.get("/live", response_class=HTMLResponse)
@@ -329,21 +398,33 @@ def live_page(request: Request):
                                         "classifier": classifier.name, "sessions": live.rows()[-10:][::-1]})
 
 
+# The async handlers below read the request body, then run every blocking call (Ring over httpx, Bedrock
+# over boto3, a Strands agent turn) in the thread pool, so Ring's webhook (5 s limit) is never kept waiting.
 @app.post("/api/live/start")
 async def live_start(request: Request):
-    ring = _live_ring()
     offer = (await request.body()).decode()
     if "v=0" not in offer:
         raise HTTPException(400, "body must be an SDP offer")
-    answer, session_url = ring.whep_start(offer)
-    s = live.start(ring.device_id, session_url)
-    return {"session": s.id, "answer": answer, "ring_request_id": ring.last_request_id}
+
+    def start():
+        ring = _live_ring()
+        answer, session_url = ring.whep_start(offer)
+        try:
+            s = live.start(ring.device_id, session_url)
+        except LiveError:
+            ring.whep_stop(session_url)  # don't leave a Ring session open that nothing will use
+            raise
+        # the key goes back only to the owner's page that asked; every frame must carry it
+        return {"session": s.id, "key": s.key, "answer": answer, "ring_request_id": ring.last_request_id}
+    return await run_in_threadpool(start)
 
 
 @app.post("/api/live/{session_id}/frame")
 async def live_frame(session_id: str, request: Request):
     day = datetime.now(settings.tz).date()
-    return live.frame(session_id, await request.body(), classifier, posted_hours(profile.hours(), day))
+    jpeg = await request.body()
+    return await run_in_threadpool(live.frame, session_id, jpeg, classifier, posted_hours(profile.hours(), day),
+                                   request.headers.get("X-Live-Key"))
 
 
 @app.post("/api/live/{session_id}/stop")
@@ -352,8 +433,10 @@ def live_stop(session_id: str):
     ring_error = None
     try:
         _live_ring().whep_stop(s.session_url)
-    except (RingError, HTTPException) as exc:  # still record the session; report why the stop failed
-        ring_error = getattr(exc, "status", None) and exc.status.value
+    except RingError as exc:  # still record the session; report why the stop failed
+        ring_error = exc.status.value
+    except HTTPException:  # Ring was disconnected meanwhile
+        ring_error = "NOT_CONNECTED"
     return {**live.stop(session_id), "ring_stop_error": ring_error}
 
 
@@ -362,10 +445,30 @@ def live_sessions():
     return live.rows()
 
 
+async def _capped_body(request: Request, limit: int) -> bytes | None:
+    """The body, or None once it passes `limit` bytes (checked while reading, not after)."""
+    try:
+        if int(request.headers.get("content-length") or 0) > limit:
+            return None
+    except ValueError:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 @app.post("/webhooks/ring")
 async def ring_webhook(request: Request):
-    status = webhook_log.handle(await request.body(), request.headers.get("X-Signature"),
-                                settings.ring_hmac_key, replayed=request.headers.get("X-Shopfront-Replay") == "1")
+    raw = await _capped_body(request, MAX_WEBHOOK_BODY)
+    if raw is None:
+        return JSONResponse({"status": "TOO_LARGE"}, status_code=413)
+    # A replay is told apart by its signing key and body marker (app/ring/webhooks.py); the header can only
+    # ever mark one as a replay, never vouch for it being Ring's.
+    status = webhook_log.handle(raw, request.headers.get("X-Signature"), settings.ring_hmac_key,
+                                replayed=request.headers.get("X-Shopfront-Replay") == "1")
     code = {WebhookStatus.ACCEPTED: 200, WebhookStatus.DUPLICATE: 200, WebhookStatus.MALFORMED: 400,
             WebhookStatus.BAD_SIGNATURE: 401, WebhookStatus.NOT_CONFIGURED: 503}[status]
     return JSONResponse({"status": status.value}, status_code=code)
@@ -387,10 +490,44 @@ def healthz():
             "token_pasted": bool(source.pasted_token())}
 
 
+@app.get("/pair", response_class=HTMLResponse)
+def pair_page(request: Request, next: str = Query("/")):
+    if gate.is_owner(request.client.host if request.client else None, request.headers, request.cookies):
+        return RedirectResponse(_safe_next(next), status_code=303)
+    return _page(request, "pair.html", {"next": _safe_next(next), "error": None})
+
+
+@app.post("/pair")
+def pair_device(request: Request, code: str = Form(""), next: str = Form("/")):
+    value = gate.pair(code)
+    if not value:
+        return _page(request, "pair.html", {
+            "next": _safe_next(next),
+            "error": "That code didn't match or has expired. Use the code Set up shows on the shop's computer now."},
+            403)
+    r = RedirectResponse(_safe_next(next), status_code=303)
+    r.set_cookie(COOKIE, value, max_age=COOKIE_DAYS * 86400, httponly=True, samesite="strict",
+                 secure=request.url.scheme == "https")
+    return r
+
+
+@app.post("/pair/forget")
+def pair_forget():
+    gate.forget_devices()
+    return RedirectResponse("/setup#pairing", status_code=303)
+
+
+def _pairing(request: Request) -> dict | None:
+    """The code a phone pairs with, shown only on the shop's own computer."""
+    if not gate.is_local(request.client.host if request.client else None, request.headers):
+        return None
+    code, expires = gate.pairing_code()
+    return {"code": code, "minutes": max(1, round((expires - datetime.now().timestamp()) / 60))}
+
+
 @app.get("/setup", response_class=HTMLResponse)
 def setup_page(request: Request, error: str | None = None, imported: str | None = None,
                notice: str | None = None, s: str = "shop"):
-    _local_only(request)
     return _setup(request, s, error=error, notice=imported or notice)
 
 
@@ -423,12 +560,11 @@ def _setup(request: Request, section: str, error: str | None = None, notice: str
         "cost_typed": (form or {}).get("redelivery_cost"),
         "ring": ring.name if ring else None, "ring_error": ring_error, "today": today.isoformat(),
         "orders": orders[:ORDERS_SHOWN], "orders_more": max(0, len(orders) - ORDERS_SHOWN),
-        "order_days": len({e.day for e in orders})}, status_code)
+        "order_days": len({e.day for e in orders}), "pairing": _pairing(request)}, status_code)
 
 
 @app.post("/setup")
 async def setup_save(request: Request):
-    _local_only(request)
     form = await request.form()
     try:
         cost = str(form.get("redelivery_cost", "")).strip()
@@ -448,14 +584,13 @@ async def setup_save(request: Request):
 
 @app.post("/deliveries")
 async def delivery_add(request: Request):
-    _local_only(request)
     form = await request.form()
     back = str(form.get("back", ""))
     back = back if back.startswith("/") and not back.startswith("//") else ""
     try:
         e = book.add(date.fromisoformat(str(form.get("day", ""))), str(form.get("supplier", "")),
-                     str(form.get("window_start", "")), str(form.get("window_end", "")), str(form.get("note", "")),
-                     order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
+                     normalize_clock(str(form.get("window_start", ""))), normalize_clock(str(form.get("window_end", ""))),
+                     str(form.get("note", "")), order_ref=str(form.get("order_ref", "")), carrier=str(form.get("carrier", "")))
     except ValueError as exc:
         return RedirectResponse(f"/setup?s=orders&error={quote(str(exc))}#orders", status_code=303)
     return RedirectResponse(back or f"/setup?s=orders&notice={quote(f'Added {e.supplier} for {e.day}.')}#orders",
@@ -464,7 +599,6 @@ async def delivery_add(request: Request):
 
 @app.post("/deliveries/{expected_id}/remove")
 def delivery_remove(request: Request, expected_id: str):
-    _local_only(request)
     e = book.get(expected_id)
     book.remove(expected_id)
     msg = f"Removed {e.supplier} ({e.day})." if e else "That order was already gone."
@@ -561,7 +695,6 @@ def api_dispute(date: str | None = Query(None), at: str | None = Query(None), cl
 def dispute_zip(request: Request, date: str | None = Query(None), at: str | None = Query(None),
                 claim: str | None = Query(None), order: str | None = Query(None),
                 carrier: str = Query(""), tracking: str = Query("")):
-    _local_only(request)  # the zip carries the Ring frame, which stays on this machine
     p = _pack(_parse_day(date), at, claim, order, carrier, tracking)
     name = f"shopfront-dispute-{p['day']}" + (f"-{p['claim']['time'][-5:].replace(':', '')}" if p["claim"] else "")
     return Response(dispute.as_zip(p, frames), media_type="application/zip",
@@ -570,7 +703,6 @@ def dispute_zip(request: Request, date: str | None = Query(None), at: str | None
 
 @app.post("/orders/import")
 async def orders_import(request: Request):
-    _local_only(request)
     form = await request.form()
     upload = form.get("file")
     text = ""
@@ -584,14 +716,16 @@ async def orders_import(request: Request):
     except ValueError as exc:
         return RedirectResponse(f"/setup?s=orders&error={quote(str(exc))}#orders", status_code=303)
     counts = book.import_rows(parsed["rows"])
+    day_col = parsed["columns"].get("day", "")
     msg = (f"Imported {counts['added']} new and updated {counts['updated']} orders ({parsed['format']} format)"
+           + (f", dated by the '{day_col}' column because the file has no delivery date"
+              if day_col.lower().replace(" ", "") == "orderdate" else "")
            + (f". Skipped {len(parsed['errors'])}: " + "; ".join(parsed["errors"][:5]) if parsed["errors"] else "."))
     return RedirectResponse(f"/setup?s=orders&imported={quote(msg)}#orders", status_code=303)
 
 
 @app.post("/deliveries/{expected_id}/received")
 async def delivery_received(request: Request, expected_id: str):
-    _local_only(request)
     form = await request.form()
     try:
         e = book.mark_received(expected_id, str(form.get("status", "")), str(form.get("note", "")),
@@ -605,13 +739,40 @@ async def delivery_received(request: Request, expected_id: str):
 
 @app.get("/frames/{name}")
 def frame(request: Request, name: str):
-    _local_only(request)  # door frames stay on this machine
     if frame_name(name.removesuffix(".jpg")) != name:
         raise HTTPException(404)
     path = frames.path(name.removesuffix(".jpg"))
     if not path:
         raise HTTPException(404)
     return FileResponse(path, media_type="image/jpeg")
+
+
+@app.post("/frames/{name}/delete")
+def frame_delete(name: str):
+    """Delete a door frame now (and, for a live view, every frame kept from that session)."""
+    stem = name.removesuffix(".jpg")
+    if frame_name(stem) != name:
+        raise HTTPException(404)
+    gone = 0
+    for d in (DATA / "frames", DATA / "live-frames"):
+        for p in [d / name, *(d.glob(f"{stem}-f*.jpg") if stem.startswith("live-") else [])]:
+            if p.is_file():
+                p.unlink()
+                gone += 1
+    return {"deleted": gone}
+
+
+_last_housekeeping = 0.0
+
+
+def _housekeeping() -> None:
+    """At most hourly: drop door frames older than SHOPFRONT_FRAME_DAYS (0 keeps them)."""
+    global _last_housekeeping
+    if time.time() - _last_housekeeping < 3600:
+        return
+    _last_housekeeping = time.time()
+    for d in (DATA / "frames", DATA / "live-frames"):
+        prune_older_than(d, settings.frame_days)
 
 
 def _agent_tools(today: date) -> shop_agent.ShopTools:
@@ -645,16 +806,21 @@ def _agent_tools(today: date) -> shop_agent.ShopTools:
 
 @app.post("/api/ask")
 async def api_ask(request: Request):
-    _local_only(request)
-    body = await request.json()
     try:
-        return shop_agent.ask(str(body.get("question", "")), _agent_tools(datetime.now(settings.tz).date()),
-                              profile.get().name, settings.aws_region, settings.bedrock_model_id,
-                              agent_factory=agent_factory)
+        body = await request.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "BAD_QUESTION", "detail": 'send {"question": "..."}'}, status_code=400)
+    try:
+        return await run_in_threadpool(shop_agent.ask, str(body.get("question", "")),
+                                       _agent_tools(datetime.now(settings.tz).date()), profile.get().name,
+                                       settings.aws_region, settings.bedrock_model_id, agent_factory=agent_factory)
     except ValueError as exc:
         return JSONResponse({"error": "BAD_QUESTION", "detail": str(exc)}, status_code=400)
-    except shop_agent.AgentUnavailable as exc:
-        return JSONResponse({"error": "AGENT_UNAVAILABLE", "detail": str(exc)}, status_code=503)
+    except shop_agent.AgentUnavailable as exc:  # reason: named state; message: the sentence to show
+        return JSONResponse({"error": "AGENT_UNAVAILABLE", "reason": exc.reason, "message": exc.message,
+                             "detail": str(exc)}, status_code=503)
 
 
 agent_factory = shop_agent.build_agent  # tests swap in a fake

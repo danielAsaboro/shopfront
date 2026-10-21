@@ -46,7 +46,7 @@
   const v = document.getElementById('v'), idle = document.getElementById('idle');
   const startBtn = document.getElementById('start'), stopBtn = document.getElementById('stop');
   const status = document.getElementById('status'), label = document.getElementById('label');
-  let pc = null, session = null, timer = null, stopping = false, ridShown = '—';
+  let pc = null, session = null, liveKey = '', timer = null, stopping = false, ridShown = '—';
   const say = (t) => { status.textContent = t; };
 
   async function start() {
@@ -71,7 +71,7 @@
       const r = await fetch('/api/live/start', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error ? `Ring said ${body.error}` : (body.detail || r.status));
-      session = body.session; ridShown = body.ring_request_id || '—';
+      session = body.session; liveKey = body.key; ridShown = body.ring_request_id || '—';
       document.getElementById('rid').textContent = ridShown;
       await pc.setRemoteDescription({ type: 'answer', sdp: body.answer });
       say('Streaming');
@@ -90,7 +90,7 @@
     c.width = v.videoWidth; c.height = v.videoHeight;
     c.getContext('2d').drawImage(v, 0, 0);
     const blob = await new Promise((ok) => c.toBlob(ok, 'image/jpeg', 0.85));
-    const r = await fetch(`/api/live/${session}/frame`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    const r = await fetch(`/api/live/${session}/frame`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg', 'X-Live-Key': liveKey }, body: blob });
     if (!r.ok) return;
     const b = await r.json();
     if (b.label) label.textContent = `${b.label.type.replace('_', ' ')} · ${b.label.reason}${b.label.source === 'bedrock' ? ' (Bedrock)' : ''}`;
@@ -107,7 +107,7 @@
     stopping = true; stopBtn.disabled = true;
     await sendFrame().catch(() => {});
     cleanup();
-    const r = await fetch(`/api/live/${session}/stop`, { method: 'POST' });
+    const r = await fetch(`/api/live/${session}/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     const b = await r.json().catch(() => ({}));
     session = null; stopping = false; startBtn.disabled = false;
     say(`${typeof why === 'string' ? why + '. ' : ''}Saved as ${b.label ? b.label.type.replace('_', ' ') : 'a visit'}. Reload to see it in the list.`);
@@ -115,7 +115,7 @@
 
   startBtn.onclick = start;
   stopBtn.onclick = () => stop('Stopped');
-  addEventListener('pagehide', () => { if (session) navigator.sendBeacon(`/api/live/${session}/stop`); });
+  addEventListener('pagehide', () => { if (session) fetch(`/api/live/${session}/stop`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: '{}' }); });
 })();
 </script>
 {% endif %}

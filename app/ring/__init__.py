@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from app.config import Settings
+from app.files import write_private
 from app.hours import parse_hours
 from app.ring.api import RingApiClient, RingAuth
 from app.ring.base import RingClient
@@ -36,9 +37,7 @@ class RingSource:
         return self.token_file.read_text().strip() if self.token_file.exists() else ""
 
     def save_token(self, token: str) -> None:
-        self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        self.token_file.write_text(token.strip())
-        self.token_file.chmod(0o600)
+        write_private(self.token_file, token.strip())  # created 0600, atomically
 
     def forget_token(self) -> None:
         self.token_file.unlink(missing_ok=True)

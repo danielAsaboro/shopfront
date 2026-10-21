@@ -1,11 +1,10 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-jinja2>=3.1
-python-multipart>=0.0.9
-python-dotenv>=1.0
-httpx>=0.27
-boto3>=1.35
-botocore[crt]>=1.35  # needed for credentials from `aws login`
-pytest>=8
-strands-agents>=1.0  # Ask Shopfront: agent with tools over the door data, on Bedrock
-hypothesis>=6.100  # property tests for the delivery matcher and attempt checks
+# Runtime. Pinned to the versions the tests run against; `pip install -r requirements-dev.txt` for tests.
+fastapi==0.156.1
+uvicorn[standard]==0.54.0
+jinja2==3.1.6
+python-multipart==0.0.32
+python-dotenv==1.2.4
+httpx==0.28.1
+boto3==1.43.115
+botocore[crt]==1.43.115  # needed for credentials from `aws login`
+strands-agents==1.61.1  # Ask Shopfront: agent with tools over the door data, on Bedrock

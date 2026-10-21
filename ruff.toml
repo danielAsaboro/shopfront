@@ -1,0 +1,16 @@
+# ruff check . (CI runs it). Pyflakes and pycodestyle errors, plus bugbear for real bugs
+# (e.g. B023, a closure over a loop variable). Style-only families are left out on purpose.
+target-version = "py311"
+line-length = 120
+extend-exclude = [".venv", "evidence"]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B", "W6"]
+ignore = [
+    "B008",  # FastAPI's Query()/Form() defaults are the framework's idiom
+    "B904",  # `raise ... from` inside except is good practice, but not a bug where the message is the point
+    "B905",  # zip(strict=) is a style choice here; the zipped lists are built side by side
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E731"]  # small lambdas as fakes are fine in tests

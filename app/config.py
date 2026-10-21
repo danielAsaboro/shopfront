@@ -21,7 +21,7 @@ def _env(name: str, default: str = "") -> str:
 class Settings:
     shop_name: str = _env("SHOP_NAME", "Corner Bakery")
     timezone: str = _env("SHOP_TIMEZONE", "America/Los_Angeles")
-    shop_hours: str = _env("SHOP_HOURS", DEFAULT_HOURS)
+    shop_hours: str = _env("SHOP_HOURS") or DEFAULT_HOURS
 
     # Ring: "synthetic" (default, generated demo data) or "live" (Ring Partner API).
     ring_mode: str = _env("RING_MODE", "synthetic")
@@ -30,7 +30,10 @@ class Settings:
     ring_refresh_token: str = _env("RING_REFRESH_TOKEN")
     ring_client_id: str = _env("RING_CLIENT_ID")
     ring_client_secret: str = _env("RING_CLIENT_SECRET")
-    ring_device_id: str = _env("RING_DEVICE_ID")  # empty = first device the token can see
+    ring_device_id: str = _env("RING_DEVICE_ID")  # empty = first camera or doorbell the token can see
+    # The shop owner's Ring Account ID (GET /v1/users/me data.id); empty = learned from the live token.
+    # Webhooks from any other account are ignored.
+    ring_account_id: str = _env("RING_ACCOUNT_ID")
     ring_event_types: str = _env("RING_EVENT_TYPES", "ding,motion")
     ring_hmac_key: str = _env("RING_HMAC_KEY")  # webhook signature key from partner onboarding
 
@@ -40,6 +43,11 @@ class Settings:
     bedrock_model_id: str = _env("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 
     data_dir: str = _env("SHOPFRONT_DATA_DIR", ".data")
+    # Door frames (pictures of people) are deleted after this many days; 0 keeps them.
+    frame_days: float = float(_env("SHOPFRONT_FRAME_DAYS", "30") or 30)
+    # Extra host names this app may be reached by (e.g. "shop-mac.local"), comma-separated. localhost and
+    # IP addresses always work; anything else is refused, which stops DNS-rebinding pages.
+    allowed_hosts: str = _env("SHOPFRONT_ALLOWED_HOSTS")
 
     @property
     def tz(self) -> ZoneInfo:

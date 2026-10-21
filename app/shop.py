@@ -10,7 +10,8 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from app.hours import parse_hours
+from app.hours import DEFAULT as DEFAULT_HOURS
+from app.hours import normalize_range, parse_hours
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -47,17 +48,23 @@ class ShopProfile:
 
 
 def hours_from_form(values: list[str]) -> str:
-    """Seven form fields like '8-18' or 'closed' (blank means closed) into SHOP_HOURS format."""
+    """Seven form fields as owners type them ('8-18', '7:30-15', '7am-3pm'; blank or 'closed' means
+    closed) into SHOP_HOURS format. A bad day raises ValueError naming the day, e.g. "Wed: '19-8' closes
+    before it opens; ..."."""
     if len(values) != 7:
         raise ValueError("need 7 days of hours")
     out = []
-    for v in values:
-        v = v.strip().lower().replace(" ", "").replace("–", "-")
-        out.append(v if v and v != "closed" else "closed")
-    spec = ",".join(out)
-    parse_hours(spec)
-    return spec
+    for day, v in zip(DAYS, values):
+        v = v.strip()
+        if not v or v.lower() == "closed":
+            out.append("closed")
+            continue
+        try:
+            out.append(normalize_range(v))
+        except ValueError as exc:
+            raise ValueError(f"{day}: {exc}") from None
+    return ",".join(out)
 
 
 def hours_for_form(spec: str) -> list[str]:
-    return [p.strip() for p in spec.split(",")]
+    return [p.strip() for p in (spec or DEFAULT_HOURS).split(",")]
