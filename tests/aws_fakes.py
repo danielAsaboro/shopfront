@@ -1,8 +1,9 @@
-"""moto-backed DynamoDB and Secrets Manager for the AWS tests, built from infra/template.yaml so the table
-the tests use is the table the stack creates. moto answers inside botocore: no socket is opened."""
+"""moto-backed DynamoDB, SQS and Secrets Manager for the AWS tests, built from infra/template.yaml so the table
+and queues the tests use are the ones the stack creates. moto answers inside botocore: no socket is opened."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import boto3
@@ -58,3 +59,24 @@ def ddb(aws):
     client = boto3.client("dynamodb", region_name="us-east-1")
     create_table(client)
     return client
+
+
+def _queue_attributes(props: dict, dlq_arn: str = "") -> dict[str, str]:
+    attrs = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in props.items() if k != "RedrivePolicy"}
+    if "RedrivePolicy" in props:
+        attrs["RedrivePolicy"] = json.dumps({**props["RedrivePolicy"], "deadLetterTargetArn": dlq_arn})
+    return attrs
+
+
+@pytest.fixture
+def sqs(aws):
+    """(client, queue_url, dlq_url): WebhookQueue and WebhookDeadLetterQueue with the template's settings,
+    redrive policy included."""
+    client = boto3.client("sqs", region_name="us-east-1")
+    res = template()["Resources"]
+    dlq = client.create_queue(QueueName="shopfront-webhooks-dlq",
+                              Attributes=_queue_attributes(res["WebhookDeadLetterQueue"]["Properties"]))["QueueUrl"]
+    dlq_arn = client.get_queue_attributes(QueueUrl=dlq, AttributeNames=["QueueArn"])["Attributes"]["QueueArn"]
+    url = client.create_queue(QueueName="shopfront-webhooks",
+                              Attributes=_queue_attributes(res["WebhookQueue"]["Properties"], dlq_arn))["QueueUrl"]
+    return client, url, dlq

@@ -8,8 +8,9 @@
 
 Both give the app the same WebhookLog interface, so nothing else changes.
 
-This package also holds the Lambda's handler (lambda_webhook.py). It is packaged on its own with
-infra/package_lambda.py, so this file imports nothing at module level.
+This package also holds the two Lambda handlers: lambda_webhook.py (the Function URL: HMAC, then SQS) and
+lambda_consumer.py (SQS to DynamoDB). They are packaged on their own with infra/package_lambda.py, so this
+file imports nothing at module level.
 """
 
 from __future__ import annotations

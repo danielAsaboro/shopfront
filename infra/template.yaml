@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Shopfront: a public HTTPS endpoint for Ring's signed webhooks (Lambda Function URL), a DynamoDB log the
-  app reads, a private S3 bucket for door frames, the HMAC key in Secrets Manager, and a read-only public
+  Shopfront: a public HTTPS endpoint for Ring's signed webhooks (Lambda Function URL) that checks the HMAC and
+  queues the event in SQS, a consumer that stores it in a DynamoDB log the app reads (dead-letter queue after
+  5 tries), a private S3 bucket for door frames, the HMAC key in Secrets Manager, and a read-only public
   demo of the app over a made-up shop (a second Function URL). See docs/aws.md.
 
 Parameters:
@@ -35,7 +36,7 @@ Parameters:
     Type: Number
     Default: 30
     AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
-    Description: Days CloudWatch keeps the webhook function's logs.
+    Description: Days CloudWatch keeps the webhook functions' logs.
   DemoConcurrency:
     Type: Number
     Default: 2
@@ -130,13 +131,53 @@ Resources:
               Bool:
                 aws:SecureTransport: "false"
 
+  # ---- Ring -> Function URL -> SQS -> consumer -> DynamoDB ----------------------------------------------
+  # The Function URL handler only checks and enqueues, so Ring gets its 2xx in milliseconds whatever DynamoDB
+  # is doing. A message the consumer can't store is retried; after 5 receives it moves to the dead-letter
+  # queue (14 days), where the DlqDepth alarm sees it and `aws sqs start-message-move-task` redrives it.
+  WebhookDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600 # 14 days, the most SQS keeps a message
+
+  WebhookQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 345600 # 4 days
+      VisibilityTimeout: 180 # 6 x the consumer's timeout, as Lambda's SQS event source recommends
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt WebhookDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  WebhookQueuesPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref WebhookQueue
+        - !Ref WebhookDeadLetterQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource:
+              - !GetAtt WebhookQueue.Arn
+              - !GetAtt WebhookDeadLetterQueue.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
   WebhookLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/shopfront/${AWS::StackName}/ring-webhook"
       RetentionInDays: !Ref LogRetentionDays
 
-  # Only what the function does: write its own log group, store events in the table, read the HMAC key.
+  # Only what the function does: write its own log group, read the HMAC key, enqueue checked events.
   WebhookFunctionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -158,14 +199,14 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !GetAtt WebhookLogGroup.Arn
-              - Sid: StoreEvents # TransactWriteItems of two conditional Puts (dedupe on meta.request_id)
-                Effect: Allow
-                Action: dynamodb:PutItem
-                Resource: !GetAtt WebhookTable.Arn
               - Sid: ReadHmacKey
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Ref RingHmacSecret
+              - Sid: EnqueueEvents
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt WebhookQueue.Arn
 
   RingWebhookFunction:
     Type: AWS::Serverless::Function
@@ -174,7 +215,7 @@ Resources:
       ContextPath: .
       ProjectRootDirectory: ..
     Properties:
-      Description: Verifies Ring webhook signatures and stores the shop's door events (app/store/lambda_webhook.py)
+      Description: Verifies Ring webhook signatures and queues the event (app/store/lambda_webhook.py)
       CodeUri: ..
       Handler: app.store.lambda_webhook.handler
       Runtime: python3.12
@@ -189,14 +230,87 @@ Resources:
         SystemLogLevel: WARN
       Environment:
         Variables:
+          HMAC_SECRET_ARN: !Ref RingHmacSecret
+          QUEUE_URL: !Ref WebhookQueue
+      FunctionUrlConfig:
+        AuthType: NONE # Ring can't sign AWS requests; the HMAC over the body is the authentication
+
+  WebhookConsumerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/shopfront/${AWS::StackName}/ring-webhook-consumer"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Only what the consumer does: write its own log group, take messages off the queue, store events.
+  WebhookConsumerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ring-webhook-consumer
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: OwnLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt WebhookConsumerLogGroup.Arn
+              - Sid: DrainQueue # what Lambda's SQS event source polls with
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt WebhookQueue.Arn
+              - Sid: StoreEvents # TransactWriteItems of two conditional Puts (dedupe on meta.request_id)
+                Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt WebhookTable.Arn
+
+  WebhookConsumerFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile # the same package as RingWebhookFunction (infra/package_lambda.py)
+      ContextPath: .
+      ProjectRootDirectory: ..
+    Properties:
+      Description: Stores queued Ring webhooks in DynamoDB once per request_id (app/store/lambda_consumer.py)
+      CodeUri: ..
+      Handler: app.store.lambda_consumer.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt WebhookConsumerRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref WebhookConsumerLogGroup
+        LogFormat: JSON
+        ApplicationLogLevel: INFO
+        SystemLogLevel: WARN
+      Environment:
+        Variables:
           TABLE_NAME: !Ref WebhookTable
           SHOP_ID: !Ref ShopId
           EVENT_DAYS: !Ref EventDays
-          HMAC_SECRET_ARN: !Ref RingHmacSecret
           RING_DEVICE_ID: !Ref RingDeviceId
           RING_ACCOUNT_ID: !Ref RingAccountId
-      FunctionUrlConfig:
-        AuthType: NONE # Ring can't sign AWS requests; the HMAC over the body is the authentication
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt WebhookQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures] # only the records that failed are retried
+            ScalingConfig:
+              MaximumConcurrency: 2 # one door's events; the lowest SQS allows
 
   # ---- The public demo: the app itself over a made-up shop, read-only, for anyone with the link -----------
   # app/public_demo.py: synthetic door events and one signed webhook replay, seeded at cold start the way
@@ -301,8 +415,17 @@ Outputs:
     Description: Attach to the IAM user or role the Shopfront app runs as
     Value: !Ref ShopfrontAppPolicy
   LogGroupName:
-    Description: The webhook function's logs
+    Description: The webhook (Function URL) function's logs
     Value: !Ref WebhookLogGroup
+  ConsumerLogGroupName:
+    Description: The queue consumer's logs (ACCEPTED, DUPLICATE, IGNORED, FAILED per event)
+    Value: !Ref WebhookConsumerLogGroup
+  QueueUrl:
+    Description: The queue between the webhook function and the consumer
+    Value: !Ref WebhookQueue
+  DeadLetterQueueArn:
+    Description: Events the consumer couldn't store after 5 tries; redrive with aws sqs start-message-move-task
+    Value: !GetAtt WebhookDeadLetterQueue.Arn
   DemoUrl:
     Description: The public, read-only demo (made-up shop, made-up deliveries); give this link to judges
     Value: !GetAtt PublicDemoFunctionUrl.FunctionUrl

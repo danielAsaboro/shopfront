@@ -14,8 +14,9 @@ Dedupe on `meta.request_id` (Ring retries a delivery with the same request_id: A
 Webhook Response Handling): the marker and the event are written in one transaction, each with
 `attribute_not_exists(pk)`. A retry cancels the transaction and nothing is written twice.
 
-Only events from the shop's own doorbell and Ring account are stored (`accept`); anything else is answered
-200 so Ring neither retries nor disables the endpoint, and is dropped. So `ignored()` is always 0 here.
+Only events from the shop's own doorbell and Ring account are stored; anything else is answered 200 so Ring
+neither retries nor disables the endpoint, and is dropped (by the queue consumer, app/store/lambda_consumer.py,
+or by `accept` for webhooks that reach the app itself). So `ignored()` is always 0 here.
 
 boto3 is passed in or imported lazily: the Lambda package (infra/package_lambda.py) is stdlib plus the
 boto3 the Lambda runtime ships.

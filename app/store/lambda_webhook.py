@@ -1,20 +1,27 @@
 """AWS Lambda for Ring's webhooks: `POST /webhooks/ring` on a Lambda Function URL (infra/template.yaml).
 
-Ring delivers webhooks to a public HTTPS URL (API reference, Notifications), which a shop laptop doesn't
-have. This function is that URL. It runs the same code as the app's own route (app/main.py):
-`app.ring.webhooks.check` verifies the HMAC-SHA256 `X-Signature` over the raw body and builds the row, then
-`app.store.dynamodb.EventTable` stores it once per `meta.request_id`.
+Ring delivers webhooks to a public HTTPS URL and expects a 2xx within 5 seconds (API reference,
+Notifications > Webhook Response Handling); a shop laptop has no such URL. This function is that URL, and
+it does only what has to happen before the answer: the size cap, `app.ring.webhooks.check` (the same
+HMAC-SHA256 over the raw body as the app's own route, which also pulls out `meta.request_id`, the dedupe
+key), and one SQS SendMessage. The queue's consumer (app/store/lambda_consumer.py) does the device/account
+filtering and the DynamoDB conditional writes, so a slow or throttled table never makes Ring wait, retry or
+disable the endpoint; a message the consumer can't store goes to the dead-letter queue after 5 tries.
 
-Answers, as the app's route gives them:
+Answers:
 - not `POST /webhooks/ring`: 404 / 405
 - body over MAX_BODY (64 KB): 413, before any HMAC
 - no RING_HMAC_KEY in Secrets Manager yet: 503 (Ring retries 5xx, so nothing is lost while it's set)
-- missing or wrong signature: 401; signed but not a v1.1 payload: 400
-- another device or Ring account than RING_DEVICE_ID / RING_ACCOUNT_ID: 200 IGNORED, nothing stored
-- a request_id already stored: 200 DUPLICATE
+- missing or wrong signature: 401 (logged as BAD_SIGNATURE: the HmacFailures metric filter counts these)
+- signed but not a v1.1 payload: 400
+- SQS unreachable: 503, so Ring retries
+- otherwise: 200 QUEUED. Whether the event is stored, a duplicate or another shop's is the consumer's log.
 
-Configuration (environment, set by the template): TABLE_NAME, SHOP_ID, EVENT_DAYS, HMAC_SECRET_ARN,
-RING_DEVICE_ID, RING_ACCOUNT_ID. The HMAC key itself is only ever in Secrets Manager.
+Replays (signed with the replay-only key, or sent with X-Shopfront-Replay: 1) carry `"replayed": true` in the
+row and a `replayed=1` message attribute, and the consumer stores them as replays.
+
+Configuration (environment, set by the template): QUEUE_URL, HMAC_SECRET_ARN. The HMAC key itself is only
+ever in Secrets Manager.
 
 Logs one JSON line per request (status, request_id, type, replayed), never the body or IDs of people.
 """
@@ -31,7 +38,6 @@ from collections.abc import Callable
 from typing import Any
 
 from app.ring.webhooks import MAX_BODY, WebhookStatus, check
-from app.store.dynamodb import DEFAULT_KEEP_DAYS, EventTable
 
 ROUTE = "/webhooks/ring"
 CODES = {WebhookStatus.MALFORMED: 400, WebhookStatus.BAD_SIGNATURE: 401, WebhookStatus.NOT_CONFIGURED: 503}
@@ -57,8 +63,27 @@ def raw_body(event: dict) -> bytes | None:
     return body.encode()
 
 
-def handle(event: dict, *, key: Callable[[], str], table: EventTable,
-           device_id: str = "", account_id: str = "") -> dict:
+class EventQueue:
+    """The SQS queue between this function and the consumer. `client` is a boto3 SQS client."""
+
+    def __init__(self, client: Any, url: str):
+        self.client = client
+        self.url = url
+
+    def send(self, row: dict, trace: str = "") -> str:
+        """Enqueue one checked row. `trace` is the X-Ray trace header (`_X_AMZN_TRACE_ID`), passed as the
+        message's AWSTraceHeader so the consumer's segment joins this request's trace."""
+        attrs = {"replayed": {"DataType": "String", "StringValue": "1" if row.get("replayed") else "0"}}
+        if str(row.get("request_id") or ""):
+            attrs["request_id"] = {"DataType": "String", "StringValue": str(row["request_id"])}  # the dedupe key
+        extra = ({"MessageSystemAttributes": {"AWSTraceHeader": {"DataType": "String", "StringValue": trace}}}
+                 if trace else {})
+        out = self.client.send_message(QueueUrl=self.url, MessageBody=json.dumps(row),
+                                       MessageAttributes=attrs, **extra)
+        return str(out.get("MessageId", ""))
+
+
+def handle(event: dict, *, key: Callable[[], str], queue: EventQueue, trace: str = "") -> dict:
     """One Function URL request (payload format 2.0). `key` is called only for a POST to the route
     with a body of acceptable size, so stray requests cost no Secrets Manager call."""
     method = ((event.get("requestContext") or {}).get("http") or {}).get("method", "")
@@ -78,10 +103,14 @@ def handle(event: dict, *, key: Callable[[], str], table: EventTable,
     if row is None:
         log.info(json.dumps({"status": status.value}))
         return respond(CODES[status], status.value)
-    outcome = table.accept(row, device_id, account_id)
-    log.info(json.dumps({"status": outcome, "request_id": row["request_id"], "type": row["type"],
-                         "replayed": bool(row.get("replayed"))}))
-    return respond(200, outcome)
+    facts = {"request_id": row["request_id"], "type": row["type"], "replayed": bool(row.get("replayed"))}
+    try:
+        queue.send(row, trace)
+    except Exception as exc:  # any SDK or network failure: Ring retries a 5xx, so the event isn't lost
+        log.error(json.dumps({"status": "QUEUE_UNAVAILABLE", "error": type(exc).__name__, **facts}))
+        return respond(503, "QUEUE_UNAVAILABLE")
+    log.info(json.dumps({"status": "QUEUED", **facts}))
+    return respond(200, "QUEUED")
 
 
 # ---- the Lambda entry point: clients and the key are built once per container --------------------------
@@ -115,7 +144,5 @@ def secret_key(secrets: Any, arn: str, now: float | None = None) -> str:
 
 def handler(event: dict, context: Any) -> dict:
     env = os.environ
-    table = EventTable(_client("dynamodb"), env["TABLE_NAME"], env.get("SHOP_ID", "shop"),
-                       float(env.get("EVENT_DAYS") or DEFAULT_KEEP_DAYS))
     return handle(event, key=lambda: secret_key(_client("secretsmanager"), env["HMAC_SECRET_ARN"]),
-                  table=table, device_id=env.get("RING_DEVICE_ID", ""), account_id=env.get("RING_ACCOUNT_ID", ""))
+                  queue=EventQueue(_client("sqs"), env["QUEUE_URL"]), trace=env.get("_X_AMZN_TRACE_ID", ""))

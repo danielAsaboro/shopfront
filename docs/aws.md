@@ -14,7 +14,8 @@ Shopfront runs on the shop's own computer. Two things need more than that:
   already calls AWS from the app with the owner's AWS sign-in, and is unchanged here.
 
 The template adds the first: a small, always-on endpoint that takes Ring's webhooks, checks them
-exactly as the app does, and keeps them in DynamoDB, where the app reads them when it runs.
+exactly as the app does and queues them, and a second function that stores them in DynamoDB, where the app
+reads them when it runs.
 
 It also adds a **public demo** (section 2): the app itself, read-only, over the one-command demo's
 made-up shop, at a link anyone can open. Same `sam deploy`; the link is the `DemoUrl` output.
@@ -22,29 +23,38 @@ made-up shop, at a link anyone can open. Same `sam deploy`; the link is the `Dem
 ## 1. What the template deploys
 
 ```
-Ring ──HTTPS POST /webhooks/ring──▶ Lambda Function URL
-                                        │  app.ring.webhooks.check: HMAC-SHA256 over the raw body
-                                        │  RING_HMAC_KEY from Secrets Manager (cached 5 min)
+Ring ──HTTPS POST /webhooks/ring──▶ Lambda Function URL (RingWebhookFunction, 4 s timeout)
+                                        │  size cap, then app.ring.webhooks.check: HMAC-SHA256 over the
+                                        │  raw body (key from Secrets Manager, cached 5 min); 200 QUEUED
+                                        ▼
+                                    SQS queue (SSE) ──after 5 failed receives──▶ dead-letter queue (14 days)
+                                        │  batches of up to 10
+                                        ▼
+                                    Lambda WebhookConsumerFunction
+                                        │  device/account filter, conditional writes on meta.request_id;
+                                        │  reports only the failed records (partial batch response)
                                         ▼
                                     DynamoDB table  ◀── Shopfront app (SHOPFRONT_WEBHOOK_STORE=dynamodb)
                                     (one item per event, TTL)
-S3 bucket for door frames (private, encrypted, expires)      CloudWatch log group (retention set)
+S3 bucket for door frames (private, encrypted, expires)      CloudWatch log groups (retention set)
 ```
 
 | Resource | Why this service | Settings |
 |---|---|---|
-| Lambda function (Python 3.12, arm64) with a Function URL | Ring needs HTTPS and an answer in under 5 s; a Function URL is HTTPS with nothing in front, and the function costs nothing while the door is quiet. API Gateway would add a service and a bill for one POST route that authenticates by HMAC anyway. | 256 MB, 4 s timeout. `AuthType: NONE`, because Ring can't sign AWS requests; the HMAC over the body is the authentication, and anything unsigned gets 401 before it touches the table. |
-| DynamoDB table | Ring retries a delivery with the same `meta.request_id` (API reference, Notifications > Webhook Response Handling). A conditional write makes the retry a no-op, durably, with no server to run. TTL bounds how long door events are kept. | On-demand. `pk` = `<ShopId>#<UTC day>`, `sk` = `<timestamp ms>#<request_id>`, `expires_at` TTL (EventDays, default 90). Encrypted at rest with a DynamoDB-owned key. |
+| Lambda function (Python 3.12, arm64) with a Function URL | Ring needs HTTPS and an answer in under 5 s; a Function URL is HTTPS with nothing in front, and the function costs nothing while the door is quiet. API Gateway would add a service and a bill for one POST route that authenticates by HMAC anyway. | 256 MB, 4 s timeout. `AuthType: NONE`, because Ring can't sign AWS requests; the HMAC over the body is the authentication, and anything unsigned gets 401 before it reaches the queue. It does only the size cap, the HMAC and one `SendMessage`, so a slow or throttled table never delays Ring's answer. |
+| SQS queue and dead-letter queue | Decouples Ring's 5-second answer from storage. A write that fails is retried by SQS instead of by Ring, and an event that can't be stored lands somewhere visible instead of being lost. A standard queue, not FIFO: FIFO's deduplication only covers 5 minutes, and the table's conditional write already dedupes on `meta.request_id` for as long as the event is kept. | SSE with SQS-managed keys on both, TLS-only queue policy. Visibility timeout 180 s (6 × the consumer's 30 s timeout). `maxReceiveCount` 5, then the dead-letter queue, which keeps a message 14 days. |
+| Lambda consumer (Python 3.12, arm64) | Stores what the queue holds. | 256 MB, 30 s timeout, batches of up to 10, `ReportBatchItemFailures` so only the failed records are retried, at most 2 concurrent pollers (one door's events). |
+| DynamoDB table | Ring retries a delivery with the same `meta.request_id` (API reference, Notifications > Webhook Response Handling), and SQS can deliver a message more than once. A conditional write makes either a no-op, durably, with no server to run. TTL bounds how long door events are kept. | On-demand. `pk` = `<ShopId>#<UTC day>`, `sk` = `<timestamp ms>#<request_id>`, `expires_at` TTL (EventDays, default 90). Encrypted at rest with a DynamoDB-owned key. |
 | Secrets Manager secret | The HMAC key never appears in the template, its parameters, the function's environment, or logs, and can be changed without a redeploy. | Created as an empty slot `{"RING_HMAC_KEY": ""}`; you set the value once after deploy. Until then the function answers 503, which Ring retries. |
 | S3 bucket for frames | Door frames are pictures of people. If they move off the laptop, they need a private place that deletes them on schedule. | SSE-S3, all public access blocked, bucket-owner-enforced, TLS-only policy, lifecycle expiry after FrameDays (default 30, matching `SHOPFRONT_FRAME_DAYS`). **The app doesn't write to it yet**: frames stay in `.data/frames/` with the same 30-day limit. |
-| CloudWatch log group | One JSON line per request (status, request_id, event type, replayed), never the body. | Retention LogRetentionDays (default 30). |
-| IAM role for the function | Least privilege. | `logs:CreateLogStream`/`PutLogEvents` on its own log group, `dynamodb:PutItem` on the table, `secretsmanager:GetSecretValue` on the one secret. No wildcards. |
+| CloudWatch log groups | One JSON line per request from the Function URL handler (status, request_id, event type, replayed) and one per record from the consumer, never the body. | Retention LogRetentionDays (default 30). |
+| IAM roles for the two functions | Least privilege, and the public function can't touch the table. | Function URL handler: its own log group, `secretsmanager:GetSecretValue` on the one secret, `sqs:SendMessage` on the queue. Consumer: its own log group, `sqs:ReceiveMessage`/`DeleteMessage`/`GetQueueAttributes` on the queue, `dynamodb:PutItem` on the table. No wildcards. |
 | IAM managed policy for the app | The machine running Shopfront reads the table (and could keep frames in the bucket). | `dynamodb:Query`/`Scan`/`PutItem` on the table, `s3:GetObject`/`PutObject`/`DeleteObject` on `frames/*`. Attach it to the IAM user or role the app runs as. |
 
-The function runs the app's own code, not a copy. [infra/package_lambda.py](../infra/package_lambda.py)
+Both functions run the app's own code, not a copy. [infra/package_lambda.py](../infra/package_lambda.py)
 (called by `sam build` through [infra/Makefile](../infra/Makefile)) packages `app/ring/webhooks.py`,
 `app/store/` and the two small modules they import. They need only the standard library and the
-boto3 that the Lambda runtime ships, so nothing is pip-installed. The handler is
+boto3 that the Lambda runtime ships, so nothing is pip-installed. The Function URL handler is
 [app/store/lambda_webhook.py](../app/store/lambda_webhook.py):
 
 | Request | Answer |
@@ -54,17 +64,31 @@ boto3 that the Lambda runtime ships, so nothing is pip-installed. The handler is
 | No key in the secret yet | 503 (Ring retries) |
 | Missing or wrong `X-Signature` | 401 |
 | Signed, but not a v1.1 payload | 400 |
-| From a device or Ring account other than RingDeviceId / RingAccountId | 200 `IGNORED`, not stored (a 4xx could make Ring disable the endpoint) |
-| A `meta.request_id` already stored | 200 `DUPLICATE` |
-| Otherwise | 200 `ACCEPTED`, stored |
+| SQS unreachable | 503 (Ring retries) |
+| Otherwise | 200 `QUEUED`, with the row as the message body and `meta.request_id` (the dedupe key) and `replayed` as message attributes |
+
+The consumer, [app/store/lambda_consumer.py](../app/store/lambda_consumer.py), logs one outcome per record:
+
+| Record | Outcome |
+|---|---|
+| From a device or Ring account other than RingDeviceId / RingAccountId | `IGNORED`, deleted from the queue, not stored (Ring already had its 200, so it neither retries nor disables the endpoint) |
+| A `meta.request_id` already stored (Ring's retry, or SQS delivering twice) | `DUPLICATE`, deleted |
+| Otherwise | `ACCEPTED`, stored |
+| Body unreadable, or DynamoDB fails | `FAILED`, reported in `batchItemFailures`: only this record is retried, and after 5 receives SQS moves it to the dead-letter queue |
+
+To put dead-lettered events back once the cause is fixed:
+`aws sqs start-message-move-task --source-arn <DeadLetterQueueArn>` moves them to the queue they came from.
 
 Replays from [scripts/feed_webhook.py](../scripts/feed_webhook.py) are signed with the replay-only key
-and stay marked as replays in the table, exactly as in the local log.
+and stay marked as replays end to end: `"replayed": true` in the row and `replayed=1` on the message, and
+the consumer stores them as replays, exactly as in the local log.
 
-[tests/test_lambda_webhook.py](../tests/test_lambda_webhook.py) covers every row above with the payloads
-from [tests/test_webhooks.py](../tests/test_webhooks.py), against moto's in-process DynamoDB and Secrets
-Manager (the test table is built from the template's own key schema). It also checks that the packaged
-code imports with no third-party packages, and that the function's IAM actions are exactly the four above.
+[tests/test_lambda_webhook.py](../tests/test_lambda_webhook.py) covers every row of both tables with the
+payloads from [tests/test_webhooks.py](../tests/test_webhooks.py), against moto's in-process SQS, DynamoDB
+and Secrets Manager (the test table and queues are built from the template's own properties): Ring's
+retries stored once, a batch with a poison message and a failing write reporting exactly those two, and a
+record that keeps failing landing in the dead-letter queue after its fifth receive. It also checks that
+the packaged code imports with no third-party packages, and each role's IAM actions are exactly the ones above.
 
 ## 2. The public demo
 
@@ -145,7 +169,7 @@ sam build && sam deploy --guided
 | RingAccountId | empty | The owner's Ring Account ID (`meta.account_id`, `GET /v1/users/me`). Empty accepts any account. |
 | EventDays | 90 | Days a webhook event is kept. |
 | FrameDays | 30 | Days a frame is kept in S3. |
-| LogRetentionDays | 30 | Days CloudWatch keeps the webhook function's logs. |
+| LogRetentionDays | 30 | Days CloudWatch keeps the webhook functions' logs. |
 | DemoConcurrency | 2 | Public demo requests at once (the cost cap). `0` = demo off, `-1` = no reservation (see section 2). |
 | DemoLogRetentionDays | 7 | Days CloudWatch keeps the public demo's logs. |
 
@@ -155,7 +179,7 @@ creation. SAM saves the answers in `infra/samconfig.toml`, which is
 git-ignored because it can hold your Ring IDs; later deploys are just `sam build && sam deploy`.
 
 The stack's outputs: `DemoUrl`, `WebhookUrl`, `HmacSecretArn`, `WebhookTableName`, `FramesBucketName`,
-`AppPolicyArn`, `LogGroupName`, `DemoLogGroupName`.
+`AppPolicyArn`, `LogGroupName`, `ConsumerLogGroupName`, `QueueUrl`, `DeadLetterQueueArn`, `DemoLogGroupName`.
 
 `DemoUrl` (`https://<id>.lambda-url.<region>.on.aws/`) is the link for judges. Open it once yourself:
 the first request is the cold start. To print it again later:
@@ -199,9 +223,11 @@ RING_HMAC_KEY=<the key> .venv/bin/python -m scripts.feed_webhook \
 aws logs tail <LogGroupName> --since 10m
 ```
 
-The answer is `{"status": "ACCEPTED"}` and the event is stored as a replay (`ring-webhook-replay`), never as
-Ring's own. If you set RingAccountId, the answer is `IGNORED` instead: the feeder's payloads carry the
-account `replay`, so the account filter drops them, which shows that filter working.
+The answer is `{"status": "QUEUED"}`, and a second later the consumer's log
+(`aws logs tail <ConsumerLogGroupName>`) says `ACCEPTED`: the event is stored as a replay
+(`ring-webhook-replay`), never as Ring's own. If you set RingAccountId, the consumer logs `IGNORED` instead:
+the feeder's payloads carry the account `replay`, so the account filter drops them, which shows that filter
+working.
 
 ### Point the app at the table
 
@@ -260,8 +286,8 @@ aws s3 rm s3://<FramesBucketName> --recursive
 cd infra && sam delete
 ```
 
-`sam delete` removes both functions and their URLs (the demo link stops working), the table (and every
-event in it), the secret, the log groups, the roles and the policy. Remove the Webhook URL from the Ring developer console too, or Ring
+`sam delete` removes the three functions and the two URLs (the demo link stops working), the queues (and
+anything still in them), the table (and every event in it), the secret, the log groups, the roles and the policy. Remove the Webhook URL from the Ring developer console too, or Ring
 keeps calling an address that no longer answers. Set `SHOPFRONT_WEBHOOK_STORE` back to empty in `.env`.
 
 ## 6. Checking the template yourself
@@ -271,7 +297,7 @@ pip install aws-sam-cli cfn-lint  # in its own virtualenv, not the app's
 cd infra
 sam validate --lint                # SAM transform + cfn-lint
 cfn-lint template.yaml
-sam build                          # runs package_lambda.py and package_demo.py; output in infra/.aws-sam/ (git-ignored)
+sam build                          # runs package_lambda.py (twice) and package_demo.py; output in infra/.aws-sam/ (git-ignored)
 cd .. && .venv/bin/python -m pytest -q tests/test_lambda_webhook.py tests/test_webhook_store.py tests/test_public_demo.py
 ```
 

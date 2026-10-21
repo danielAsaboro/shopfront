@@ -1,4 +1,7 @@
-"""Copy the webhook Lambda's code, and only that, into a directory: `python infra/package_lambda.py OUT`.
+"""Copy the webhook Lambdas' code, and only that, into a directory: `python infra/package_lambda.py OUT`.
+
+One package serves both functions: the Function URL handler (app/store/lambda_webhook.py) and the queue
+consumer (app/store/lambda_consumer.py); the template points each at its own module.
 
 The Lambda runs the app's own modules (no fork of the HMAC or dedupe logic), but not the app's
 dependencies: everything it imports is the standard library or boto3, which the Lambda runtime ships.
@@ -14,7 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = ["app/__init__.py", "app/files.py", "app/models.py", "app/ring/webhooks.py",
-         "app/store/__init__.py", "app/store/dynamodb.py", "app/store/lambda_webhook.py"]
+         "app/store/__init__.py", "app/store/dynamodb.py", "app/store/lambda_webhook.py",
+         "app/store/lambda_consumer.py"]
 EMPTY = ["app/ring/__init__.py"]
 
 
