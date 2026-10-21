@@ -330,3 +330,9 @@ def test_late_courier_verdicts_read_as_one_line():
     assert pages.verdict(late) == "Delivered late: the courier came at 13:02, 22 min after the scan."
     assert pages.verdict({"outcome": "courier_came_later", "text": "x"}).startswith("No courier near the scan, but")
     assert pages.verdict({"outcome": "something_new", "text": "First sentence. Second."}) == "First sentence."
+
+
+def test_visit_label_marks_rule_guesses():
+    assert pages.visit_label("doorbell_press", confirmed=False) == "doorbell press (guess)"
+    assert pages.visit_label("delivery", confirmed=True) == "delivery"
+    assert pages.visit_label("after_hours", confirmed=False) == "after hours (guess)"

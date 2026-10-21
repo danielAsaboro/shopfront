@@ -47,7 +47,7 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
-    long_date=pages.long_date, how=pages.how, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
+    long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)

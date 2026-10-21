@@ -8,6 +8,9 @@ from enum import Enum
 class VisitType(str, Enum):
     CUSTOMER = "customer"
     DELIVERY = "delivery"
+    # A doorbell press nothing looked at: the time-of-day rules can't tell a courier from a customer or a
+    # neighbour, so they say what Ring recorded, never "delivery". Bedrock never answers it (it sees who).
+    DOORBELL_PRESS = "doorbell_press"
     STAFF = "staff"
     AFTER_HOURS = "after_hours"
     UNKNOWN = "unknown"

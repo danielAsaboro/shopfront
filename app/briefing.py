@@ -7,7 +7,7 @@ from datetime import UTC, date, time, timedelta
 from app.cache import ClassificationCache
 from app.classify.base import Classifier
 from app.classify.bedrock import BedrockClassifier
-from app.deliveries import is_seen_courier, staff_in
+from app.deliveries import is_possible_courier, is_seen_courier, staff_in
 from app.hours import posted_hours
 from app.models import Briefing, ClassifiedVisit, DoorEvent, VisitType
 from app.ring.api import RingApiClient, RingError
@@ -144,14 +144,15 @@ def build_briefing(ring: RingClient, classifier: Classifier, day: date, shop_nam
 
     deliveries = [v for v in today if v.visit_type == VisitType.DELIVERY]
     # Closed and nobody in. Staff at the door (in early to open up, or still there) means it wasn't missed.
-    closed = [v for v in deliveries if not _is_open(v, open_hours)
+    # Couriers Ring or Bedrock saw, and doorbell presses nothing looked at (listed as presses, never couriers).
+    closed = [v for v in today if (is_seen_courier(v) or is_possible_courier(v)) and not _is_open(v, open_hours)
               and not staff_in(v.event.timestamp, today, open_hours)]
 
     def row(v: ClassifiedVisit, what: str) -> dict:
         return {"time": v.event.timestamp.strftime("%H:%M"), "id": v.event.id, "reason": v.reason, "what": what,
                 "labelled_by": v.source, "confirmed": is_seen_courier(v), "ring_event": v.event.kind,
                 "event_source": v.event.source}
-    # Only a courier Ring or Bedrock saw is a courier; a rules "delivery" is a doorbell press and stays one
+    # Only a courier Ring or Bedrock saw is a courier; a doorbell press nothing looked at stays a press
     closed_deliveries = [row(v, "Courier at the door while closed") for v in closed if is_seen_courier(v)]
     presses = [row(v, "Doorbell pressed while closed" if v.event.kind == "ding" else "Door event while closed")
                for v in closed if not is_seen_courier(v)]

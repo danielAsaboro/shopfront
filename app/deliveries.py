@@ -6,7 +6,7 @@ package_delivery alert, or Bedrock on the Ring frame) is matched to the closest 
 match keeps the time, who labelled it and why, and the Ring frame when there is one: a timestamped
 receipt the owner can show a supplier.
 
-A doorbell press the time-of-day rules call "delivery" is a guess: it is listed as a *possible*
+A doorbell press nothing looked at (the rules label it `doorbell_press`, never "delivery") is a guess: it is listed as a *possible*
 courier, never a receipt, never counted as seen and never priced in the money line.
 
 Ring has no "door answered" signal, so a receipt says a courier was at the door, never that the
@@ -201,6 +201,12 @@ def is_seen_courier(v: ClassifiedVisit) -> bool:
     return v.visit_type == VisitType.DELIVERY and v.source in SEEN_SOURCES
 
 
+def is_possible_courier(v: ClassifiedVisit) -> bool:
+    """A door event that could have been a courier but nothing looked at: a doorbell press the rules only
+    timed, or a "delivery" label from something that isn't Ring or Bedrock."""
+    return not is_seen_courier(v) and v.visit_type in (VisitType.DOORBELL_PRESS, VisitType.DELIVERY)
+
+
 def staff_in(t: datetime, visits: list[ClassifiedVisit], open_hours) -> bool:
     """Staff were at the door by `t` and still around: a staff visit at or before it, and either another at
     or after it, or `t` before opening (they came in early to open up)."""
@@ -309,7 +315,7 @@ def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours
     "possible". Pass `now` (aware) so an order whose window hasn't ended yet is "expected", not
     "not seen"."""
     couriers = [v for v in visits if is_seen_courier(v)]
-    guessed = [v for v in visits if v.visit_type == VisitType.DELIVERY and not is_seen_courier(v)]
+    guessed = [v for v in visits if is_possible_courier(v)]
     pick = _assign(_costs(expected, couriers)) if expected else []
     used: set[str] = set()
     rows = []

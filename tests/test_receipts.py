@@ -37,9 +37,10 @@ def staff(hh, mm, source="bedrock"):
 
 
 def test_a_customer_ringing_is_not_a_receipt():
-    """The audit's case: rules label every press a delivery, so a customer at 10:15 became Bay Mills' receipt."""
+    """The audit's case: rules used to label every press a delivery, so a customer at 10:15 became Bay Mills'
+    receipt. Now the rules say only what Ring recorded (a doorbell press), and the matcher lists it as possible."""
     press = RULES.classify(ev(10, 15), OPEN)
-    assert press.visit_type == VisitType.DELIVERY and press.source == "rules"
+    assert press.visit_type == VisitType.DOORBELL_PRESS and press.source == "rules"
     r = receipts([Expected("x1", DAY.isoformat(), "Bay Mills", "09:00", "11:00")], [press], OPEN, NO_FRAMES)
     row = r["expected"][0]
     assert row["status"] == "possible" and row["visit"] is None and r["seen"] == 0
@@ -90,3 +91,11 @@ def test_money_line_names_what_the_door_saw():
     line = money_line(2, 1, 15, "$")
     assert line == ("Last 7 days: 2 couriers came while you were closed and 1 expected delivery with no courier "
                     "seen at the door. At your $15 per redelivery, that's $45.")
+
+
+def test_rules_never_call_a_press_a_delivery():
+    """Round 2: the rules can't see who pressed the bell, so no press, open or closed, is labelled "delivery"."""
+    for hh, hours in ((10, OPEN), (6, OPEN), (21, OPEN), (10, None)):
+        v = RULES.classify(ev(hh, 0), hours)
+        assert v.visit_type == VisitType.DOORBELL_PRESS and v.visit_type != VisitType.DELIVERY
+        assert v.visit_type.value.replace("_", " ") == "doorbell press"

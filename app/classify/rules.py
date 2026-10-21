@@ -25,9 +25,10 @@ class RulesClassifier(Classifier):
 
         t = event.timestamp.timetz().replace(tzinfo=None)
         if event.kind == "ding":
+            # Who pressed it is unknown without a frame: a courier, a customer, a neighbour. Never "delivery".
             if open_hours and open_hours[0] <= t < open_hours[1]:
-                return visit(VisitType.DELIVERY, 0.5, "doorbell press during open hours")
-            return visit(VisitType.DELIVERY, 0.6, "doorbell press while closed")
+                return visit(VisitType.DOORBELL_PRESS, 0.5, "doorbell press during open hours")
+            return visit(VisitType.DOORBELL_PRESS, 0.6, "doorbell press while closed")
         if open_hours is None:
             return visit(VisitType.AFTER_HOURS, 0.6, "motion on a closed day")
         open_t, close_t = open_hours

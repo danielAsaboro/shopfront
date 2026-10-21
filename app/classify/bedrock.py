@@ -34,7 +34,7 @@ from app.models import ClassifiedVisit, DoorEvent, VisitType
 log = logging.getLogger(__name__)
 
 TOOL_NAME = "label_door_frame"
-VISIT_TYPES = [t.value for t in VisitType]
+VISIT_TYPES = [t.value for t in VisitType if t is not VisitType.DOORBELL_PRESS]  # Bedrock sees who it was
 MAX_REASON = 200
 
 # Shared by every Bedrock call that looks at a picture someone else could have put text into.

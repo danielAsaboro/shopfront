@@ -82,6 +82,16 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     return f"{known}: {reason}" if reason else known
 
 
+# A visit type in the owner's words, where the raw value isn't already one
+TYPE_LABEL = {"doorbell_press": "doorbell press", "after_hours": "after hours"}
+
+
+def visit_label(visit_type: str | None, confirmed: bool = True) -> str:
+    """'customer', or 'doorbell press (guess)' when nothing looked at the door to say it."""
+    t = str(visit_type or "")
+    return TYPE_LABEL.get(t, t.replace("_", " ")) + ("" if confirmed else " (guess)")
+
+
 def long_date(value) -> str:
     """'Wednesday 14 October 2026' from '2026-10-14'."""
     try:

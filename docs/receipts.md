@@ -11,8 +11,9 @@ Everything below is about keeping that sentence true.
 | Bedrock, looking at the Ring frame, called the person a courier (Bedrock RequestId), or Ring's own `package_delivery` alert did | Whose courier it was. A frame shows a uniform or a parcel, not a supplier, so a receipt lists the other expected suppliers the visit also fits |
 | Nothing was recorded near a carrier's "attempted" time | That nobody came. Motion detection can miss people, so this outcome is worded as support, not proof |
 
-Labels made by the time-of-day rules (no frame looked at) are guesses. A rules "delivery" (the rules call
-every doorbell press one) is never a receipt, never counts as "seen", never feeds the money line and is
+Labels made by the time-of-day rules (no frame looked at) are guesses. The rules never say "delivery": a
+doorbell press they only timed is labelled `doorbell_press` ("doorbell press (guess)" on the pages). It is
+never a receipt, never counts as "seen", never feeds the money line and is
 never called a courier: an order with one in its window is **possible** ("Possible courier, not confirmed
 by a camera frame"), and every such press is listed under `unconfirmed`. An order whose window hasn't
 ended yet is **expected** ("Not due yet"), not "not seen".

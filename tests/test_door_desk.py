@@ -143,7 +143,10 @@ def test_agent_tools_answer_from_shop_data(isolated):
     t = main._agent_tools(date(2026, 10, 12))
     y = t.door_visits("yesterday")
     assert y["date"] == "2026-10-11" and y["posted_hours"] == "closed"
-    assert any(v["type"] == "delivery" and not v["shop_open"] for v in y["visits"])
+    # a press while closed that only the rules timed: a doorbell press, never a "delivery"
+    assert any(v["type"] == "doorbell_press" and v["labelled_by"] == "rules" and not v["shop_open"]
+               for v in y["visits"])
+    assert not any(v["type"] == "delivery" and v["labelled_by"] == "rules" for v in y["visits"])
     assert len(t.week("2026-10-11")) == 7
     with pytest.raises(ValueError):
         t.door_visits("2026-12-01")
