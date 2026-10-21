@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from fastapi.routing import iter_route_contexts
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -88,8 +89,13 @@ def _example(route_path: str, demo) -> str:
     return path.replace("{name}", "ring-123.jpg")
 
 
+def app_routes() -> list:
+    """Every route the app answers, the ones app/routes/* include as well as the app's own."""
+    return [r for r in iter_route_contexts(main.app.routes) if r.path]
+
+
 def all_paths(demo) -> list[str]:
-    return sorted({_example(r.path, demo) for r in main.app.routes if hasattr(r, "path")})
+    return sorted({_example(r.path, demo) for r in app_routes()})
 
 
 # ---- the story a judge opens ------------------------------------------------------------------------------------
@@ -175,7 +181,7 @@ def test_every_route_and_method_writes_nothing_and_calls_nothing(client, demo, t
             assert state() == before_state, f"{method} {path} changed the shop"
     assert outbound == [], outbound
     walked = {p for _, p, _ in seen}
-    assert {_example(r.path, demo) for r in main.app.routes if hasattr(r, "path")} <= walked
+    assert {_example(r.path, demo) for r in app_routes()} <= walked
 
 
 def test_owner_actions_are_refused_before_the_app_reads_them(client, demo, outbound):
@@ -205,7 +211,7 @@ def test_pages_outside_the_demo_say_so(client, path):
 
 
 def test_allowlist_names_only_real_read_routes():
-    gets = {r.path for r in main.app.routes if "GET" in getattr(r, "methods", set())}
+    gets = {r.path for r in app_routes() if "GET" in (r.methods or set())}
     assert public_demo.READ_PATHS <= gets
     for prefix in public_demo.READ_PREFIXES:
         assert any(p.startswith(prefix) for p in gets)
