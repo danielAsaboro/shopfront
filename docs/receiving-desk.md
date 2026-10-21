@@ -172,7 +172,10 @@ Bedrock RequestId when one was cited, the posted hours, and a fixed "what this d
 
 The draft is a template in the shop's voice, filled only from those fields, and it states only what
 something looked at: Ring's event kinds, Ring or Bedrock courier labels, Bedrock "not a courier"
-labels. "Our front-door camera shows otherwise" appears only when such a label backs it.
+labels. "Our front-door camera shows otherwise" appears only when a real frame or a real Ring alert (from
+the shop's Ring camera, never the demo generator or the webhook replay feeder) backs it; otherwise the
+draft says "Our door log shows otherwise", and "our door log recorded" for counts that include demo or
+replayed events.
 
 Who it goes to:
 

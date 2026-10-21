@@ -261,13 +261,67 @@ def _order_line(o: dict | None) -> str:
     return f"This concerns {ref} from {o['supplier']}{what}, due {o['day']}, {o['window']}."
 
 
-def _supported(p: dict) -> bool:
-    """Whether a camera-confirmed event backs the shop's side: "Our front-door camera shows otherwise"."""
+CAMERA_SOURCES = ("ring", "ring-webhook")  # events a Ring camera recorded and Ring itself reported
+
+
+def camera_event(row: dict | None) -> bool:
+    """Recorded by the shop's Ring camera: from Ring's Event History, a Ring webhook, or a Ring live-view session.
+    Never Shopfront's demo generator (`synthetic`) or its webhook replay feeder (`ring-webhook-replay`)."""
+    src = (row or {}).get("event_source") or ""
+    return src in CAMERA_SOURCES or src.startswith("ring-live")
+
+
+def _camera_backed(row: dict) -> bool:
+    """A real frame or a real Ring alert says who it was: Bedrock read the event's frame, or Ring's own alert
+    (package_delivery or person) came from the shop's Ring camera, not from the demo or a replay."""
+    if not camera_event(row):
+        return False
+    return row.get("labelled_by") in SEEN_SOURCES or (row.get("ring_event") == "motion"
+                                                       and row.get("ring_subtype") == "human")
+
+
+def _backing(p: dict) -> list[dict]:
+    """The door events the shop's side rests on: the cited visit for a courier or a not-a-courier, else the
+    window's events that something looked at (a frame or Ring's alert), the ones the finding counts."""
     f = p["finding"]
     if f["outcome"] in (rc.OPEN_COURIER_CAME, rc.SOMEONE_NOT_COURIER):
-        return True
-    a = f.get("activity") or {}
-    return f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY) and bool(a.get("seen") or a.get("people"))
+        return [f["visit"]] if f.get("visit") else []
+    if f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY):
+        return [t for t in p.get("timeline") or [] if t.get("confirmed") or
+                (t.get("ring_event") == "motion" and t.get("ring_subtype") == "human")]
+    return []
+
+
+CAMERA_SHOWS = " Our front-door camera shows otherwise."
+DOOR_LOG_SHOWS = " Our door log shows otherwise."
+
+
+def _otherwise(p: dict) -> str:
+    """"Our front-door camera shows otherwise" only when a real frame or a real Ring alert backs the shop's side;
+    "Our door log shows otherwise" when the door log disagrees with the scan but nothing from the camera backs it
+    (demo or replayed events, or only motion counts); nothing when the door log doesn't disagree."""
+    f = p["finding"]
+    if f["outcome"] not in OPEN_FINDINGS and f["outcome"] != rc.SOMEONE_NOT_COURIER:
+        return ""
+    frame = p.get("frame")
+    if any(_camera_backed(r) for r in _backing(p)) or (frame and camera_event(frame)):
+        return CAMERA_SHOWS
+    return DOOR_LOG_SHOWS
+
+
+def _recorder(rows: list[dict]) -> str:
+    """"our doorbell camera" when every event the sentence counts came from the shop's Ring camera, else "our
+    door log": a demo or replayed event was never recorded by a camera."""
+    return "our doorbell camera" if rows and all(camera_event(r) for r in rows) else "our door log"
+
+
+def _day_recorder(p: dict) -> str:
+    """_recorder() for a sentence about the whole day's door ("recorded nothing ...")."""
+    return _recorder([{"event_source": s} for s in p.get("event_sources") or []])
+
+
+def _cap(s: str) -> str:
+    return s[:1].upper() + s[1:]
 
 
 def _window(a: dict) -> str:
@@ -284,8 +338,8 @@ def _facts(p: dict) -> str:
         kinds = _kinds_text(a)
         conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
                               f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
-        line = f"Our posted hours that day were {p['posted_hours']}, and our doorbell camera recorded {kinds} " \
-               f"{_window(a)}{conf}."
+        line = f"Our posted hours that day were {p['posted_hours']}, and {_recorder(p['timeline'])} recorded " \
+               f"{kinds} {_window(a)}{conf}."
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
@@ -296,9 +350,9 @@ def _facts(p: dict) -> str:
         return line + (f" {'The visit' if a['near'] == 1 else 'Every visit'} it recorded within {tol} minutes of "
                        f"the scan was not a courier, judged from the camera frame.")
     if f["outcome"] == rc.NOTHING_RECORDED:
-        return f"Our doorbell camera recorded nothing at our door within {tol} minutes of that time."
+        return f"{_cap(_day_recorder(p))} recorded nothing at our door within {tol} minutes of that time."
     if f["outcome"] == rc.SOMEONE_NOT_COURIER:
-        return f"The visit our doorbell camera recorded nearest that time, at {v['time']}, was not a courier, " \
+        return f"The visit {_recorder([v])} recorded nearest that time, at {v['time']}, was not a courier, " \
                f"judged from the camera frame."
     return f["text"]
 
@@ -374,7 +428,7 @@ def _late_note(p: dict, sign: str) -> dict:
 
 def _late_seen(p: dict) -> str:
     v, o = p["finding"]["visit"], p["order"]
-    seen = (f"Our doorbell camera then recorded the courier at our door at {v['time']} "
+    seen = (f"{_cap(_recorder([v]))} then recorded the courier at our door at {v['time']} "
             f"({provenance.said_by(v)}), {v['minutes_after']} minutes after that scan.")
     if o["also_fits"]:
         seen += f" ({provenance.not_whose(v)[:1].upper()}{provenance.not_whose(v)[1:]}: it could also have been " \
@@ -416,7 +470,7 @@ def _scan_subject(p: dict) -> str:
 def _scan_dispute(p: dict, sign: str) -> dict:
     """To the supplier: the shop's order, so a receiving issue the supplier can take up with its carrier."""
     c, o = p["claim"], p["order"]
-    otherwise = " Our front-door camera shows otherwise." if _supported(p) else ""
+    otherwise = _otherwise(p)
     who, ask = c["carrier"] or "Your carrier", c["carrier"] or "your carrier"
     what = "scanned it \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else "recorded a delivery attempt"
     track = f" (tracking {c['tracking']})" if c["tracking"] else ""
@@ -432,7 +486,7 @@ def _scan_dispute(p: dict, sign: str) -> dict:
 def _scan_to_carrier(p: dict, sign: str) -> dict:
     """To the carrier, about its own scan, by the name the owner typed."""
     c, ref = p["claim"], _ref(p)
-    otherwise = " Our front-door camera shows otherwise." if _supported(p) else ""
+    otherwise = _otherwise(p)
     what = "marked our delivery \"business closed\"" if c["kind"] == rc.BUSINESS_CLOSED else \
         "recorded a delivery attempt"
     parts = [_greeting(c), f"Your tracking{f' for {ref}' if ref else ''} {what} at {c['time'][-5:]} on {p['day']}."
@@ -493,7 +547,7 @@ def _order_draft(p: dict, visits: list[ClassifiedVisit] | None) -> tuple[dict | 
         rec = o.get("received")
         if rec and rec["status"] in ("short", "damaged"):
             v = o.get("courier_visit")
-            seen = f"Our doorbell saw the courier at {v['time']}." if v else ""
+            seen = f"{_cap(_recorder([v]))} shows the courier at {v['time']}." if v else ""
             body = "\n\n".join(x for x in [
                 f"Hello {o['supplier']},",
                 (_order_line(o) + " " + seen).strip(),
@@ -517,8 +571,9 @@ def _order_draft(p: dict, visits: list[ClassifiedVisit] | None) -> tuple[dict | 
                               f"any of them could have been the courier. Check the timeline before asking the "
                               f"supplier.")
             looked = [v for v in (visits or []) if _in_order_window(v, o)]
-            seen_line = (f"Our doorbell camera recorded nothing at our door {span}, the delivery window." if not looked
-                         else f"Every one of the {len(looked)} visits our doorbell camera recorded {span} was "
+            rec = _day_recorder(p)
+            seen_line = (f"{_cap(rec)} recorded nothing at our door {span}, the delivery window." if not looked
+                         else f"Every one of the {len(looked)} visits {rec} recorded {span} was "
                               f"judged from the camera frame as not a courier.")
             body = "\n\n".join([
                 f"Hello {o['supplier']},",
