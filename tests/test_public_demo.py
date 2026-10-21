@@ -141,7 +141,7 @@ def test_banner_links_open_the_check_and_the_pack(client, demo):
 
 def test_ask_shows_its_labelled_example_and_no_question_box(client, demo):
     page = client.get(demo.links["desk"]).text
-    assert "Example answer, recorded from the test fakes, not live" in page
+    assert '<span class="badge b-demo">recorded, not live</span>' in page and "<code>deliveries(" in page
     assert 'id="ask"' not in page
     assert 'action="/scan/extract"' not in page  # the screenshot reader (Bedrock) isn't offered either
 

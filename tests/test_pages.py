@@ -238,9 +238,15 @@ def test_footer_says_what_labelled_the_day(c):
     assert "Bedrock" not in footer.split("<details")[0] and "by time-of-day rules" in footer
 
 
-def test_ask_unavailable_is_one_plain_sentence(c):
+def test_ask_unavailable_and_not_demo_is_no_box_at_all(c, monkeypatch):
+    """Round 4: an "Ask needs an AWS sign-in" box that can only fail is noise. On demo data the desk shows a
+    recorded answer instead (tests/test_ask_example.py); on a real doorbell without Bedrock, nothing."""
+    main.book.add(WEDNESDAY, "Bay Mills")
+    real = main._chrome
+    monkeypatch.setattr(main, "_chrome", lambda request: {**real(request), "ring_mode": "ring"})
     page = c.get(f"/?date={WEDNESDAY}").text
-    assert "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine." in page
+    assert 'aria-labelledby="askh"' not in page and "Ask needs" not in page and "ask-example" not in \
+        page.split("</style>")[-1]
 
 
 def test_dashboard_degrades_when_the_ring_token_expires(c, tmp_path, monkeypatch):
@@ -455,7 +461,7 @@ chrome = main._chrome
 
 def test_fresh_install_shows_no_ask_example_about_orders_it_doesnt_have(c):
     page = c.get(f"/?date={WEDNESDAY}").text  # no orders yet
-    assert "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine." in page
+    assert 'aria-labelledby="askh"' not in page
     assert "PO-1041" not in page and "ask-example" not in page.split("</style>")[-1]
     main.book.add(WEDNESDAY, "Bay Mills")
     assert 'class="ask-example"' in c.get(f"/?date={WEDNESDAY}").text

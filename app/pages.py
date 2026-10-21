@@ -190,6 +190,10 @@ ASK_EXAMPLE = {
               "Hillside Mill's order PO-1041. Ring has no door-answered signal, so this doesn't show the sacks "
               "were handed over.",
     "tools": "deliveries(yesterday)",
+    # the tool calls behind the answer, each with what the tool returned that the answer rests on
+    "trace": [{"call": 'deliveries(day="yesterday")',
+               "returned": "Hillside Mill, order PO-1041, due 10:00–11:00: courier at 10:12, labelled by Ring's "
+                           "package_delivery alert (labelled_by: ring)"}],
 }
 
 

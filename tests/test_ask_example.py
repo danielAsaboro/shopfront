@@ -66,9 +66,11 @@ def test_no_question_box_when_bedrock_is_unreachable(c, monkeypatch):
     main.book.add(date(2026, 10, 7), "Bay Mills")  # the example is about orders; a fresh install has none
     page = c.get("/?date=2026-10-07").text
     assert 'id="ask"' not in page and 'name="q"' not in page
-    assert "Ask needs an AWS sign-in with Bedrock access" in page
-    assert "Example answer, recorded from the test fakes, not live" in page
+    # demo data: the recorded answer, open, with its tool call, labelled as recorded (round 4)
+    assert "Live answers need an AWS sign-in with Bedrock access" in page
+    assert '<span class="badge b-demo">recorded, not live</span>' in page
     assert pages.ASK_EXAMPLE["answer"].replace("'", "&#39;") in page and "BEDROCK_UNREACHABLE" in page
+    assert '<code>deliveries(day=&#34;yesterday&#34;)</code> returned' in page
 
 
 def test_question_box_when_bedrock_answers(c, monkeypatch):
@@ -111,3 +113,10 @@ def test_the_example_is_what_the_fake_agent_answers_from_the_tools(c, monkeypatc
     d = c.post("/api/ask", json={"question": pages.ASK_EXAMPLE["question"]}).json()
     assert d["answer"] == pages.ASK_EXAMPLE["answer"]
     assert pages.ASK_EXAMPLE["tools"] == "deliveries(" + d["tools"][0]["args"]["day"] + ")"
+    # the trace shown on the desk is that call and what the tool returned
+    [t] = pages.ASK_EXAMPLE["trace"]
+    assert t["call"] == f'deliveries(day="{d["tools"][0]["args"]["day"]}")'
+    x = next(r for r in main._agent_tools(date(2026, 10, 8)).deliveries("yesterday")["expected"] if r["visit"])
+    assert t["returned"] == (f"{x['supplier']}, order {x['order_ref']}, due {x['window_start']}–{x['window_end']}: "
+                             f"courier at {x['visit']['time']}, labelled by Ring's package_delivery alert "
+                             f"(labelled_by: {x['visit']['labelled_by']})")

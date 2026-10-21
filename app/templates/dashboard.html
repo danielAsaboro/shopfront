@@ -202,32 +202,30 @@
   </section>
   {% endif %}
 
+  {# Ask: the live box when Bedrock answers from here; on demo data, a recorded answer with its tool calls,
+     labelled as recorded; otherwise nothing (a box that can only fail helps nobody) #}
+  {% if can_ask %}
   <section class="block ask" aria-labelledby="askh">
     <h2 id="askh">Ask about the door</h2>
-    {% if can_ask %}
     <form id="ask" class="row-ask">
       <label class="sr" for="q">Your question about the door</label>
       <input name="q" id="q" placeholder="Did the flour delivery come yesterday?" maxlength="500" autocomplete="off" required>
       <button type="submit">Ask</button>
     </form>
     <div id="answer" aria-live="polite"></div>
-    {% else %}
-    {% if first_run %}
-    <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine. With it, and your orders in, you can ask things like "Did the flour come yesterday?"</p>
-    {% else %}
-    <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine.</p>
-    <details class="tech"><summary>This is the kind of answer it gives</summary>
-    <figure class="ask-example" aria-label="Example answer">
-      <figcaption class="eyebrow">Example answer, recorded from the test fakes, not live</figcaption>
+  </section>
+  {% elif ring_mode == "synthetic" and not first_run %}
+  <section class="block ask" aria-labelledby="askh">
+    <h2 id="askh">Ask about the door</h2> <span class="badge b-demo">recorded, not live</span>
+    <figure class="ask-example" aria-label="A recorded answer">
       <p class="q">“{{ ask_example.question }}”</p>
       <p class="a">{{ ask_example.answer }}</p>
-      <p class="why" style="margin:0">Looked at {{ ask_example.tools }}</p>
+      <figcaption class="why">How it answered: {% for t in ask_example.trace %}<code>{{ t.call }}</code> returned {{ t.returned }}{{ '; ' if not loop.last }}{% endfor %}.</figcaption>
     </figure>
-    </details>
-    {% endif %}
+    <p class="why" style="margin:8px 0 0">Recorded from Shopfront's agent over the demo's door data with a stand-in for the model, not answered live. Live answers need an AWS sign-in with Bedrock access.</p>
     <details class="tech"><summary>Details</summary><p class="why" style="margin:0">Answers come from a Strands agent on Amazon Bedrock, using the same door data as this page. Sign in to AWS with Bedrock model access (<code>aws login</code>) and restart Shopfront to turn it on.{% if ask_reason %} State: {{ ask_reason }}.{% endif %}</p></details>
-    {% endif %}
   </section>
+  {% endif %}
 
   {% if not ring_down %}
   <details class="block">
