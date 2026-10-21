@@ -511,7 +511,7 @@ def main(argv: list[str] | None = None) -> int:
         say(f"  Not complete: {record['error']['status']}.")
         return 1
     if not args.dry_run:
-        say("  Commit that JSON file (never the frame in evidence/raw/), and add its IDs to the README proof table.")
+        say("  Commit that JSON file (never the frame in evidence/raw/), and add its IDs to the proof table in docs/status.md.")
     return 0
 
 
