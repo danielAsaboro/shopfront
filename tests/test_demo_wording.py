@@ -6,7 +6,9 @@ block and the draft its one line (plus the [DEMO] subject tag). The zip's README
 
 from __future__ import annotations
 
+import html
 import io
+import json
 import re
 import zipfile
 from dataclasses import replace
@@ -103,3 +105,30 @@ def test_the_pack_never_credits_ring_for_the_days_demo_or_replayed_alerts(demo_c
     page = client.get("/dispute", params={**q, "at": demo.SCAN_AT, "claim": "business_closed"}).text
     door = page.split("<dt>Door that day</dt>")[1].split("</dd>")[0]
     assert "Ring frame or Ring" not in door and "the door log says which" in door
+
+
+@pytest.mark.parametrize("scan", [demo.SCAN_AT, demo.PACKAGE_AT])
+def test_the_pack_text_and_json_say_what_the_page_says_about_demo_and_replayed_rows(demo_client, scan):
+    """Round 7: pack.txt's door log printed "by ring ... Ring Smart Alert: human" for the demo's made-up person
+    alerts (and the replayed package alert), where the page said "Demo person alert, no camera". Every copy of
+    the pack (page, pack.txt, README, pack.json) now takes its words from the same provenance labels."""
+    client, q = demo_client
+    params = {**q, "at": scan, "claim": "business_closed"}
+    z = zipfile.ZipFile(io.BytesIO(client.get("/dispute.zip", params=params).content))
+    text, readme = z.read("pack.txt").decode(), z.read("README.txt").decode()
+    p = json.loads(z.read("pack.json"))
+    rows = [t for t in p["timeline"] if t["event_source"] in ("synthetic", "ring-webhook-replay")]
+    assert rows and any(t["type"] == "person" for t in p["timeline"])
+    if scan == demo.PACKAGE_AT:
+        assert any(t["event_source"] == "ring-webhook-replay" for t in rows)
+    for copy in (text, readme):
+        assert "Ring Smart Alert" not in copy and "by ring" not in copy.lower()
+    log = text.split("Door log")[1].split("What this does not show")[0]
+    page = client.get("/dispute", params=params).text
+    for t in rows:
+        assert "Ring Smart Alert" not in t["reason"] and t["reason"] == t["how"]
+        assert t["provenance"] in ("synthetic", "replay")
+        assert f"{t['time']}  {t['ring_event']:<9} {t['label']:<24} {t['how']}" in log  # the page's own words
+        assert f">{t['label']}</td><td class=\"why\">{html.escape(t['how'])}</td>" in page
+    persons = [t for t in rows if t["type"] == "person" and t["event_source"] == "synthetic"]
+    assert all(t["how"] == "Demo person alert, no camera" for t in persons)

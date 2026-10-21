@@ -28,7 +28,7 @@ import json
 import zipfile
 from datetime import UTC, date, datetime, tzinfo
 
-from app import provenance, wording
+from app import pages, provenance, wording
 from app import reconcile as rc
 from app.deliveries import STATUS_TEXT, Expected, FrameStore
 from app.live import frame_provenance
@@ -122,6 +122,35 @@ def _timeline(visits: list[ClassifiedVisit], centre: datetime | None, frames: Fr
              "ring_subtype": v.event.ring_subtype, "event_id": v.event.id, "event_source": v.event.source,
              "type": v.visit_type.value, "labelled_by": v.source, "confirmed": rc.confirmed(v), "reason": v.reason,
              "bedrock_request_id": v.request_id, "frame_url": frames.url(v.event.id)} for v in rows]
+
+
+def _for_readers(row: dict | None) -> dict | None:
+    """A door event row as a reader of the pack sees it, from the same provenance wording the pack page uses
+    (app/pages.py log_how, app/provenance.py): `label` ("person", "doorbell press (guess)"), `how` and `reason`
+    ("Demo person alert, no camera"), and `provenance`, the kind the label rests on ("synthetic"). The classifier's
+    raw reason ("Ring Smart Alert: human") never reaches a reader for an event Ring didn't send; `labelled_by`
+    stays as data, the stage that labelled it, read together with `provenance`."""
+    if not row or "labelled_by" not in row:
+        return row
+    how = pages.log_how(row)
+    label = {"label": pages.visit_label(row["type"], row.get("confirmed", True), row.get("event_source"))} \
+        if row.get("type") else {}
+    return {**row, **label, "how": how, "reason": how, "provenance": provenance.of(row)}
+
+
+def _reader_rows(pack: dict) -> None:
+    """Every door event row the pack carries, put in the readers' words (_for_readers), once it is built."""
+    pack["timeline"] = [_for_readers(t) for t in pack["timeline"]]
+    f = pack.get("finding")
+    if f:
+        f["visit"] = _for_readers(f.get("visit"))
+        f["unidentified"] = [_for_readers(x) for x in f.get("unidentified") or []]
+        if isinstance(f.get("later"), dict):
+            f["later"] = _for_readers(f["later"])
+    o = pack.get("order")
+    if o:
+        o["courier_visit"] = _for_readers(o.get("courier_visit"))
+        o["possible"] = [_for_readers(x) for x in o.get("possible") or []]
 
 
 def _order(e: Expected | None, receipt: dict | None, tz: tzinfo | None = None) -> dict | None:
@@ -260,6 +289,7 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
         d["body"] = draft_warning(demo, replayed, playground) + "\n\n" + d["body"]
     pack["drafts"] = ds
     pack["draft"] = ds[0] if ds else None  # the one shown first: the supplier's when there is an order
+    _reader_rows(pack)
     return pack
 
 
@@ -625,8 +655,9 @@ def as_text(p: dict) -> str:
     if p["timeline"]:
         lines += ["", f"Door log, {p['timeline_window_min']} minutes either side of the "
                       f"{'scan' if p['claim'] else 'delivery'}:"]
-        lines += [f"  {t['time']}  {t['ring_event']:<9} {t['type']:<12} by {t['labelled_by']:<8} "
-                  f"{t['event_source']:<20} {t['reason']}" for t in p["timeline"]]
+        # the page's own words for each row (_for_readers): never the classifier's raw "Ring Smart Alert"
+        lines += [f"  {t['time']}  {t['ring_event']:<9} {t['label']:<24} {t['how']} · source {t['event_source']}"
+                  for t in p["timeline"]]
     lines += ["", "What this does not show:"] + [f"  - {x}" for x in p["limits"]]
     ds = p.get("drafts") or ([p["draft"]] if p.get("draft") else [])
     for i, d in enumerate(ds):
@@ -643,7 +674,8 @@ def _readme(p: dict, frame_name: str | None) -> str:
     lines = ([p["watermark"], ""] if p.get("watermark") else []) + [
         f"Shopfront dispute pack for {p['shop']}, {p['day']}. Made {p['made_at']}.", "",
         "pack.txt   the pack to read: the claim, the finding, the door log, the limits and the draft",
-        "pack.json  the same facts as data, every event with its source and who labelled it",
+        "pack.json  the same facts as data, every event with its source, what labelled it and what that label "
+        "rests on (provenance: synthetic, replay, ring_alert, bedrock_ring_frame...)",
         f"{MANIFEST}  the SHA-256 of every other file; check them with: sha256sum -c {MANIFEST}",
         f"           (the SHA-256 of {MANIFEST} itself is shown under Details on the pack page)",
     ]

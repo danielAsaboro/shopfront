@@ -90,6 +90,15 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     return f"{known}: {reason}" if reason else known
 
 
+def log_how(t: dict) -> str:
+    """A pack's door log row, "How we know": the same words on the page, in pack.txt and in pack.json, so no copy
+    of the pack credits Ring for a demo or replayed event. A demo event the rules guessed reads as the guess it is
+    (the pack's watermark already says the day is demo data); a demo person alert says it was the demo's."""
+    es = t.get("event_source")
+    return how(t.get("labelled_by"), t.get("reason"), None if es == "synthetic" and t.get("type") != "person" else es,
+               t.get("frame_url"))
+
+
 # One short word for what a label rests on (app/provenance.py), for the badge on a desk row; the full sentence
 # from how() sits behind it
 BADGE = {provenance.RING_ALERT: "ring", provenance.RING_PERSON: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
