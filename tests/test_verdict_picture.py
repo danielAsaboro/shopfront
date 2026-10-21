@@ -58,7 +58,7 @@ def test_busy_door_is_three_short_facts():
     c = rc.check_closed_scan(at(14, 30), BUSY, OPEN, now=NOW)
     assert c["outcome"] == rc.OPEN_DOOR_BUSY
     assert texts(c) == [(True, "Open 08:00–18:00"), (True, "6 door events 14:00–15:00, 4 people (Ring)"),
-                        (False, "Courier not identified")]
+                        (None, "No camera frame of the courier")]
     assert all(len(f["text"].split()) <= 12 for f in pages.verdict_facts(c))
 
 
@@ -81,7 +81,7 @@ def test_demo_people_are_never_called_rings():
      [(True, "Open 08:00–18:00"), (False, "No door events 14:00–15:00"),
       (False, "Nothing shows the camera was watching at 14:30")]),
     ([visit(14, 28, VisitType.DOORBELL_PRESS, ring_event="ding")], (14, 30), rc.UNVERIFIED,
-     [(True, "Open 08:00–18:00"), (True, "1 door event 14:00–15:00"), (False, "Courier not identified")]),
+     [(True, "Open 08:00–18:00"), (True, "1 door event 14:00–15:00"), (None, "No camera frame of the courier")]),
 ])
 def test_closed_scan_facts_per_outcome(vs, scan, outcome, facts):
     c = rc.check_closed_scan(at(*scan), vs, OPEN, now=NOW)
@@ -92,15 +92,35 @@ def test_closed_scan_facts_per_outcome(vs, scan, outcome, facts):
 @pytest.mark.parametrize("vs,outcome,second", [
     ([visit(19, 30, VisitType.DELIVERY, "ring")], rc.COURIER_AT_DOOR, (True, "Courier at the door at 19:30 (Ring alert)")),
     ([visit(19, 28, by="bedrock")], rc.SOMEONE_NOT_COURIER, (False, "Not a courier: customer at 19:28 (Bedrock, Ring frame)")),
-    ([visit(19, 28, VisitType.DOORBELL_PRESS, ring_event="ding")], rc.UNVERIFIED, (False, "Courier not identified")),
+    ([visit(19, 28, VisitType.DOORBELL_PRESS, ring_event="ding")], rc.UNVERIFIED, (None, "No camera frame of the courier")),
     ([visit(9, 0), visit(19, 5)], rc.NOTHING_RECORDED, (False, "No courier seen")),
 ])
 def test_attempt_facts_say_near_who_and_the_camera(vs, outcome, second):
     c = rc.check_attempt(at(19, 32), vs, now=NOW)
     assert c["outcome"] == outcome
     fs = texts(c)
-    assert len(fs) == 3 and fs[1] == second
-    assert fs[2][1].startswith(("Camera", "Nothing shows the camera"))
+    assert len(fs) == 3 and second in fs
+    # the ticks and crosses first (the camera among them); a neutral note comes after them
+    ticks = [f for f in fs if f[0] is not None]
+    assert fs[:len(ticks)] == ticks
+    assert any(t.startswith(("Camera", "Nothing shows the camera")) for _, t in ticks)
+
+
+def test_no_courier_frame_is_a_neutral_note_not_a_cross():
+    """Round 7: "✗ Courier not identified" read as "no proof anyone came". It is a note after the ticks; a frame
+    Shopfront holds that nothing confirmed is said as such, and a Ring- or Bedrock-confirmed courier stays a tick."""
+    held = rc.check_closed_scan(at(14, 30), BUSY, OPEN, frame_url=lambda i: f"/frames/{i}.jpg" if i == "ev-1436" else None,
+                                now=NOW)
+    assert texts(held)[-1] == (None, "No frame confirmed the courier")
+    came = rc.check_closed_scan(at(14, 30), [visit(14, 5), visit(14, 28, VisitType.DELIVERY, "ring")], OPEN, now=NOW)
+    assert texts(came)[-1] == (True, "Courier at the door at 14:28 (Ring alert)")
+
+
+def test_an_empty_door_gets_no_ring_chip():
+    """Round 7: a scan with no door events near it showed a RING chip on the synthetic demo."""
+    assert pages.chip(None) == "" and pages.chip([]) == ""
+    assert pages.chip(None, "synthetic") == "demo" and pages.chip([], "ring") == ""
+    assert pages.chip(["ring"]) == "ring" and pages.chip(["synthetic"], "ring") == "demo"
 
 
 def test_refused_scans_have_no_facts():
@@ -172,7 +192,8 @@ def test_check_page_has_the_line_facts_chip_picture_and_details(client):
     page = client.get(f"/?date={DAY}&attempt=14:30&claim=business_closed&carrier=Northline").text
     check = rc.check_closed_scan(at(14, 30), BUSY, OPEN, now=NOW)
     assert "You were open: your posted hours and a busy door say so." in page
-    assert "6 door events 14:00–15:00, 4 people (Ring)" in page and "Courier not identified" in page
+    assert "6 door events 14:00–15:00, 4 people (Ring)" in page
+    assert '<span class="na">No camera frame of the courier</span>' in page  # a note, no cross
     assert '<span class="badge b-ring"' in page
     svg = re.search(r'<svg class="strip-svg"[^>]*role="img"[^>]*aria-labelledby="chk-t chk-d"', page)
     assert svg, "the strip is an image with a title and a description"
@@ -188,7 +209,7 @@ def test_pack_page_has_the_same_picture_and_prints_its_words(client):
     page = client.get(f"/dispute?date={DAY}&at=14:30&claim=business_closed").text
     assert '<svg class="strip-svg"' in page and 'aria-labelledby="pack-t pack-d"' in page
     assert '<p class="strip-words">Door from 14:00 to 15:00.' in page
-    assert "Courier not identified" in page
+    assert '<li class="na"><span class="mk" aria-hidden="true"></span><span>No camera frame of the courier</span>' in page
     css = (main.Path(main.__file__).parent / "templates" / "_style.html").read_text()
     assert ".strip-words { display: block;" in css.split("@media print")[1]  # the words print under the picture
     p = client.get(f"/api/dispute?date={DAY}&at=14:30&claim=business_closed").json()

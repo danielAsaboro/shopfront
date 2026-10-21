@@ -45,7 +45,7 @@
     <p class="first">{{ p.finding|verdict }}</p>
     {% set pc = p|pack_check %}
     {% set facts = pc|verdict_facts %}
-    {% if facts %}<ul class="facts3" aria-label="What the door shows">{% for f in facts %}<li class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span><span>{{ f.text }}</span></li>{% endfor %}</ul>
+    {% if facts %}<ul class="facts3" aria-label="What the door shows">{% for f in facts %}<li class="{{ 'na' if f.ok is none else 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '' if f.ok is none else '✓' if f.ok else '✗' }}</span><span>{{ f.text }}</span></li>{% endfor %}</ul>
     {{ door_strip(pc|strip(p.posted_hours, p.order, {'url': p.frame.url, 'alt': p.frame.label ~ ' at ' ~ p.frame.time} if p.frame else none), "pack") }}
     <details class="tech"><summary>Details: how Shopfront reached this</summary><p class="why" style="margin:0">{{ p.finding.text }}</p></details>
     {% else %}<p class="reason">{{ p.finding.text }}</p>{% endif %}

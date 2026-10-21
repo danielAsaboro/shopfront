@@ -27,10 +27,10 @@
        The reasoning and what's at stake sit under Details. #}
     {% set ans = attempt|answer %}
     <section class="verdict{{ ' act' if attempt.outcome in disputable }}" role="status" aria-label="The door's answer to the scan">
-      <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}{% if attempt.outcome not in refused %} <span class="badge b-{{ attempt.event_source|chip }}" title="Where this door data came from">{{ attempt.event_source|chip }}</span>{% endif %}</div>
+      <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}{% set ch = attempt.event_source|chip(b.ring_source) %}{% if ch and attempt.outcome not in refused %} <span class="badge b-{{ ch }}" title="Where this door data came from">{{ ch }}</span>{% endif %}</div>
       <p class="first{{ ' warn' if attempt.outcome in disputable }}">{{ ans.sentence }}</p>
       {% set facts = attempt|verdict_facts %}
-      {% if facts %}<p class="facts1" aria-label="What the door shows">{% for f in facts %}<span class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span> {{ f.text }}</span>{% endfor %}</p>
+      {% if facts %}<p class="facts1" aria-label="What the door shows">{% for f in facts %}{% if f.ok is none %}<span class="na">{{ f.text }}</span>{% else %}<span class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span> {{ f.text }}</span>{% endif %}{% endfor %}</p>
       {% set fv = attempt.visit if attempt.visit and attempt.visit.frame_url else none %}
       {{ door_strip(attempt|strip(posted, {'order_ref': scan_order.order_ref, 'window_start': scan_order.window_start, 'window_end': scan_order.window_end} if scan_order else none, {'url': fv.frame_url, 'alt': (fv|frame_label) ~ ' at ' ~ fv.time} if fv else none), "chk") }}
       {% if fv %}{{ delete_frame(fv.frame_url, back) }}{% endif %}

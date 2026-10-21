@@ -74,3 +74,12 @@ def test_the_zip_readme_keeps_the_full_explanation(demo_client):
     assert readme.startswith(dispute.DEMO + " · " + dispute.REPLAYED)
     assert dispute.DEMO_LIMIT in readme and dispute.REPLAY_LIMIT in readme
     assert "synthetic = Shopfront's demo generator. No camera recorded these events." in readme
+
+
+def test_a_scan_with_no_door_events_near_it_never_shows_a_ring_chip(demo_client):
+    """Round 7: a 19:30 scan on the synthetic demo, with no door events around it, showed a RING chip."""
+    client, q = demo_client
+    page = client.get("/", params={**q, "attempt": "19:30", "claim": "business_closed"}).text
+    verdict = re.search(r'<section class="verdict.*?</section>', page, re.S).group(0)
+    assert "b-ring" not in verdict and ">ring<" not in verdict
+    assert '<span class="badge b-demo"' in verdict  # the day came from the demo generator
