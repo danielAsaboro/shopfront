@@ -78,7 +78,11 @@ courier labelled by Ring's `package_delivery` alert counts as seen, like one Bed
 
 **Business closed** (the scan behind the Texas boutique's missed Black Friday stock):
 
-First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse the scan):
+First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse the scan). Two windows, each
+named where it appears: "in the 30 minutes either side of the scan (14:00–15:00)" is what counts as the shop
+operating, and the pack's door log covers the same 30 minutes; "within 10 minutes of the scan" is close enough to
+be the courier. The "doesn't prove" hedge is one line in the pack's "What this does not show", not repeated in
+the finding or the draft:
 
 | Outcome | When | Claim it makes |
 |---|---|---|

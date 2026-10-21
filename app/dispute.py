@@ -26,7 +26,7 @@ import hashlib
 import io
 import json
 import zipfile
-from datetime import UTC, date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, tzinfo
 
 from app import provenance, wording
 from app import reconcile as rc
@@ -34,14 +34,14 @@ from app.deliveries import STATUS_TEXT, Expected, FrameStore
 from app.live import frame_provenance
 from app.models import SEEN_SOURCES, ClassifiedVisit
 
-WINDOW = timedelta(minutes=30)  # timeline shown either side of the time in question
+WINDOW = rc.ACTIVITY  # the door log covers the same 30 minutes either side as the finding counts
 
-LIMITS = [
-    "Ring has no \"door answered\" signal: a courier at the door is not proof a parcel was handed over.",
-    "Motion detection can miss people, so \"nothing recorded\" supports an account but doesn't prove it.",
-    ("Labels \"by rules\" are guesses from the time of day and the kind of event, not from a frame. The "
-     "draft never states them as facts."),
+LIMITS = [  # the one hedge; the finding and the draft don't repeat it
+    ("Ring has no \"door answered\" signal and motion detection can miss people: a courier at the door doesn't "
+     "prove a handover, and \"nothing recorded\" supports an account without proving it."),
 ]
+RULES_LIMIT = ("Labels \"by rules\" are guesses from the time of day and the kind of event, not from a frame. The "
+               "draft never states them as facts.")
 REPLAY_LIMIT = ("Some events came from Shopfront's webhook replay feeder (marked ring-webhook-replay), "
                 "not from a Ring notification.")
 DEMO_LIMIT = ("Some events are synthetic: Shopfront's demo generator made them (marked synthetic). No camera "
@@ -227,7 +227,8 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     replayed = any("replay" in s for s in sources + cited_sources)
     marks = [m for m, on in ((DEMO, demo), (REPLAYED, replayed)) if on]
     cov = (check or {}).get("coverage")
-    limits = LIMITS + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else []) + (
+    guessed = any(t["labelled_by"] == "rules" for t in timeline)
+    limits = LIMITS + ([RULES_LIMIT] if guessed else []) + ([DEMO_LIMIT] if demo else []) + ([REPLAY_LIMIT] if replayed else []) + (
         [NO_STATUS_LIMIT] if cov and not cov.get("status_notices") and not cov.get("status_covered") else [])
     pack = {
         "shop": shop, "day": day.isoformat(), "posted_hours": posted_hours,
@@ -269,6 +270,11 @@ def _supported(p: dict) -> bool:
     return f["outcome"] in (rc.OPEN_NO_COURIER, rc.OPEN_DOOR_BUSY) and bool(a.get("seen") or a.get("people"))
 
 
+def _window(a: dict) -> str:
+    """The finding's window, named the same way on the check page, in the pack and in the draft."""
+    return f"in the {int(rc.ACTIVITY.total_seconds() // 60)} minutes either side of the scan ({a['from']}–{a['to']})"
+
+
 def _facts(p: dict) -> str:
     """The finding in the shop's own voice. Same facts as the finding, nothing a rule guessed."""
     f = p["finding"]
@@ -279,7 +285,7 @@ def _facts(p: dict) -> str:
         conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
                               f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
         line = f"Our posted hours that day were {p['posted_hours']}, and our doorbell camera recorded {kinds} " \
-               f"between {a['from']} and {a['to']}{conf}."
+               f"{_window(a)}{conf}."
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
@@ -551,7 +557,8 @@ def as_text(p: dict) -> str:
         lines.append(f"{f['label']}: {f['time']} · event {f['event_id']} · {f['provenance']} · SHA-256 {f['sha256']}"
                      + (f" · Bedrock RequestId {f['bedrock_request_id']}" if f["bedrock_request_id"] else ""))
     if p["timeline"]:
-        lines += ["", f"Door log, {p['timeline_window_min']} min either side:"]
+        lines += ["", f"Door log, {p['timeline_window_min']} minutes either side of the "
+                      f"{'scan' if p['claim'] else 'delivery'}:"]
         lines += [f"  {t['time']}  {t['ring_event']:<9} {t['type']:<12} by {t['labelled_by']:<8} "
                   f"{t['event_source']:<20} {t['reason']}" for t in p["timeline"]]
     lines += ["", "What this does not show:"] + [f"  - {x}" for x in p["limits"]]

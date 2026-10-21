@@ -200,8 +200,11 @@ def test_closed_scan_while_open_and_busy_with_no_courier():
                              "guessed_customers": 2, "staff": 0, "seen": 1, "people": 0, "people_source": [],
                              "near": 1}
     assert "posted hours had you open (08:00–18:00)" in r["text"]
-    assert "4 motion events between 13:35 and 14:35 (1 of them confirmed from the camera frame as a customer)" in r["text"]
-    assert "labelled from the frame as not a courier" in r["text"] and "doesn't prove" in r["text"]
+    assert ("4 motion events in the 30 minutes either side of the scan (13:35–14:35; 1 of them confirmed from the "
+            "camera frame as a customer)") in r["text"]
+    # each window is named where it appears; the hedge lives once, in the pack's "What this does not show"
+    assert "within 10 minutes of the scan" in r["text"] and "between" not in r["text"]
+    assert "labelled from the frame as not a courier" in r["text"] and "doesn't prove" not in r["text"]
 
 
 def test_closed_scan_with_a_courier_seen_by_ring_or_bedrock():
@@ -294,8 +297,8 @@ def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_fa
     assert d["to"] == "Bay Mills" and d["subject"] == "Business closed scan, 2026-10-07 14:05, SP999"
     assert ("Swift Parcel scanned it \"business closed\" at 14:05 on 2026-10-07 (tracking SP999). Our front-door "
             "camera shows otherwise.") in d["body"]
-    assert ("Our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 motion events between "
-            "13:35 and 14:35, 1 of them confirmed from the camera frame as a customer. The visit it recorded within "
+    assert ("Our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 motion events in the 30 "
+            "minutes either side of the scan (13:35–14:35), 1 of them confirmed from the camera frame as a customer. The visit it recorded within "
             "10 minutes of the scan was not a courier, judged from the camera frame.") in d["body"]
     assert "Your posted hours" not in d["body"]  # written by the shop, not to the owner
     assert "order PO-1042 from Bay Mills (Flour 25kg x4)" in d["body"]

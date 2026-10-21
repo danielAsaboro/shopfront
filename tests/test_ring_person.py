@@ -137,7 +137,7 @@ def test_closed_scan_cites_ring_people_around_the_scan():
                                                                               ring_event="ding")]
     r = rc.check_closed_scan(at(14, 30), vs, OPEN, now=at(20, 0))
     assert r["activity"]["people"] == 3 and r["activity"]["people_source"] == ["ring"]
-    assert "(Ring classified 3 of these 5 door events as people)" in r["text"]
+    assert "(14:00–15:00; Ring classified 3 of these 5 door events as people)" in r["text"]
     assert r["outcome"] == rc.OPEN_NO_COURIER  # nothing within 10 minutes of 14:30
 
 
@@ -155,7 +155,7 @@ def test_without_person_alerts_the_finding_is_motion_counts():
     vs = [visit(14, 0), visit(14, 10), visit(14, 50)]
     r = rc.check_closed_scan(at(14, 30), vs, OPEN, now=at(20, 0))
     assert r["activity"]["people"] == 0 and "classified" not in r["text"]
-    assert "recorded 3 motion events between 14:00 and 15:00" in r["text"]
+    assert "recorded 3 motion events in the 30 minutes either side of the scan (14:00–15:00)" in r["text"]
 
 
 def test_draft_states_rings_people_and_backs_otherwise(tmp_path):

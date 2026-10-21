@@ -151,7 +151,7 @@ def test_busy_door_with_a_press_at_the_scan_is_open_and_names_the_press(tmp_path
     assert [d["key"] for d in p["drafts"]] == ["supplier", "carrier"]
     for d in p["drafts"]:
         body = d["body"].lower()
-        assert "4 motion events and 1 doorbell press between 14:00 and 15:00" in body
+        assert "4 motion events and 1 doorbell press in the 30 minutes either side of the scan (14:00–15:00)" in body
         assert "we were open" in body
         assert "14:36" not in body and "might have been" not in body and "possible courier" not in body
         assert "nobody" not in body and "no courier" not in body and "nothing at our door" not in body
@@ -162,7 +162,7 @@ def test_carrier_facts_name_kinds_and_only_confirmed_customers(tmp_path):
     vs = [visit(12, m) for m in (13, 17, 20)] + [visit(12, 25, "customer", "bedrock"), visit(12, 50, "customer", "bedrock")]
     check = rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW)
     body = pack(vs, check, tmp=tmp_path)["draft"]["body"]
-    assert "5 motion events between 12:10 and 13:10, 2 of them confirmed from the camera frame as customers" in body
+    assert "5 motion events in the 30 minutes either side of the scan (12:10–13:10), 2 of them confirmed from the camera frame as customers" in body
     assert "Our front-door camera shows otherwise." in body  # Bedrock-confirmed visits back it
 
 
@@ -346,3 +346,34 @@ def test_zip_made_time_only_from_the_last_day(monkeypatch):
         p = json.loads(zipfile.ZipFile(io.BytesIO(c.get("/dispute.zip", params={**q, "made": made}).content))
                        .read("pack.json"))
         assert p["made_at"] != made and not p["made_at"].startswith(("2020", "2999"))
+
+
+# ---- one window language, one hedge (round 3 audit) -------------------------------------------------
+
+def test_every_window_is_named_where_it_appears_and_the_hedge_is_one_line(monkeypatch, tmp_path):
+    """The check said "between 14:00 and 15:00", then "within 10 minutes", the pack "30 min either side". Each
+    window now says what it is measured from, and the "doesn't prove" hedge lives once, in "What this does not
+    show", not in the finding, the footer or a second limits line."""
+    vs = confirmed_lunch()
+    check = rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW)
+    assert "30 minutes either side of the scan (12:10–13:10" in check["text"]
+    assert "between" not in check["text"] and "doesn't prove" not in check["text"]
+    p = pack(vs, check, tmp=tmp_path)
+    hedges = [x for x in p["limits"] if "door answered" in x or "can miss" in x]
+    assert len(hedges) == 1 and "door answered" in hedges[0] and "can miss people" in hedges[0]
+    assert "30 minutes either side of the scan (12:10–13:10)" in p["draft"]["body"]
+    assert "Door log, 30 minutes either side of the scan:" in dispute.as_text(p)
+    monkeypatch.setattr(main, "_visits", lambda d: vs)
+    page = TestClient(main.app).get("/dispute", params={"date": DAY.isoformat(), "at": "12:40",
+                                                         "claim": "business_closed"}).text
+    assert "Door log, 30 minutes either side of the scan</h2>" in page
+    assert "events in the 30 minutes either side (12:10–13:10)" in page
+    assert page.count("door answered") == 1 and page.count("can miss people") == 1
+
+
+def test_the_rules_guess_line_shows_only_when_a_rules_label_is_in_the_log(tmp_path):
+    guessed = pack(pitch_day(), rc.check_closed_scan(at(12, 40), pitch_day(), OPEN, now=NOW), tmp=tmp_path)
+    assert dispute.RULES_LIMIT in guessed["limits"]
+    seen = [visit(12, 20, "customer", "bedrock", rid="r1"), visit(12, 50, "customer", "bedrock", rid="r2")]
+    clean = pack(seen, rc.check_closed_scan(at(12, 40), seen, OPEN, now=NOW), tmp=tmp_path)
+    assert dispute.RULES_LIMIT not in clean["limits"]

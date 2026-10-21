@@ -67,17 +67,16 @@ TEXT = {
                    "door later that day, at {time}, {gap} it ({by}). If that was this delivery, it arrived late. "
                    "A courier label doesn't say whose parcel it was, so Shopfront can't tell whose delivery it was.",
     OPEN_NO_COURIER: "The carrier scanned \"business closed\" at {attempt}. Your posted hours had you open ({hours}), "
-                     "the doorbell recorded {activity} between {lo} and {hi}{cust}, and {near}. Motion detection "
-                     "can miss people, so this supports, but doesn't prove, that nobody came to the door.",
+                     "the doorbell recorded {activity} {span}, and {near}.",
     OPEN_COURIER_CAME: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open "
                        "({hours}) and a courier was at the door at {time}, {gap} the scan ({by}). The doorbell "
-                       "recorded {activity} between {lo} and {hi}{cust}.",
+                       "recorded {activity} {span}.",
     OPEN_DOOR_BUSY: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open ({hours}) "
-                    "and the doorbell recorded {activity} between {lo} and {hi}{cust}: the shop was open and its "
-                    "door in use. Within {tol} minutes of the scan it recorded {unidentified} (no camera frame "
+                    "and the doorbell recorded {activity} {span}: the shop was open and its door in use. Within "
+                    "{tol} minutes of the scan, close enough to be the courier, it recorded {unidentified} (no camera frame "
                     "confirms who), so Shopfront can't say whether a courier came to the door.{later}",
     OPEN_BY_HOURS_ONLY: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
-                        "{attempt}, but the doorbell recorded nothing between {lo} and {hi}. Shopfront can show your "
+                        "{attempt}, but the doorbell recorded nothing {span}. Shopfront can show your "
                         "posted hours, not that someone was there.",
     POSTED_CLOSED: "Your posted hours have the shop closed at {attempt}, so the door can't contradict the carrier's "
                    "\"business closed\" scan.",
@@ -95,14 +94,14 @@ CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wor
                    "scan that doesn't match your posted hours. A courier label doesn't say whose parcel it was, so "
                    "Shopfront can't tell whose delivery it was.",
     UNVERIFIED: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at {attempt}, "
-                "but the only door events between {lo} and {hi} were within {tol} minutes of the scan ({what} at "
+                "but the only door events {span} were within {tol} minutes of it ({what} at "
                 "{time}, {gap} it), and nothing that looked at the door said who it was. Shopfront can't say "
                 "whether a courier came, or show anyone else using the door.",
     NO_DOOR_DATA: "Shopfront has no door events at all for that day, so it can't check this scan.",
     CAMERA_OFFLINE: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
                     "{attempt}. {coverage} Shopfront can't say whether a courier came.",
     NO_COVERAGE: "Can't tell: your posted hours had you open ({hours}) when the carrier scanned \"business closed\" "
-                 "at {attempt}, but the door recorded nothing between {lo} and {hi}. {coverage}",
+                 "at {attempt}, but the door recorded nothing {span}. {coverage}",
 }
 
 def _by(v: ClassifiedVisit) -> str:
@@ -231,14 +230,21 @@ def unidentified_text(vs: list[ClassifiedVisit], scan: datetime) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+def _span(lo: datetime, hi: datetime, said: str = "") -> str:
+    """"in the 30 minutes either side of the scan (14:00–15:00; Ring classified ...)": the activity window, always
+    named as what it is, so it isn't confused with the 10 minutes that count as near the scan."""
+    mins = int(ACTIVITY.total_seconds() // 60)
+    return f"in the {mins} minutes either side of the scan ({_hhmm(lo)}–{_hhmm(hi)}{'; ' + said if said else ''})"
+
+
 def _cust(around: list[ClassifiedVisit], customers: int) -> str:
-    """" (Ring classified 4 of these 6 door events as people; 1 of them confirmed from the camera frame as a customer)":
+    """"Ring classified 4 of these 6 door events as people; 1 of them confirmed from the camera frame as a customer":
     what something that looked at the door said about who used it around the scan. Nothing when nothing did:
     the counts of motion and presses then speak for themselves, with no guess about who."""
     parts = [people_text(around)] + ([f"{customers} of them confirmed from the camera frame as "
                                       f"{'a customer' if customers == 1 else 'customers'}"] if customers else [])
     parts = [x for x in parts if x]
-    return f" ({'; '.join(parts)})" if parts else ""
+    return "; ".join(parts)
 
 
 def _base(claim: str, attempt: datetime, tolerance: timedelta) -> dict:
@@ -299,7 +305,7 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
                 "near": len(near)}
     fmt = {"attempt": _hhmm(scan), "hours": base["posted_hours"], "lo": activity["from"],
            "hi": activity["to"], "tol": tol, "activity": _kinds(around),
-           "cust": _cust(around, customers),
+           "span": _span(lo, hi, _cust(around, customers)),
            "near": f"no courier within {tol} minutes of the scan: "
                    + ("nothing was recorded that close" if not near else
                       f"{'the visit' if len(near) == 1 else 'all ' + str(len(near)) + ' visits'} recorded that close "

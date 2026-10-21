@@ -60,7 +60,7 @@
     <dt>At the door</dt><dd>{{ p.order.door_status_text }}{% if p.order.courier_visit %} at {{ p.order.courier_visit.time }}{% endif %}{% if p.order.unidentified %} ({{ p.order.unidentified }}, not identified){% endif %}{% if p.order.received %} · staff marked {{ p.order.received.status }} at {{ p.order.received.time }}{% if p.order.received.note %}: {{ p.order.received.note }}{% endif %}{% endif %}</dd>{% endif %}
     {% if p.claim and p.draft and p.order and p.order.amount %}<dt>At stake</dt><dd>{{ p.order.amount }} of stock{% set dflt = default_cost('$' if p.order.amount.startswith('$') else p.order.amount[:1]) %}{% if dflt is not none %}, and about {{ p.order.amount[:1] }}{{ '%.2f'|format(dflt) }} for a redelivery (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}</dd>{% endif %}
     <dt>Posted hours</dt><dd>{{ p.posted_hours }}</dd>
-    {% if p.finding and p.finding.activity %}{% set a = p.finding.activity %}<dt>Door around the scan</dt><dd>{{ a.events }} events {{ a.from }}–{{ a.to }}{% if a.people %} · {{ a.people }} classified as people by {{ "Ring's person alert" if a.people_source|reject('in', ['ring', 'ring-webhook'])|list|length == 0 else "the demo's stand-in for Ring's person alert" }}{% else %} · no person alerts from Ring, so these are motion counts{% endif %}{% if a.customers %} · {{ a.customers }} confirmed customers{% endif %}</dd>{% endif %}
+    {% if p.finding and p.finding.activity %}{% set a = p.finding.activity %}<dt>Door around the scan</dt><dd>{{ a.events }} events in the {{ p.timeline_window_min }} minutes either side ({{ a.from }}–{{ a.to }}){% if a.people %} · {{ a.people }} classified as people by {{ "Ring's person alert" if a.people_source|reject('in', ['ring', 'ring-webhook'])|list|length == 0 else "the demo's stand-in for Ring's person alert" }}{% else %} · no person alerts from Ring, so these are motion counts{% endif %}{% if a.customers %} · {{ a.customers }} confirmed customers{% endif %}</dd>{% endif %}
     {% if p.coverage %}<dt>Camera around the scan</dt><dd>{{ p.coverage.text }}</dd>{% endif %}
     <dt>Door that day</dt><dd>{{ p.door_events_that_day }} events, {{ p.seen_by_vision_that_day }} confirmed from a Ring frame or Ring's own alert</dd>
   </dl>
@@ -84,7 +84,7 @@
 
   {% if p.timeline %}
   <section class="block" aria-labelledby="logh">
-    <h2 id="logh">Door log, {{ p.timeline_window_min }} min either side</h2>
+    <h2 id="logh">Door log, {{ p.timeline_window_min }} minutes either side of the {{ 'scan' if p.claim else 'delivery' }}</h2>
     {% if stills %}
     <div class="stills" role="list" aria-label="Door around {{ 'the scan' if p.claim else 'the courier' }}">
       {% for t in stills %}
@@ -134,7 +134,7 @@
   </section>
 
   <footer class="proof">
-    Made {{ p.made_at|local_stamp }} (shop time) from the door data on this computer. Ring has no "door answered" signal; see what this does not show, above.
+    Made {{ p.made_at|local_stamp }} (shop time) from the door data on this computer.
     <details class="tech no-print"><summary>Details</summary>Door event sources: {{ p.event_sources|join(', ') or 'none' }} · <a href="/api/dispute?{{ query }}">pack JSON</a></details>
     <details class="tech"><summary>Zip fingerprint</summary><p style="margin:4px 0 0">The zip holds manifest.sha256, the SHA-256 of every other file in it; running "sha256sum -c manifest.sha256" in the unzipped folder checks them. The manifest's own SHA-256, for the zip made {{ p.made_at|local_stamp }}:</p><p class="hash" style="margin:2px 0 0" id="manifest">{{ manifest_sha256 }}</p></details>
   </footer>
