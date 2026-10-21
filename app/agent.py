@@ -28,7 +28,63 @@ Answer in two or three short sentences, plain English, times as HH:MM."""
 
 
 class AgentUnavailable(Exception):
-    pass
+    """Ask can't run. `reason` is a named state; `message` is one plain sentence the page can show;
+    str(exc) keeps the technical detail for logs and the Details toggle."""
+
+    def __init__(self, detail: str, reason: str = "AGENT_FAILED", message: str | None = None):
+        super().__init__(detail)
+        self.reason = reason
+        self.message = message or MESSAGES.get(reason, MESSAGES["AGENT_FAILED"])
+
+
+MESSAGES = {
+    "NO_AWS_SIGN_IN": "Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine.",
+    "BEDROCK_UNREACHABLE": "Ask couldn't reach Amazon Bedrock from this machine; check the internet connection "
+                           "and try again.",
+    "NO_MODEL_ACCESS": "This AWS account can't use the Bedrock model Ask needs; turn on model access in the "
+                       "Bedrock console.",
+    "BEDROCK_BUSY": "Amazon Bedrock is busy right now; try again in a minute.",
+    "AGENT_NOT_INSTALLED": "Ask isn't installed on this machine.",
+    "AGENT_FAILED": "Ask couldn't answer that just now; the door data on this page is unaffected.",
+}
+
+_SIGN_IN = {"NoCredentialsError", "PartialCredentialsError", "CredentialRetrievalError", "TokenRetrievalError",
+            "SSOTokenLoadError", "UnauthorizedSSOTokenError", "ExpiredTokenException", "ExpiredToken",
+            "UnrecognizedClientException", "InvalidClientTokenId", "InvalidSignatureException"}
+_UNREACHABLE = {"EndpointConnectionError", "ConnectTimeoutError", "ReadTimeoutError", "ProxyConnectionError",
+                "ConnectionClosedError", "SSLError", "ConnectionError"}
+_NO_ACCESS = {"AccessDeniedException", "ResourceNotFoundException", "ValidationException"}
+_BUSY = {"ThrottlingException", "ServiceQuotaExceededException", "ModelThrottledException",
+         "ServiceUnavailableException", "ModelNotReadyException"}
+
+
+def _chain(exc: BaseException):
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__ or exc.__context__  # type: ignore[assignment]
+
+
+def unavailable(exc: BaseException) -> AgentUnavailable:
+    """Name what went wrong with a Bedrock call, looking through the agent loop's wrapping."""
+    detail = f"{type(exc).__name__}: {exc}"[:300]
+    for e in _chain(exc):
+        names = {type(e).__name__}
+        code, msg = "", str(e)
+        response = getattr(e, "response", None)
+        if isinstance(response, dict):
+            code = str(response.get("Error", {}).get("Code", ""))
+            names.add(code)
+        if names & _SIGN_IN or "security token included in the request is expired" in msg:
+            return AgentUnavailable(detail, "NO_AWS_SIGN_IN")
+        if names & _UNREACHABLE or "request blocked" in msg or "Could not connect to the endpoint" in msg:
+            return AgentUnavailable(detail, "BEDROCK_UNREACHABLE")
+        if names & _BUSY:
+            return AgentUnavailable(detail, "BEDROCK_BUSY")
+        if names & _NO_ACCESS:
+            return AgentUnavailable(detail, "NO_MODEL_ACCESS")
+    return AgentUnavailable(detail, "AGENT_FAILED")
 
 
 @dataclass
@@ -106,7 +162,7 @@ def build_agent(tools: ShopTools, trace: Trace, shop: str, region: str, model_id
         from strands import Agent, tool
         from strands.models import BedrockModel
     except ImportError as exc:  # pragma: no cover - requirements include it
-        raise AgentUnavailable("strands-agents is not installed") from exc
+        raise AgentUnavailable("strands-agents is not installed", "AGENT_NOT_INSTALLED") from exc
 
     def recorded(name: str, fn, **args):
         trace.tools.append({"tool": name, "args": args})
@@ -187,13 +243,13 @@ def ask(question: str, tools: ShopTools, shop: str, region: str, model_id: str,
         raise ValueError("ask a question")
     trace = Trace()
     started = datetime.now()
-    agent = agent_factory(tools, trace, shop, region, model_id)
     try:
+        agent = agent_factory(tools, trace, shop, region, model_id)
         answer = str(agent(question[:500])).strip()
     except AgentUnavailable:
         raise
     except Exception as exc:  # credentials, access to the model, throttling: name it, don't fake an answer
-        raise AgentUnavailable(f"{type(exc).__name__}: {exc}"[:300]) from exc
+        raise unavailable(exc) from exc
     frame = next((ln.split(":", 1)[1].strip() for ln in answer.splitlines() if ln.startswith("Frame:")), None)
     text = "\n".join(ln for ln in answer.splitlines() if not ln.startswith("Frame:")).strip()
     return {"question": question, "answer": text, "frame_url": frame if frame and frame.startswith("/frames/") else None,

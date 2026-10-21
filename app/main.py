@@ -673,8 +673,9 @@ async def api_ask(request: Request):
                                        settings.aws_region, settings.bedrock_model_id, agent_factory=agent_factory)
     except ValueError as exc:
         return JSONResponse({"error": "BAD_QUESTION", "detail": str(exc)}, status_code=400)
-    except shop_agent.AgentUnavailable as exc:
-        return JSONResponse({"error": "AGENT_UNAVAILABLE", "detail": str(exc)}, status_code=503)
+    except shop_agent.AgentUnavailable as exc:  # reason: named state; message: the sentence to show
+        return JSONResponse({"error": "AGENT_UNAVAILABLE", "reason": exc.reason, "message": exc.message,
+                             "detail": str(exc)}, status_code=503)
 
 
 agent_factory = shop_agent.build_agent  # tests swap in a fake
