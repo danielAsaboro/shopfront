@@ -171,6 +171,9 @@ def test_staff_tap_undo_label_and_shop_local_time(c):
 def test_tapping_through_the_page(c):
     ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))
     e = main.book.add(SUNDAY, "Sunday bread")
+    page = c.get(f"/?date={SUNDAY}").text  # Ring's courier matched: the full set of taps
+    form = page.split(f'action="/deliveries/{e.id}/received"')[1].split("</form>")[0]
+    assert all(f'value="{k}"' in form for k in ("ok", "short", "damaged")) and 'name="note"' in form
     r = c.post(f"/deliveries/{e.id}/received", data={"status": "ok"})
     assert r.status_code == 200 and "Staff marked all there at" in r.text and ">Undo</button>" in r.text
     r = c.post(f"/deliveries/{e.id}/received", data={"status": "clear"})
@@ -194,6 +197,10 @@ def test_a_rules_match_is_only_possible_but_staff_can_still_say_what_arrived(c):
     assert "A doorbell press at 11:28 fits the window; no camera frame confirmed a courier." in page
     assert re.search(r'<td class="t muted">11:28</td>', page)  # muted, not the warn colour
     assert f'action="/deliveries/{e.id}/received"' in page  # the staff tap is the owner's own confirmation
+    # round 2: the full All there / Short / Damaged set is for a confirmed courier; a guess gets one quiet link
+    form = page.split(f'action="/deliveries/{e.id}/received"')[1].split("</form>")[0]
+    assert 'value="ok" class="quiet"' in form and ">It arrived</button>" in form
+    assert 'value="short"' not in form and 'value="damaged"' not in form and 'name="note"' not in form
     assert f"order={e.id}" not in page  # no dispute pack from a guess
     assert "0/1" in page  # not counted as seen
 
@@ -216,6 +223,7 @@ def test_claim_row_fields_are_labelled_and_the_button_never_wraps(c):
 
 
 def test_inputs_are_labelled(c):
+    ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))  # the note input needs a courier
     main.book.add(SUNDAY, "Sunday bread")
     page = c.get(f"/?date={SUNDAY}").text
     assert re.search(r'<label class="field">Day<input type="date"', page)

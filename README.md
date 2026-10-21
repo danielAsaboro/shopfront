@@ -172,7 +172,7 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 
 - **Ask Shopfront** (`POST /api/ask`, the box on the dashboard): a [Strands](https://strandsagents.com) agent on Amazon Bedrock with five tools over the same data: door visits, deliveries, week, check_attempt and dispute_pack. It answers from what the tools return and lists every tool call and Bedrock RequestId with the answer. It needs AWS credentials with Bedrock access.
 - **Morning briefing:** yesterday at the door, under the receiving desk. It covers doorbell presses while the shop was closed, when staff were first and last at the door, and foot traffic against the same weekday last week.
-- **Staff tap:** once a courier has been seen for an order, staff can mark it All there, Short or Damaged. A short or damaged order gets its own dispute pack.
+- **Staff tap:** once Ring or Bedrock has seen the courier for an order, staff can mark it All there, Short or Damaged. A short or damaged order gets its own dispute pack. An order with only a possible courier (a doorbell press nothing identified) or none seen has one quiet "It arrived" link instead, for when the delivery came anyway.
 
 ## How it fits together
 

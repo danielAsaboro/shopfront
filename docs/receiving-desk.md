@@ -122,8 +122,9 @@ Tested against botocore's Stubber in `tests/test_scan_extract.py`; **not run aga
 
 ## 4. Staff tap (`/deliveries/{id}/received`)
 
-Optional. Once the door has seen a courier for an order, staff can tap **All there**, **Short** or
-**Damaged** with a note. Nothing is inferred: Shopfront only records what staff tapped and when.
+Optional. Once Ring or Bedrock has seen the courier for an order, staff can tap **All there**,
+**Short** or **Damaged** with a note. A row with only a possible courier, or none seen, has a single
+quiet **It arrived** (recorded as All there) for a delivery the door missed. Nothing is inferred: Shopfront only records what staff tapped and when.
 
 ## 5. Dispute pack (`app/dispute.py`, `/dispute`, `/dispute.zip`, `/api/dispute`)
 
