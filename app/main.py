@@ -391,6 +391,7 @@ def _record(day: date) -> dict:
     kept = checks.all()
     cost, default = _cost()
     return {"record": kept_checks.carrier_record(kept, day, cost, profile.get().currency, dispute.DISPUTE),
+            "perishable_at_risk": kept_checks.perishable_at_risk(kept, day, dispute.DISPUTE),
             "month_money": kept_checks.month_money(kept, day, _month_confirmed(day), cost, profile.get().currency,
                                                    default, dispute.DISPUTE)}
 
@@ -1146,6 +1147,18 @@ async def delivery_received(request: Request, expected_id: str):
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return RedirectResponse(f"/?date={e.day}#dlv", status_code=303)
+
+
+@app.post("/deliveries/{expected_id}/perishable")
+async def delivery_perishable(request: Request, expected_id: str):
+    """The owner marks an order perishable (or not): a missed delivery of it is lost trading, not only a fee."""
+    form = await request.form()
+    try:
+        e = book.set_perishable(expected_id, str(form.get("on", "")) == "1")
+    except KeyError:
+        raise HTTPException(404, "no such delivery")
+    back = form.get("back")
+    return RedirectResponse(_back(back) if back else f"/?date={e.day}#dlv", status_code=303)
 
 
 @app.post("/scan/extract")

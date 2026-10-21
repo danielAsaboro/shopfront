@@ -45,6 +45,9 @@ class Expected:
     origin: str = "manual"  # manual | csv:<format>
     # The optional staff tap once it's been unpacked: {"status": ok|short|damaged, "note", "at"}
     received: dict | None = None
+    # The owner marked it perishable (fresh dairy, bread, flowers): a missed delivery can mean the stock itself is
+    # lost, so the desk shows the order's value at risk next to the redelivery cost
+    perishable: bool = False
 
     def window(self) -> tuple[time, time] | None:
         if self.window_start and self.window_end:
@@ -124,10 +127,21 @@ class DeliveryBook:
                 added += 1
             else:
                 r.id, r.received = current[i].id, current[i].received
+                r.perishable = r.perishable or current[i].perishable  # the owner's mark survives a re-import
                 current[i] = r
                 updated += 1
         self._write(current)
         return {"added": added, "updated": updated}
+
+    def set_perishable(self, expected_id: str, on: bool) -> Expected:
+        with self._lock:
+            rows = self._all()
+            e = next((x for x in rows if x.id == expected_id), None)
+            if e is None:
+                raise KeyError(expected_id)
+            e.perishable = bool(on)
+            self._write(rows)
+            return e
 
     def mark_received(self, expected_id: str, status: str, note: str, at: datetime) -> Expected:
         if status not in RECEIVED:

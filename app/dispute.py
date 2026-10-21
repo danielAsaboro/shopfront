@@ -131,7 +131,7 @@ def _order(e: Expected | None, receipt: dict | None, tz: tzinfo | None = None) -
     if rec and rec.get("at"):
         rec["time"] = _hhmm(rec["at"], tz)
     return {"id": e.id, "supplier": e.supplier, "order_ref": e.order_ref, "carrier": e.carrier,
-            "tracking": e.tracking, "items": e.items, "amount": e.amount, "day": e.day,
+            "tracking": e.tracking, "items": e.items, "amount": e.amount, "perishable": e.perishable, "day": e.day,
             "window": f"{e.window_start}–{e.window_end}" if e.window_start else "any time",
             "window_start": e.window_start, "window_end": e.window_end, "origin": e.origin,
             "received": rec,

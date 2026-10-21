@@ -62,7 +62,8 @@ class CheckBook:
                "outcome": check["outcome"], "posted_hours": check.get("posted_hours") or "",
                "posted_open": check["outcome"] != rc.POSTED_CLOSED if check["claim"] == rc.BUSINESS_CLOSED else None,
                "order_ref": getattr(order, "order_ref", "") or "", "supplier": getattr(order, "supplier", "") or "",
-               "amount": getattr(order, "amount", "") or "", "demo": bool(demo),
+               "amount": getattr(order, "amount", "") or "", "perishable": bool(getattr(order, "perishable", False)),
+               "demo": bool(demo),
                "saved_at": (saved_at or datetime.now(at.tzinfo)).isoformat(timespec="seconds")}
         with self._lock:
             rows = self.all()
@@ -171,7 +172,15 @@ def month_report(checks: list[dict], month: date, cost: float | None, currency: 
             "money": month_money(checks, month, None, cost, currency, default, disputable),
             "checks": len(rows), "demo": sum(1 for c in rows if c["demo"]),
             "orders": sorted({f"{c['order_ref']} ({c['amount']})" if c["amount"] else c["order_ref"]
-                              for c in rows if c["order_ref"]})}
+                              for c in rows if c["order_ref"]}),
+            "perishable": perishable_at_risk(checks, month, disputable)}
+
+
+def perishable_at_risk(checks: list[dict], month: date, disputable: set[str]) -> list[str]:
+    """'PO-1042 ($318.75)' for each perishable order behind a disputed scan this month: lost trading, not only a
+    redelivery fee. The value is the order's own, as written; listed, never added up."""
+    return sorted({f"{c['order_ref'] or c['supplier']} ({c['amount']})" for c in in_month(checks, month)
+                   if c.get("perishable") and c["amount"] and c["outcome"] in disputable})
 
 
 def month_money(checks: list[dict], month: date, confirmed_orders: int | None, cost: float | None,
