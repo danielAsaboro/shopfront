@@ -458,12 +458,12 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         ring_down, token = exc, _ring_override.set(_NoHistory(settings.tz))
         try:
             desk = _desk(day, None, claim)
-            desk.update(record=[], month_money=None)  # the month needs the door history too
+            # Without the door history no missed-delivery count or money is a fact: the month and the week
+            # would count every order Ring didn't push as "no courier seen"
+            desk.update(record=[], month_money=None, perishable_at_risk=[], money=None)
         finally:
             _ring_override.reset(token)
-        r = desk["r"]  # "no courier seen" would be a guess without the history
-        desk["lead"] = [f"{r['seen']} of {r['total']} expected deliveries confirmed by Ring's webhooks. "
-                        "The rest can't be checked until Ring is reconnected."] if r["total"] else []
+        desk["lead"] = _webhook_lead(desk["r"])
     return _page(request, "dashboard.html", {
         **desk, "ring_down": ring_down, "asked_time": attempt or "", "demo_scan": _demo_scan(),
         "kept": checks.find(day.isoformat(), attempt, claim, carrier.strip()[:40], tracking.strip()[:60])
@@ -476,6 +476,19 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         **({"can_ask": True, "ask_reason": None} if (ask := _ask_state()) is None else
            {"can_ask": False, "ask_reason": ask}), "ask_example": pages.ASK_EXAMPLE,
         "can_read_scan": scan_reader.available()})
+
+
+def _webhook_lead(r: dict) -> list[str]:
+    """The desk's one line while Ring's door history is missing: what webhooks confirmed, said exactly. A replayed
+    or synthetic event is never credited to Ring; "no courier seen" would be a guess, so it isn't said."""
+    if not r["total"]:
+        return []
+    by = [x["visit"] for x in r["expected"] if x["status"].startswith("seen") and x.get("visit")]
+    kinds = {provenance.of(v) for v in by}
+    how = "by webhook" + (" (replayed)" if by and kinds <= {provenance.REPLAY} else
+                          " (some replayed)" if provenance.REPLAY in kinds else "")
+    return [f"{r['seen']} of {r['total']} expected deliveries confirmed {how}. "
+            "The rest can't be checked until Ring is reconnected."]
 
 
 def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> dict:

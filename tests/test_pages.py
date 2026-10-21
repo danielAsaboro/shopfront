@@ -260,13 +260,48 @@ def test_dashboard_degrades_when_the_ring_token_expires(c, tmp_path, monkeypatch
     assert "Ring sign-in expired, so this is your orders" in r.text and "(TOKEN_REJECTED" in r.text
     assert 'href="/connect">reconnect Ring' in r.text and r.text.count('class="banner warn-bg"') == 2  # replay + Ring
     assert "PO-1042" in r.text and "13:02" in r.text  # the order and Ring's pushed courier still show
-    assert "1 of 2 expected deliveries confirmed by Ring" in r.text and "No courier seen" not in r.text
+    # round 6: the only confirming event is the feeder's replay, so Ring isn't credited with it
+    assert "1 of 2 expected deliveries confirmed by webhook (replayed)" in r.text and "No courier seen" not in r.text
+    assert "confirmed by Ring" not in r.text
     assert "Not confirmed: door history unavailable" in r.text and "order=" not in r.text  # no pack from a guess
     assert "Checking a scan needs the door history from Ring" in r.text and "Build the dispute pack" not in r.text
     # the other pages carry the notice too, and /setup says what Ring really said
     assert "Ring sign-in expired" in c.get("/live").text
     setup = c.get("/setup").text
     assert "Ring refused the saved sign-in (TOKEN_REJECTED)" in setup and "Connected to Ring" not in setup
+
+
+def test_ring_down_desk_makes_no_missed_delivery_or_money_claim(c, tmp_path, monkeypatch):
+    """Round 6: with a rejected token the desk said "Last 7 days: 2 expected deliveries with no courier seen at
+    the door... about $34.40". Without the door history neither the count nor the money is known."""
+    monkeypatch.setattr(main, "source", dead_ring(tmp_path))
+    day = datetime.now(TZ).date() - timedelta(days=1)
+    for back in range(3):  # orders on earlier days of the week too, none of them confirmed by webhook
+        main.book.add(day - timedelta(days=back), "Bay Mills", "12:00", "15:00", order_ref=f"PO-10{back}",
+                      amount="$120.00")
+    page = c.get(f"/?date={day}").text
+    assert "Ring sign-in expired" in page
+    body = page.split("</style>")[-1]
+    assert "no courier seen" not in body.lower() and "not seen" not in body.lower()
+    assert not re.search(r"about \$\d|\$\d+\.\d\d of redeliver|Last 7 days", body)
+    assert "0 of 1 expected deliveries confirmed by webhook. The rest" in body
+    couriers_closed = body.split('aria-label="The day in three numbers"')[1].split("Couriers while closed")[0]
+    assert couriers_closed.rstrip().endswith("—</span><span class=\"l\">")
+
+
+def test_ring_down_lead_credits_ring_only_for_ring_events(c, tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "source", dead_ring(tmp_path))
+    day = datetime.now(TZ).date() - timedelta(days=1)
+    main.book.add(day, "Bay Mills", "12:00", "15:00", order_ref="PO-1042")
+    main.book.add(day, "Dairy Co", "07:00", "07:30", order_ref="PO-1043")
+    noon = datetime.combine(day, datetime.min.time(), TZ)
+    ring_courier(main.webhook_log, noon + timedelta(hours=13, minutes=2))
+    page = c.get(f"/?date={day}").text
+    assert "1 of 2 expected deliveries confirmed by webhook. The rest" in page and "replayed)" not in page
+    assert "confirmed by Ring" not in page
+    replayed_courier(main.webhook_log, noon + timedelta(hours=7, minutes=10))
+    page = c.get(f"/?date={day}").text
+    assert "2 of 2 expected deliveries confirmed by webhook (some replayed)" in page
 
 
 # ---- setup -------------------------------------------------------------------------------------
