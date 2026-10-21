@@ -220,6 +220,7 @@ class RingApiClient(RingClient):
         self._history: dict[tuple, tuple[float, list[DoorEvent]]] = {}  # (day, event_types) -> (fetched, events)
         self._no_frame: dict[tuple, RingError] = {}  # (device, ms or "*") -> the error Ring gave for that frame
         self._refused_filters: set[str] = set()  # composite subtypes Ring answered 400 to
+        self.filter_notes: dict[tuple[str, str], str] = {}  # (device, subtype) -> why its filter isn't trusted
         self._lock = threading.Lock()
         self.sleep = _time.sleep  # tests swap these three for a fake clock
         self.clock = _time.time
@@ -343,28 +344,63 @@ class RingApiClient(RingClient):
         Smart Alerts enabled); the Event History table lists human, vehicle, animal and other_motion.
         If Ring refuses a composite filter (400, "malformed query parameters"), it isn't asked again and
         those events go to the classifier untagged, as with Smart Alerts off.
+
+        A tag is only as good as the filter, and a package_delivery tag makes an event a courier with no model
+        call, so a filter that looks ignored tags nothing: the Developer Playground has answered a
+        motion.vehicle query with its on_demand events (CounterSign's log). If a composite answer holds any
+        event type the query didn't ask for, or a motion.<subtype> answer is every one of the day's motion
+        events (more than one), the filter is marked unreliable for that device, isn't asked again, and the
+        day's motion events go to the classifier untagged. `filter_notes` and the log say why.
         """
-        events = [e for e in self._fetch_filtered(day, self.event_types) if e.kind in KINDS]
-        motion = [f.strip() for f in (self.event_types or "ding,motion").split(",") if f.strip().startswith("motion")]
+        filters = [f.strip() for f in (self.event_types or "ding,motion").split(",") if f.strip()]
+        answer = self._fetch_filtered(day, self.event_types)
+        events = [e for e in answer if e.kind in KINDS]
+        motion = [f for f in filters if f.startswith("motion")]
         if len(motion) == 1 and "." in motion[0]:
             only = motion[0].split(".", 1)[1]
+            stray = self._stray_kinds(answer, filters)
+            if stray or (self.device_id, only) in self.filter_notes:
+                if stray:
+                    self._distrust(only, f"event_types={self.event_types} came back with {stray} events too")
+                return events
             return [replace(e, ring_subtype=only) if e.kind == "motion" else e for e in events]
-        if not any(e.kind == "motion" for e in events):
+        day_motion = {e.id for e in events if e.kind == "motion"}
+        if not day_motion:
             return events
         for sub in TAGGED_SUBTYPES:
-            if sub in self._refused_filters:
+            if sub in self._refused_filters or (self.device_id, sub) in self.filter_notes:
                 continue
             try:
-                ids = {e.id for e in self._fetch_filtered(day, f"motion.{sub}")}
+                tagged = self._fetch_filtered(day, f"motion.{sub}")
             except RingError as exc:
                 if exc.http_status != 400:
                     raise
                 log.warning("Ring Event History refused event_types=motion.%s; those events go untagged", sub)
                 self._refused_filters.add(sub)
                 continue
+            ids = {e.id for e in tagged if e.kind == "motion"}
+            stray = self._stray_kinds(tagged, [f"motion.{sub}"])
+            if stray:
+                self._distrust(sub, f"event_types=motion.{sub} came back with {stray} events")
+                continue
+            if len(day_motion) > 1 and ids == day_motion:
+                self._distrust(sub, f"event_types=motion.{sub} came back with all {len(day_motion)} of the day's "
+                                    "motion events, as if unfiltered")
+                continue
             events = [replace(e, ring_subtype=sub) if e.kind == "motion" and e.id in ids and not e.ring_subtype
                       else e for e in events]
         return events
+
+    @staticmethod
+    def _stray_kinds(answer: list[DoorEvent], filters: list[str]) -> str:
+        """Event types in a filtered answer that none of the filters asked for, e.g. "on_demand"."""
+        asked = {f.split(".", 1)[0] for f in filters}
+        return ", ".join(sorted({e.kind for e in answer} - asked))
+
+    def _distrust(self, sub: str, why: str) -> None:
+        self.filter_notes[(self.device_id, sub)] = why
+        log.warning("Ring Event History filter motion.%s looks ignored for this doorbell (%s); its motion events "
+                    "stay untagged and go to the classifier", sub, why)
 
     def _fetch_filtered(self, day: date, event_types: str) -> list[DoorEvent]:
         start = datetime.combine(day, time.min, tzinfo=self.tz)
