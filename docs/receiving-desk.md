@@ -45,25 +45,32 @@ events, skipped at stage 0, labelled by Ring, reached Bedrock, labelled by rules
 
 **Replays.** The Developer Playground sends no webhooks. `scripts/feed_webhook.py` posts signed
 payloads in Ring's documented shape with `X-Shopfront-Replay: 1`; they are logged `replayed: true`,
-their events say `ring-webhook-replay`, and every dispute pack built on them says so.
+their events say `ring-webhook-replay`, and every dispute pack built on them says so in its limits, in
+the first line of the draft and its subject ("REPLAYED RING EVENTS"), and in the zip's README.
 
 ## 3. Carrier scans (`app/reconcile.py`, dashboard "The carrier's tracking says")
 
-**Delivery attempted:** five outcomes, unchanged except that a courier labelled by Ring's
-`package_delivery` alert now counts as seen, like one Bedrock saw in a frame.
+**Delivery attempted:** the outcomes in [receipts.md](receipts.md#checking-a-carriers-attempt-time). A
+courier labelled by Ring's `package_delivery` alert counts as seen, like one Bedrock saw in a frame.
 
 **Business closed** (the scan behind the Texas boutique's missed Black Friday stock):
 
+First match wins (after `not_happened_yet` / `no_such_local_time`, which refuse the scan):
+
 | Outcome | When | Claim it makes |
 |---|---|---|
-| `open_no_courier` | Posted open, door events within 30 min of the scan, no Ring/Bedrock courier within 10 min | Open and operating; supports, doesn't prove, that nobody came |
-| `open_courier_came` | Posted open and a seen courier within 10 min | A courier came to an open shop |
-| `open_by_hours_only` | Posted open, nothing at the door within 30 min | Only the posted hours back the owner; no draft |
 | `posted_closed` | The shop's own hours say closed | The scan agrees with the hours; no draft |
 | `no_door_data` | No door events at all that day | Can't check |
+| `open_courier_came` | Posted open and a Ring/Bedrock courier within 10 min | A courier came to an open shop |
+| `courier_came_later` | Posted open, no such courier near the scan, one later the same day | It may have arrived late after a scan that doesn't match the hours; whose it was is unknown |
+| `door_activity_unverified` | Posted open, and a press or motion within 10 min that nothing looked at | Can't say whether a courier came; no draft |
+| `open_no_courier` | Posted open, door events within 30 min, and everything within 10 min was looked at and wasn't a courier (or there was nothing that close) | Open and operating; supports, doesn't prove, that nobody came |
+| `open_by_hours_only` | Posted open, nothing at the door within 30 min | Only the posted hours back the owner; no draft |
 
-A courier labelled only by the time-of-day rules never counts as a sighting. A property test checks
-every outcome against the evidence it cites.
+A label from the time-of-day rules is never a sighting and never "not a courier" either: one near the
+scan makes the answer unverified. The activity counts give Ring's event kinds ("11 motion events") and
+only camera-confirmed customers; rule-guessed customers are kept apart. A hand-worked day in
+`tests/test_scan_checks.py` pins every outcome, and a property test checks them against the evidence.
 
 ## 4. Staff tap (`/deliveries/{id}/received`)
 
@@ -77,10 +84,32 @@ the order (auto-linked when the carrier's tracking number matches an imported or
 claim and the finding, the door log 30 minutes either side, the Ring frame with its SHA-256 and
 Bedrock RequestId when one was cited, the posted hours, and a fixed "what this does not show" list.
 
-The draft is a template in the shop's voice, filled only from those fields. There is **no draft**
-when the door agrees with the carrier, when the shop's hours say closed, or when only the posted
-hours back the owner. Shopfront never sends anything; the page says so and offers copy, print and a
-zip (`pack.txt`, `pack.json`, the frame). The zip and frames are served to this machine only.
+The draft is a template in the shop's voice, filled only from those fields, and it states only what
+something looked at: Ring's event kinds, Ring or Bedrock courier labels, Bedrock "not a courier"
+labels. "Our front-door camera shows otherwise" appears only when such a label backs it.
+
+Who it goes to:
+
+- **An order of the shop's** (linked by order or tracking number): the supplier. The shipper is the
+  carrier's customer, so the supplier is who can get a scan corrected. When the order's own courier
+  came after the scan, the finding is `delivered_after_scan` ("scanned business closed at 12:40, then
+  the courier was at the door at 13:02") and the draft is a late-delivery note asking the supplier to
+  have the scan corrected, not a redelivery request.
+- **No order:** the carrier, by the name the owner typed, or a plain "Hello," when none was typed.
+
+There is **no draft** when the door agrees with the carrier, when the shop's hours say closed, when
+only the posted hours back the owner, when something nothing looked at sat near the scan, when a
+courier came later but no order is linked, or for an order that is only "possible" or not due yet. A
+"not seen" order gets a draft only when every door event in its window was looked at.
+
+**Demo and replayed data.** The pack records every event's source (`event_sources`, `cited_sources`).
+If any is `synthetic`, the pack, `pack.txt`, the zip README and the draft's subject and first line say
+"DEMO DATA, not from a camera"; replayed webhooks add "REPLAYED RING EVENTS". Frames say where they
+came from: a Ring image download, or a frame captured in the owner's browser from a Ring live-view
+session. Times are the shop's (`made_at`, the staff tap).
+
+Shopfront never sends anything; the page says so and offers copy, print and a zip (`README.txt`,
+`pack.txt`, `pack.json`, the frame). The zip and frames are served to this machine only.
 
 The Ask agent has a `dispute_pack` tool and is told to point to the pack, never to say it was sent.
 

@@ -58,7 +58,7 @@ TEXT = {
     NO_DOOR_DATA: "Shopfront has no door events at all for that day, so it can't check this attempt.",
     COURIER_LATER: "No courier was seen within {tol} minutes of the carrier's time ({attempt}), but one was at the "
                    "door later that day, at {time}, {gap} it ({by}). If that was this delivery, it arrived late. "
-                   "The frame shows a courier, so Shopfront can't tell whose delivery it was.",
+                   "A courier label doesn't say whose parcel it was, so Shopfront can't tell whose delivery it was.",
     OPEN_NO_COURIER: "The carrier scanned \"business closed\" at {attempt}. Your posted hours had you open ({hours}), "
                      "the doorbell recorded {activity} between {lo} and {hi}{cust}, and {near}. Motion detection "
                      "can miss people, so this supports, but doesn't prove, that nobody came to the door.",
@@ -78,8 +78,9 @@ TEXT = {
 CLOSED_TEXT = {  # business-closed wording where it differs from the attempt wording
     COURIER_LATER: "The carrier scanned \"business closed\" at {attempt}, while your posted hours had you open "
                    "({hours}). No courier was seen within {tol} minutes of the scan, but one was at the door later "
-                   "that day, at {time}, {gap} the scan ({by}). If that was this delivery, it arrived late after a "
-                   "wrong scan. The frame shows a courier, so Shopfront can't tell whose delivery it was.",
+                   "that day, at {time}, {gap} the scan ({by}). If that was this delivery, it arrived late, after a "
+                   "scan that doesn't match your posted hours. A courier label doesn't say whose parcel it was, so "
+                   "Shopfront can't tell whose delivery it was.",
     UNVERIFIED: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at {attempt}. "
                 "The doorbell recorded {what} at {time}, {gap} the scan, and nothing that looked at the door said "
                 "who it was, so Shopfront can't say whether a courier came.",
