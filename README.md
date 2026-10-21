@@ -43,6 +43,14 @@ scans while the shop was open, and how many of these shops have a Ring doorbell.
 of failed deliveries the check works on, not the size of Shopfront's market. Cafés and restaurants (NAICS 722:
 another 495,905 places with fewer than 20 employees in the same Census file) aren't counted.
 
+## At home too
+
+The "delivery attempted" check doesn't use opening hours. It compares the carrier's time with what the
+doorbell recorded within 10 minutes, so it answers the same question at a house: did a courier come to the
+door when the tracking says they tried? With no order linked, the pack's draft goes to the carrier. There's
+no separate home mode: the pages and the pack still say "shop". How to use it:
+[docs/receiving-desk.md](docs/receiving-desk.md#at-home-the-delivery-attempted-check).
+
 **What's live and what isn't:** Shopfront calls the Ring Partner API live against the Ring Developer
 Playground. A Ring frame, a webhook sent by Ring itself and a Bedrock label haven't been captured yet, so the
 demo runs on synthetic door events and a signed webhook replay, and every page says so.
