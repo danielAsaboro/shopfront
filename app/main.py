@@ -381,7 +381,7 @@ def _pack(day: date, at: str | None, claim: str | None, order: str | None, carri
     try:
         return dispute.build_pack(profile.get().name, day, visits, frames,
                                   f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if oh else "closed", check, e, receipt,
-                                  carrier.strip()[:40], tracking.strip()[:60])
+                                  carrier.strip()[:40], tracking.strip()[:60], tz=settings.tz)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 

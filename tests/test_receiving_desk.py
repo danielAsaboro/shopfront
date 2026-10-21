@@ -270,18 +270,22 @@ def frames_with(tmp_path, *ids):
 def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_facts(tmp_path):
     vs = [visit(13, 40), visit(13, 55, VisitType.CUSTOMER, "bedrock"), visit(14, 20),
           visit(9, 30, VisitType.DELIVERY, "bedrock", eid="c1")]
-    order = Expected("exp-1", DAY.isoformat(), "Bay Mills", "13:00", "16:00", order_ref="PO-1042", carrier="UPS",
-                     tracking="1Z999", items="Flour 25kg x4")
+    order = Expected("exp-1", DAY.isoformat(), "Bay Mills", "13:00", "16:00", order_ref="PO-1042",
+                     carrier="Swift Parcel", tracking="SP999", items="Flour 25kg x4")
     check = check_closed_scan(at(14, 5), vs, OPEN)
     p = dispute.build_pack("Corner Bakery", DAY, vs, frames_with(tmp_path), "08:00–18:00", check, order)
-    assert p["claim"]["label"] == "Business closed" and p["claim"]["carrier"] == "UPS" and p["claim"]["tracking"] == "1Z999"
+    assert p["claim"]["label"] == "Business closed" and p["claim"]["carrier"] == "Swift Parcel"
+    assert p["claim"]["tracking"] == "SP999"
     assert [t["time"] for t in p["timeline"]] == ["13:40:00", "13:55:00", "14:20:00"]
     d = p["draft"]
-    assert d["to"] == "UPS" and d["subject"] == "Business closed scan, 2026-10-07 14:05, 1Z999"
-    assert ("We were open: our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 door "
-            "events between 13:35 and 14:35, 1 of them customers. It recorded no courier at our door within 10 "
-            "minutes of your scan.") in d["body"]
-    assert "Your posted hours" not in d["body"]  # written to the carrier, not to the owner
+    # an order of the shop's: the supplier shipped it, so the draft goes to the supplier (was: to the carrier)
+    assert d["to"] == "Bay Mills" and d["subject"] == "Business closed scan, 2026-10-07 14:05, SP999"
+    assert ("Swift Parcel scanned it \"business closed\" at 14:05 on 2026-10-07 (tracking SP999). Our front-door "
+            "camera shows otherwise.") in d["body"]
+    assert ("Our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 motion events between "
+            "13:35 and 14:35, 1 of them confirmed from the camera frame as a customer. The visit it recorded within "
+            "10 minutes of the scan was not a courier, judged from the camera frame.") in d["body"]
+    assert "Your posted hours" not in d["body"]  # written by the shop, not to the owner
     assert "order PO-1042 from Bay Mills (Flour 25kg x4)" in d["body"]
     assert d["body"].endswith("Corner Bakery") and "sent" not in d["body"].lower()
     assert p["frame"] is None and "attached the door log" in d["body"]  # no frame was cited: don't say there is one
@@ -297,7 +301,7 @@ def test_pack_with_a_frame_carries_its_hash(tmp_path):
     assert "nearest that time, at 19:34, was not a courier" in p["draft"]["body"]
     assert p["frame"]["sha256"] == hashlib.sha256(b"\xff\xd8frame-c2").hexdigest()
     z = zipfile.ZipFile(io.BytesIO(dispute.as_zip(p, f)))
-    assert sorted(z.namelist()) == ["pack.json", "pack.txt", "ring-frame-1934.jpg"]
+    assert sorted(z.namelist()) == ["README.txt", "pack.json", "pack.txt", "ring-frame-1934.jpg"]
     assert p["frame"]["sha256"] in z.read("pack.txt").decode()
     assert json.loads(z.read("pack.json"))["draft"]["subject"].startswith("Missed delivery scan")
 
@@ -319,7 +323,10 @@ def test_order_packs_for_not_seen_and_short(tmp_path):
     r = receipts([missing, short], vs, OPEN, f)
     rows = {x["id"]: x for x in r["expected"]}
     pm = dispute.build_pack("Shop", DAY, vs, f, "08:00–18:00", order=missing, receipt=rows["exp-m"])
-    assert pm["draft"]["to"] == "Dairy Co" and "2 door events that day and no courier" in pm["draft"]["body"]
+    # nothing in Dairy Co's 06:00-07:00 window at all (was: "2 door events that day and no courier", which
+    # counted a rules-labelled 10:00 visit as looked at)
+    assert pm["draft"]["to"] == "Dairy Co"
+    assert "recorded nothing at our door between 06:00 and 07:00" in pm["draft"]["body"]
     ps = dispute.build_pack("Shop", DAY, vs, f, "08:00–18:00", order=short, receipt=rows["exp-s"])
     assert "it was short: one sack missing." in ps["draft"]["body"] and "courier at 10:30" in ps["draft"]["body"]
     assert ps["frame"]["event_id"] == "c4" and ps["timeline"]
