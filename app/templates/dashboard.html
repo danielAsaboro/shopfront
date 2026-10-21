@@ -4,11 +4,13 @@
 {% block title %}Receiving desk, {{ b.date }}{% endblock %}
 {% block main %}
 {% set back = "/?date=" ~ b.date %}
+{% set prefill = request.query_params.get('claim') %}
 {% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
   <div class="page-head">
     <div>
       <div class="eyebrow">Receiving desk{% if b.date|relative_day %} · {{ b.date|relative_day }}{% endif %}</div>
       <h1>{{ b.date|long_date }}</h1>
+      <p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>
     </div>
     <form method="get" class="no-print">
       <label class="field">Day<input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></label>
@@ -52,6 +54,32 @@
   </section>
   {% endif %}
 
+  <section class="block" aria-labelledby="atth">
+    <h2 id="atth">The carrier's tracking says</h2>
+    {% if ring_down %}
+    <p class="why" style="margin:6px 0 0">Checking a scan needs the door history from Ring. <a href="/connect">Reconnect Ring</a>, then check it here.</p>
+    {% else %}
+    <form method="get" action="/" class="fields scan-form" style="margin-top:10px">
+      <input type="hidden" name="date" value="{{ b.date }}">
+      <label class="field fit">Scan<select name="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == (claim if prefill or asked_time else 'business_closed') }}>{{ label }}</option>{% endfor %}</select></label>
+      <label class="field fit">At<input type="time" name="attempt" value="{{ asked_time }}" required{{ " autofocus" if prefill and not asked_time }}></label>
+      <label class="field grow">Carrier (optional)<input name="carrier" value="{{ carrier }}" maxlength="40"></label>
+      <label class="field grow">Tracking no. (optional)<input name="tracking" value="{{ tracking }}" maxlength="60"></label>
+      <button type="submit">Check the door</button>
+    </form>
+    {% include "_scan_upload.html" %}
+    {% if attempt %}
+    <div role="status" style="margin-top:14px">
+      <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
+      <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
+    </div>
+    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
+    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</p>{% endif %}
+    {% if pack_href %}<p><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
+    {% endif %}
+    {% endif %}
+  </section>
+
   {% if not first_run %}
   <section class="figures" aria-label="The day in three numbers">
     <div><span class="v {% if not ring_down and r.expected|selectattr('status', 'equalto', 'not_seen')|list %}warn{% endif %}">{{ r.seen ~ '/' ~ r.total if r.total else '—' }}</span><span class="l">Expected deliveries seen</span></div>
@@ -86,6 +114,7 @@
               <input id="note-{{ x.id }}" name="note" placeholder="note (optional)" maxlength="200">
             </form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
+            {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}">Carrier says closed?</a>{% endif %}
           </div></td>
         <td class="why">{% if x.visit %}{{ x.visit.labelled_by|how(x.visit.reason, x.visit.event_source, x.visit.frame_url) }}{% elif maybe %}{{ maybe.labelled_by|how(maybe.reason, maybe.event_source, maybe.frame_url) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% elif x.visit %}{{ still(x.visit, 'delivery') }}{% elif maybe %}{{ still(maybe, 'doorbell_press') }}{% endif %}</td>
@@ -101,32 +130,6 @@
       {% endif %}
       {% endfor %}
     </table>
-    {% endif %}
-  </section>
-
-  <section class="block" aria-labelledby="atth">
-    <h2 id="atth">The carrier's tracking says</h2>
-    {% if ring_down %}
-    <p class="why" style="margin:6px 0 0">Checking a scan needs the door history from Ring. <a href="/connect">Reconnect Ring</a>, then check it here.</p>
-    {% else %}
-    <form method="get" action="/#atth" class="fields" style="margin-top:10px">
-      <input type="hidden" name="date" value="{{ b.date }}">
-      <label class="field fit">Scan<select name="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == claim }}>{{ label }}</option>{% endfor %}</select></label>
-      <label class="field fit">At<input type="time" name="attempt" value="{{ asked_time }}" required></label>
-      <label class="field grow">Carrier (optional)<input name="carrier" value="{{ carrier }}" maxlength="40"></label>
-      <label class="field grow">Tracking no. (optional)<input name="tracking" value="{{ tracking }}" maxlength="60"></label>
-      <button type="submit">Check the door</button>
-    </form>
-    {% include "_scan_upload.html" %}
-    {% if attempt %}
-    <div role="status" style="margin-top:14px">
-      <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
-      <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
-    </div>
-    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
-    {% if attempt.visit %}<p class="why">{{ attempt.visit.labelled_by|how(attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</p>{% endif %}
-    {% if pack_href %}<p><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
-    {% endif %}
     {% endif %}
   </section>
 
@@ -199,6 +202,19 @@
   </footer>
 {% endblock %}
 {% block scripts %}
+<script>
+// "Carrier says closed?" on an order: fill the scan form from the order and go to it, no reload
+document.querySelectorAll("a.claim-link").forEach(a => a.addEventListener("click", e => {
+  const f = document.querySelector("form.scan-form");
+  if (!f) return;
+  e.preventDefault();
+  f.claim.value = "business_closed";
+  f.carrier.value = a.dataset.carrier || "";
+  f.tracking.value = a.dataset.tracking || "";
+  f.scrollIntoView({behavior: "smooth", block: "center"});
+  f.attempt.focus({preventScroll: true});
+}));
+</script>
 {% if can_ask %}
 <script>
 const f = document.getElementById("ask"), out = document.getElementById("answer");

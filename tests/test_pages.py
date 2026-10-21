@@ -147,9 +147,12 @@ def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
 
 
 def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
+    """Round 2: the scan check sits right under the lead, above the figures and the deliveries, so the story
+    is on screen in the first 30 seconds on a phone too."""
     main.book.add(WEDNESDAY, "Bay Mills")
     page = c.get(f"/?date={WEDNESDAY}").text
-    assert page.index('id="dlv"') < page.index('id="atth"') < page.index("Customers by hour")
+    assert page.index('class="lead"') < page.index('id="atth"') < page.index('class="figures"') \
+        < page.index('id="dlv"') < page.index("Customers by hour")
     assert re.search(r"<details class=\"block\">\s*<summary><h2>The rest of the day", page)
 
 
@@ -179,7 +182,7 @@ def test_rows_in_time_order_and_late_matches_in_warn(c):
     main.book.add(SUNDAY, "Late flour", "06:00", "07:00")  # Ring's 11:40 courier is outside this window
     main.book.add(SUNDAY, "Evening veg", "19:00", "20:00")  # never seen: sorts by its window
     page = c.get(f"/?date={SUNDAY}").text
-    rows = re.findall(r'<td class="t[^"]*">([^<]+)</td>', page.split('id="dlv"')[1].split('id="atth"')[0])
+    rows = re.findall(r'<td class="t[^"]*">([^<]+)</td>', page.split('id="dlv"')[1].split('</table>')[0])
     assert rows == sorted(rows)
     assert re.search(r'<td class="t warn">11:40</td>', page) and "outside the window" in page
 
@@ -383,3 +386,24 @@ def test_a_scan_pack_page_lets_the_owner_pick_the_supplier_or_the_carrier(c):
     assert "To Valley Creamery, the supplier" in page and "To Northline Parcel, the carrier" in page
     assert 'id="draft-supplier">' in page and 'id="draft-carrier">' in page
     assert page.split('id="draft-carrier">')[1].split("</div>")[0].split("\n\n")[1].startswith("Hello Northline Parcel,")
+
+
+def test_the_story_is_on_screen_first(c):
+    """Round 2: a one-line value statement under the h1 on every desk, first run included; every order row
+    has "Carrier says closed?" that pre-fills the scan form; the form doesn't jump past the verdict lead."""
+    first = c.get(f"/?date={WEDNESDAY}").text
+    line = '<p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>'
+    assert line in first
+    main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
+                  tracking="NP 44/71")
+    page = c.get(f"/?date={WEDNESDAY}").text
+    assert line in page and page.index(line) < page.index('id="atth"')
+    href = f"/?date={WEDNESDAY}&amp;claim=business_closed&amp;carrier=Northline%20Parcel&amp;tracking=NP%2044/71#atth"
+    assert f'<a class="claim-link" href="{href}"' in page and ">Carrier says closed?</a>" in page
+    form = page.split('id="atth"')[1].split("</form>")[0]
+    assert '<option value="business_closed" selected>' in form  # the story's scan is the default
+    assert 'action="/#atth"' not in page and '<form method="get" action="/" class="fields scan-form"' in page
+    pre = c.get(f"/?date={WEDNESDAY}&claim=business_closed&carrier=Northline+Parcel&tracking=NP4471").text
+    form = pre.split('id="atth"')[1].split("</form>")[0]
+    assert '<option value="business_closed" selected>' in form and 'value="Northline Parcel"' in form
+    assert 'value="NP4471"' in form and "required autofocus" in form
