@@ -27,7 +27,19 @@
   <p class="banner warn-bg" role="alert">{% if st in ("TOKEN_REJECTED", "REFRESH_FAILED") %}Ring sign-in expired{% elif st == "RATE_LIMITED" %}Ring asked Shopfront to slow down{% else %}Ring isn't answering{% endif %}, so this is your orders and the deliveries Ring sent by webhook only: the door history for {{ b.date }} is missing until {% if st == "RATE_LIMITED" %}you reload in {{ ring_down.retry_after ~ ' seconds' if ring_down.retry_after else 'a minute' }}{% else %}you <a href="/connect">reconnect Ring</a>{% endif %}. <span class="why" style="color:inherit">({{ st }}{% if ring_down.request_id %}, X-Request-ID {{ ring_down.request_id }}{% endif %})</span></p>
   {% endif %}
 
-  {% if first_run and not lead_is_scan %}
+  {% if attempt %}
+  {# One verdict for a checked scan, with what it would cost and the one next step #}
+  <section class="verdict{{ ' act' if attempt.outcome in disputable }}" role="status" aria-label="The door's answer to the scan">
+    <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}</div>
+    <p class="first{{ ' warn' if attempt.outcome in disputable }}">{{ attempt|verdict }}</p>
+    <p class="reason">{{ attempt.text }}</p>
+    {% if pack_href %}{{ stake(scan_order) }}{% endif %}
+    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
+    {% if pack_href %}<p class="next"><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if first_run and not attempt %}
   <section class="first-run" aria-label="What Shopfront does">
     <p class="first">Check every delivery against your Ring doorbell.</p>
     <p class="reason">When a carrier scans "business closed" while you were open, Shopfront shows what the door saw and drafts the message for you to send.</p>
@@ -43,9 +55,10 @@
   {% endif %}
   {% else %}
   <section class="lead">
-    {% if lead %}
-    <p class="first{{ ' warn' if lead_is_scan }}">{{ lead[0] }}</p>
-    {% if lead_is_scan and pack_href %}{{ stake(scan_order) }}<p class="reason"><a href="{{ pack_href }}">Build the dispute pack</a> · <a href="#atth">see the check</a></p>{% endif %}
+    {% if lead and attempt %}
+    <ul>{% for line in lead %}<li>{{ line }}</li>{% endfor %}</ul>
+    {% elif lead %}
+    <p class="first">{{ lead[0] }}</p>
     {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     {% elif r.unexpected %}
     <p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
@@ -58,8 +71,8 @@
   </section>
   {% endif %}
 
-  <section class="block" aria-labelledby="atth">
-    <h2 id="atth">The carrier's tracking says</h2>
+  <details class="block scan-check" id="check"{{ ' open' if not attempt }}>
+    <summary><h2 id="atth">{{ "Check another scan" if attempt else "The carrier's tracking says" }}</h2></summary>
     {% if ring_down %}
     <p class="why" style="margin:6px 0 0">Checking a scan needs the door history from Ring. <a href="/connect">Reconnect Ring</a>, then check it here.</p>
     {% else %}
@@ -72,17 +85,8 @@
       <button type="submit">Check the door</button>
     </form>
     {% include "_scan_upload.html" %}
-    {% if attempt %}
-    <div role="status" style="margin-top:14px">
-      <p class="{{ 'warn' if attempt.outcome in disputable }}" style="margin:0;font-weight:600;font-size:17px">{{ attempt|verdict }}</p>
-      <p class="why" style="margin:4px 0 0">{{ attempt.text }}</p>
-    </div>
-    {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
-    {% if attempt.visit %}<div class="why" style="margin:6px 0 0">{{ attempt.visit.time }} event: {{ source(attempt.visit.labelled_by, attempt.visit.reason, attempt.visit.event_source, attempt.visit.frame_url) }}</div>{% endif %}
-    {% if pack_href %}<p><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
     {% endif %}
-    {% endif %}
-  </section>
+  </details>
 
   {% if not first_run %}
   <section class="figures" aria-label="The day in three numbers">
@@ -162,13 +166,15 @@
     {% if first_run %}
     <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine. With it, and your orders in, you can ask things like "Did the flour come yesterday?"</p>
     {% else %}
-    <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine. This is the kind of answer it gives:</p>
+    <p style="margin:8px 0 0">Ask needs an AWS sign-in with Bedrock access; it isn't available on this machine.</p>
+    <details class="tech"><summary>This is the kind of answer it gives</summary>
     <figure class="ask-example" aria-label="Example answer">
       <figcaption class="eyebrow">Example answer, recorded from the test fakes, not live</figcaption>
       <p class="q">“{{ ask_example.question }}”</p>
       <p class="a">{{ ask_example.answer }}</p>
       <p class="why" style="margin:0">Looked at {{ ask_example.tools }}</p>
     </figure>
+    </details>
     {% endif %}
     <details class="tech"><summary>Details</summary><p class="why" style="margin:0">Answers come from a Strands agent on Amazon Bedrock, using the same door data as this page. Sign in to AWS with Bedrock model access (<code>aws login</code>) and restart Shopfront to turn it on.{% if ask_reason %} State: {{ ask_reason }}.{% endif %}</p></details>
     {% endif %}
@@ -213,10 +219,14 @@
 {% block scripts %}
 <script>
 // "Carrier says closed?" on an order: fill the scan form from the order and go to it, no reload
+// "Check another scan" (and any link to the form) opens it first
+const scanCheck = document.getElementById("check");
+document.querySelectorAll('a[href="#atth"]').forEach(a => a.addEventListener("click", () => { if (scanCheck) scanCheck.open = true; }));
 document.querySelectorAll("a.claim-link").forEach(a => a.addEventListener("click", e => {
   const f = document.querySelector("form.scan-form");
   if (!f) return;
   e.preventDefault();
+  if (scanCheck) scanCheck.open = true;
   f.claim.value = "business_closed";
   f.carrier.value = a.dataset.carrier || "";
   f.tracking.value = a.dataset.tracking || "";

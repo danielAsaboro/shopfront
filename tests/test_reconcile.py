@@ -122,5 +122,5 @@ def test_dashboard_checks_an_attempt_time(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "source", RingSource(main.settings, tmp_path / "no-token"))
     c = TestClient(main.app)
     page = c.get("/", params={"date": "2026-10-07", "attempt": "03:17"}).text
-    assert "The carrier's tracking says" in page and "the door recorded nothing around 03:17" in page
+    assert "Check another scan" in page and "the door recorded nothing around 03:17" in page
     assert c.get("/", params={"date": "2026-10-07", "attempt": "late"}).status_code == 400

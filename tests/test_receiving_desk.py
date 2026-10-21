@@ -431,14 +431,19 @@ def test_business_closed_check_on_the_dashboard_and_api(isolated, monkeypatch):
     assert j["activity"]["events"] == 5 and j["activity"]["customers"] == 5
     if j["outcome"] == OPEN_NO_COURIER:
         assert "Build the dispute pack" in page
-        # the disputed scan is the page's headline, above the orders
-        first = page.split('<p class="first')[1].split("</p>")[0]
-        assert "Business closed scan at 12:30. You were open, and the doorbell saw no courier near the scan." in first
-        assert ' warn">' in first
+        # the disputed scan is the page's one verdict, above the orders, and holds the pack button (round 3: it
+        # was said twice, once as the headline and again under the form)
+        card = page.split('<section class="verdict act"')[1].split("</section>")[0]
+        assert "Business closed scan at 12:30" in card.split('<p class="first')[0]
+        first = card.split('<p class="first')[1].split("</p>")[0]
+        assert "You were open, and the doorbell saw no courier near the scan." in first and ' warn">' in first
+        assert "Build the dispute pack" in card and page.count("Build the dispute pack") == 1
+        assert page.count("You were open, and the doorbell saw no courier near the scan.") == 1
+        assert page.index('class="verdict act"') < page.index('id="dlv"')
         page = c.get("/", params={"date": "2026-10-07", "claim": "business_closed", "attempt": "12:30",
                                   "carrier": "UPS", "tracking": "1Z 9"}).text
         assert "claim=business_closed&amp;carrier=UPS&amp;tracking=1Z%209" in page
-        assert "Business closed scan at 12:30 (UPS)." in page
+        assert "Business closed scan at 12:30 · UPS · 1Z 9" in page
         pack = c.get("/api/dispute", params={"date": "2026-10-07", "at": "12:30", "claim": "business_closed"}).json()
         assert pack["draft"]["subject"].startswith("Business closed scan, 2026-10-07 12:30")
         main.book.add(DAY, "Bay Mills", order_ref="PO-5", tracking="1Z5")

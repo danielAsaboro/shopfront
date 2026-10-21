@@ -384,9 +384,8 @@ def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> di
     if {m["time"] for m in b.deliveries_while_closed} <= matched:
         courier = []  # the receipts already say it
     closed = courier + presses
-    scan = pages.scan_lead(checked, carrier)
     scan_first = bool(checked and checked["outcome"] in dispute.DISPUTE)
-    lead = headline(r, scan, scan_first=scan_first) + closed
+    lead = headline(r) + closed  # a checked scan has its own verdict card above these lines
     return {"b": b, "lead": lead, "lead_is_scan": scan_first, "rest": rest, "r": r, "rows": pages.desk_rows(r),
             "peak": max(b.hourly_customers + b.hourly_customers_last_week) or 1,
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
