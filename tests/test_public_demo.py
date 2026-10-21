@@ -117,6 +117,15 @@ def test_landing_page_opens_on_the_demo_day_with_the_banner(client, demo):
     assert int(page.headers["content-length"]) == len(page.content)
 
 
+def test_desk_shows_the_carrier_record(client, demo):
+    """The one-command demo's seeded history, read-only here."""
+    desk = client.get(demo.links["desk"]).text
+    n = len(main.checks.all())  # earlier open days in the demo day's month: two, unless it is the month's start
+    assert n == 2 or demo.day.day <= 7
+    if n:
+        assert "Northline Parcel scanned you closed" in desk and "during posted hours" in desk
+
+
 def test_banner_links_open_the_check_and_the_pack(client, demo):
     check = client.get(demo.links["check"].split("#")[0])
     assert check.status_code == 200 and BANNER in check.text
@@ -168,15 +177,17 @@ def test_every_route_and_method_writes_nothing_and_calls_nothing(client, demo, t
 
 
 def test_owner_actions_are_refused_before_the_app_reads_them(client, demo, outbound):
-    expected = main.book.for_day(demo.day)[0]
+    expected, kept = main.book.for_day(demo.day)[0], main.checks.all()
     for path, data in [("/connect", {"token": "a-ring-token"}), ("/pair", {"code": "000000"}),
                        ("/setup", {"name": "Taken over"}), ("/orders/import", {"csv": "day,supplier\n"}),
                        (f"/deliveries/{expected.id}/received", {"status": "short"}),
-                       (f"/deliveries/{expected.id}/remove", {}), ("/pair/forget", {}), ("/connect/forget", {})]:
+                       (f"/deliveries/{expected.id}/remove", {}), ("/pair/forget", {}), ("/connect/forget", {}),
+                       ("/checks", {"date": demo.day.isoformat(), "at": "14:30", "claim": "business_closed"}),
+                       ("/checks/0123456789ab/delete", {})]:
         r = client.post(path, data=data)
         assert r.status_code == 403 and BANNER in r.text, path
         assert "nothing is saved" in r.text or "switched off" in r.text, path
-    assert main.book.get(expected.id).received is None
+    assert main.book.get(expected.id).received is None and main.checks.all() == kept
     r = client.post("/webhooks/ring", content=b"{}", headers={"X-Signature": "x"})
     assert r.status_code == 403 and r.json()["error"] == "PUBLIC_DEMO"
     r = client.post("/api/ask", json={"question": "Did the flour come?"})
@@ -233,6 +244,8 @@ def test_stores_refuse_writes_and_ring_stays_synthetic(demo):
         main.webhook_log.handle(b"{}", "sig", "key")
     with pytest.raises(public_demo.ReadOnly):
         main.live.start("dev", "https://ring.example/whep")
+    with pytest.raises(public_demo.ReadOnly):
+        main.checks._write([])
     (demo.data / "ring-access-token").write_text("a-real-looking-token")  # even a token on disk is ignored
     assert main.source.get().name == "synthetic" and main.source.pasted_token() == ""
     assert main._ask_state() == "PUBLIC_DEMO" and not main.scan_reader.available()

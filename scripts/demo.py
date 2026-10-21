@@ -17,7 +17,10 @@ What it does, in order:
    page contradicts.
 5. The synthetic source makes up the doorbell's status checks ("online" every 5 minutes through the demo
    day, marked demo), so the pack's camera line shows the coverage path; the demo stops if it doesn't.
-6. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
+6. Keeps two earlier "business closed" checks for the same made-up carrier, on open days earlier in the
+   month, checked against that day's synthetic door the way the desk checks one, and marked demo; the desk's
+   carrier record then has a history to show.
+7. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
    It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
    same answer (tests/test_demo.py sweeps the whole day). Asks the running app what the door shows,
    builds the dispute pack, and prints the links to both. The pack must have a draft; if the door
@@ -57,6 +60,8 @@ SCAN_ORDER = "PO-1042"        # the dairy order the carrier scanned "business cl
 SCAN_WINDOW = ("13:00", "16:00")  # its delivery window in samples/orders.csv
 SCAN_AT = "14:30"  # the "business closed" scan: an ordinary afternoon minute in that window, not a chosen one
 DEMO_HMAC_KEY = "demo-key"
+PAST_SCANS = ("14:30", "11:40", "15:20", "10:50")  # times tried, in order, for the two earlier kept checks
+PAST_TRACKING = ("NP4471001736", "NP4471002204")  # made up, in the sample's style
 
 
 def open_hours(spec: str, day: date) -> tuple[int, int] | None:
@@ -159,6 +164,57 @@ def _import_orders(data: Path, text: str) -> int:
     return len(parsed["rows"])
 
 
+def _door(day: date, tz: ZoneInfo) -> list:
+    """That day's synthetic door, labelled the way the app labels it without Bedrock."""
+    from app.briefing import classify_day
+    from app.classify.rules import RulesClassifier
+    from app.hours import parse_hours
+    from app.ring.synthetic import SyntheticRingClient
+
+    hours = parse_hours(SHOP_HOURS)
+    return classify_day(SyntheticRingClient(tz, hours), RulesClassifier(), day, hours)
+
+
+def past_scans(day: date, tz: ZoneInfo, n: int = 2) -> list[datetime]:
+    """Earlier open days in `day`'s month, newest first and at least three days apart, each with a time in
+    PAST_SCANS when its synthetic door was in use: the demo's earlier "business closed" scans."""
+    out: list[datetime] = []
+    for back in range(1, day.day):
+        d = day - timedelta(days=back)
+        if not open_hours(SHOP_HOURS, d) or (out and (out[-1].date() - d).days < 3):
+            continue
+        events = [e.timestamp for e in _door_events(d, tz)]
+        t = next((datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in PAST_SCANS
+                  if door_in_use(events, datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz))), None)
+        if t:
+            out.append(t)
+        if len(out) == n:
+            break
+    return out
+
+
+def _door_events(day: date, tz: ZoneInfo) -> list:
+    from app.hours import parse_hours
+    from app.ring.synthetic import SyntheticRingClient
+
+    return SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)
+
+
+def seed_past_checks(data: Path, day: date, tz: ZoneInfo) -> list[dict]:
+    """Keep the demo's earlier checks in data/checks.json, each computed by app/reconcile.py against that
+    day's synthetic door, and marked demo."""
+    from app import reconcile as rc
+    from app.checks import CheckBook
+    from app.hours import parse_hours, posted_hours
+
+    kept, book = [], CheckBook(data / "checks.json")
+    for at, tracking in zip(past_scans(day, tz), PAST_TRACKING):
+        visits = [v for v in _door(at.date(), tz) if abs(rc.gap(v.event.timestamp, at)) <= rc.ACTIVITY]
+        check = rc.check_closed_scan(at, visits, posted_hours(parse_hours(SHOP_HOURS), at.date()))
+        kept.append(book.keep(check, CARRIER, tracking, demo=True))
+    return kept
+
+
 class DemoMismatch(SystemExit):
     """The pages don't say what the demo is about to tell the viewer."""
 
@@ -221,6 +277,7 @@ def main() -> None:
     orders_csv = data / f"orders-{day.isoformat()}.csv"
     orders_csv.write_text(dated_orders(SAMPLE.read_text(), day))
     n = _import_orders(data, orders_csv.read_text())
+    past = seed_past_checks(data, day, tz)
 
     key = os.getenv("RING_HMAC_KEY") or settings.ring_hmac_key or DEMO_HMAC_KEY
     env = {**os.environ, "SHOPFRONT_DATA_DIR": str(data), "RING_MODE": "synthetic", "RING_HMAC_KEY": key,
@@ -245,10 +302,12 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
 1. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
    The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by Ring's
    package_delivery Smart Alert; the desk shows it as that order's courier.
+   The carrier record shows the {len(past)} earlier demo checks of {CARRIER}
+   ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}).
    {desk}
 
 2. {CARRIER} scanned the dairy order {SCAN_ORDER} (tracking {order['tracking']}) "business closed" at {scan}.
-   Check that scan against the posted hours and the door:
+   Check that scan against the posted hours and the door; "Keep in {CARRIER}'s record" adds it:
    {check_url}
    Shopfront's answer: {check.get('text') or check}
 

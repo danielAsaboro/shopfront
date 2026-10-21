@@ -52,7 +52,8 @@ prints three links:
 
 1. **The receiving desk** (`/?date=…`): the day's orders, which ones a courier was seen for, and how.
    Ring's 10:12 alert is the flour order's (PO-1041, due 10:00–11:00) confirmed courier; the script
-   checks the desk says so and stops if it doesn't.
+   checks the desk says so and stops if it doesn't. The carrier record shows two earlier demo checks of
+   Northline Parcel this month; "Keep in Northline Parcel's record" under a check adds it.
 2. **The business-closed check:** the made-up carrier "Northline Parcel" scanned the dairy order
    PO-1042 "business closed" at 14:30, inside its 13:00–16:00 window and during posted hours. It's an
    ordinary busy afternoon minute, not a hand-picked quiet one: any open-hours time with the door in use

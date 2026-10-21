@@ -34,6 +34,7 @@ from hypothesis import settings as hypothesis_settings  # noqa: E402
 
 import app.main as main  # noqa: E402
 from app.cache import ClassificationCache  # noqa: E402
+from app.checks import CheckBook  # noqa: E402
 from app.classify.rules import RulesClassifier  # noqa: E402
 from app.deliveries import DeliveryBook, FrameStore  # noqa: E402
 from app.live import LiveLog  # noqa: E402
@@ -101,6 +102,7 @@ def no_local_data(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "source", RingSource(main.settings, d / "ring-access-token"))
     monkeypatch.setattr(main, "profile", ShopProfile(d / "shop.json", main.settings.shop_name, main.settings.shop_hours))
     monkeypatch.setattr(main, "book", DeliveryBook(d / "expected-deliveries.json"))
+    monkeypatch.setattr(main, "checks", CheckBook(d / "checks.json"))
     monkeypatch.setattr(main, "frames", FrameStore(d))
     monkeypatch.setattr(main, "cache", ClassificationCache(d / "classifications.json"))
     monkeypatch.setattr(main, "webhook_log", WebhookLog(d / "ring-webhooks.jsonl"))

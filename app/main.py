@@ -25,13 +25,14 @@ from app.cache import ClassificationCache
 from app.classify import make_classifier
 from app.classify import _aws_creds_available
 from app.config import settings
+from app import checks as kept_checks
 from app import coverage, dispute, pages, provenance
 from app.files import private_dir, prune_older_than
 from app.orders import parse_orders
 from app.owner import COOKIE, COOKIE_DAYS, UNSAFE, OwnerGate, PublicDemoGate
 from app.scan_extract import MAX_BYTES as MAX_SCAN_BYTES
 from app.scan_extract import ScanReader, ScanReadError
-from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, TOLERANCE, check_attempt, check_closed_scan
+from app.reconcile import ATTEMPTED, BUSINESS_CLOSED, CLAIMS, REFUSED, TOLERANCE, check_attempt, check_closed_scan
 from app.deliveries import (COST_SOURCE, RECEIVED, STATUS_TEXT, DeliveryBook, FrameStore, default_cost, frame_name,
                             headline, money_line, receipts)
 from app.hours import normalize_clock, posted_hours
@@ -66,7 +67,7 @@ templates.env.filters.update(
     local_time=lambda v, day=None: pages.local_time(v, settings.tz, day),
     local_stamp=lambda v: pages.local_stamp(v, settings.tz), by=pages.by, verdict=pages.verdict,
     long_date=pages.long_date, how=pages.how, visit_label=pages.visit_label, badge=pages.badge,
-    pack_stills=pages.pack_stills,
+    pack_stills=pages.pack_stills, month_name=lambda v: date.fromisoformat(str(v)[:10]).strftime("%B %Y"),
     relative_day=lambda v: pages.relative_day(v, datetime.now(settings.tz).date()), not_whose=provenance.not_whose, frame_label=provenance.frame_label)
 
 # Inline, so every page (the pairing page too) has its icon without a request the owner gate would answer
@@ -76,6 +77,7 @@ templates.env.globals["favicon_uri"] = "data:image/svg+xml," + quote(pages.FAVIC
 DATA = private_dir(Path(settings.data_dir))  # tokens, logs and door frames: this user only
 profile = ShopProfile(DATA / "shop.json", settings.shop_name, settings.shop_hours)
 book = DeliveryBook(DATA / "expected-deliveries.json")
+checks = kept_checks.CheckBook(DATA / "checks.json")  # the scan checks the owner kept: the carrier record
 frames = FrameStore(DATA)
 classifier = make_classifier(settings)
 cache = ClassificationCache(DATA / "classifications.json")
@@ -317,6 +319,36 @@ def server_error(request: Request, exc: Exception):
     return _page(request, "error.html", {"err": pages.plain_error(500, type(exc).__name__, request.url.path)}, 500)
 
 
+def _cost() -> tuple[float | None, bool]:
+    """A missed delivery's cost: the owner's number, else the survey default (said as such)."""
+    p = profile.get()
+    return (p.redelivery_cost, False) if p.redelivery_cost is not None else (default_cost(p.currency), True)
+
+
+def _month_confirmed(day: date) -> int | None:
+    """Orders this month, up to `day`, whose courier Ring or Bedrock saw at the door. Only days with
+    orders are read; a Ring error leaves the number out rather than undercounting."""
+    today = datetime.now(settings.tz).date()
+    n, d = 0, day.replace(day=1)
+    while d <= min(day, today):
+        if book.for_day(d):
+            try:
+                n += sum(1 for x in _receipts(d)["expected"] if x["status"].startswith("seen"))
+            except RingError:
+                return None
+        d += timedelta(days=1)
+    return n
+
+
+def _record(day: date) -> dict:
+    """The kept checks' carrier record and the month's money, for the desk."""
+    kept = checks.all()
+    cost, default = _cost()
+    return {"record": kept_checks.carrier_record(kept, day),
+            "month_money": kept_checks.month_money(kept, day, _month_confirmed(day), cost, profile.get().currency,
+                                                   default, dispute.DISPUTE)}
+
+
 def _claim(value: str | None) -> str:
     value = (value or ATTEMPTED).strip().lower().replace(" ", "_")
     if value not in CLAIMS:
@@ -352,6 +384,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         ring_down, token = exc, _ring_override.set(_NoHistory(settings.tz))
         try:
             desk = _desk(day, None, claim)
+            desk.update(record=[], month_money=None)  # the month needs the door history too
         finally:
             _ring_override.reset(token)
         r = desk["r"]  # "no courier seen" would be a guess without the history
@@ -359,10 +392,12 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
                         "The rest can't be checked until Ring is reconnected."] if r["total"] else []
     return _page(request, "dashboard.html", {
         **desk, "ring_down": ring_down, "asked_time": attempt or "",
+        "kept": checks.find(day.isoformat(), attempt, claim, carrier.strip()[:40], tracking.strip()[:60])
+        if attempt and desk.get("attempt") else None,
         **({"ring_problem": None} if ring_down else {}),  # the page's own notice says it, with what still works
         "status_text": STATUS_TEXT,
         "profile": profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
-        "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE,
+        "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE, "refused": REFUSED,
         **({"can_ask": True, "ask_reason": None} if (ask := _ask_state()) is None else
            {"can_ask": False, "ask_reason": ask}), "ask_example": pages.ASK_EXAMPLE,
         "can_read_scan": scan_reader.available()})
@@ -391,7 +426,7 @@ def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> di
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
             "money": _week_money(day), "attempt": checked, "funnel": stats,
             "labels": pages.labelled_by_text(stats, b.classifier), "first_run": not book._all(),
-            "replayed": bool(stats.get("replayed"))}
+            "replayed": bool(stats.get("replayed")), **_record(day)}
 
 
 @app.get("/connect", response_class=HTMLResponse)
@@ -652,6 +687,42 @@ def delivery_remove(request: Request, expected_id: str):
     book.remove(expected_id)
     msg = f"Removed {e.supplier} ({e.day})." if e else "That order was already gone."
     return RedirectResponse(f"/setup?s=orders&notice={quote(msg)}#orders", status_code=303)
+
+
+def _back(value) -> str:
+    back = str(value or "")
+    return back if back.startswith("/") and not back.startswith("//") else "/"
+
+
+@app.post("/checks")
+async def check_keep(request: Request):
+    """Keep a scan check in the carrier record. The check is computed again here from the scan's details;
+    the page's answer is never taken from the form."""
+    form = await request.form()
+    claim = _claim(str(form.get("claim", "")))
+    try:
+        day = date.fromisoformat(str(form.get("date", "")))
+        when = datetime.combine(day, datetime.strptime(str(form.get("at", "")), "%H:%M").time())
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD and at HH:MM")
+    carrier, tracking = str(form.get("carrier", "")).strip()[:40], str(form.get("tracking", "")).strip()[:60]
+
+    def keep():
+        found = _check_attempt(when, claim)
+        order = next((e for e in book.for_day(day) if tracking and e.tracking == tracking), None)
+        return checks.keep(found, carrier, tracking, order, demo=_ring().name == "synthetic")
+    try:
+        await run_in_threadpool(keep)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return RedirectResponse(_back(form.get("back")) + "#record", status_code=303)
+
+
+@app.post("/checks/{check_id}/delete")
+async def check_delete(request: Request, check_id: str):
+    form = await request.form()
+    checks.remove(check_id)
+    return RedirectResponse(_back(form.get("back")) + "#record", status_code=303)
 
 
 @app.get("/api/deliveries")

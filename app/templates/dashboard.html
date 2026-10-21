@@ -35,7 +35,20 @@
     <p class="reason">{{ attempt.text }}</p>
     {% if pack_href %}{{ stake(scan_order) }}{% endif %}
     {% if attempt.visit and attempt.visit.frame_url %}<div class="thumb receipts"><a href="{{ attempt.visit.frame_url }}"><img src="{{ attempt.visit.frame_url }}" alt="{{ attempt.visit|frame_label }} at {{ attempt.visit.time }}"></a>{{ delete_frame(attempt.visit.frame_url, back) }}</div>{% endif %}
-    {% if pack_href %}<p class="next"><a class="primary" href="{{ pack_href }}">Build the dispute pack</a></p>{% endif %}
+    {% set back_here = request.url.path ~ '?' ~ request.url.query %}
+    <div class="next">
+      {% if pack_href %}<a class="primary" href="{{ pack_href }}">Build the dispute pack</a>{% endif %}
+      {% if attempt.outcome not in refused %}
+      {% if kept %}
+      <form method="post" action="/checks/{{ kept.id }}/delete" class="keep"><input type="hidden" name="back" value="{{ back_here }}"><span class="why">Kept in {{ (carrier or 'the carrier') ~ "'s" }} record.</span> <button type="submit" class="quiet">Remove</button></form>
+      {% else %}
+      <form method="post" action="/checks" class="keep">
+        {% for k, v in (("date", b.date), ("at", asked_time), ("claim", attempt.claim), ("carrier", carrier), ("tracking", tracking), ("back", back_here)) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        <button type="submit" class="secondary">Keep in {{ (carrier ~ "'s") if carrier else "the carrier" }} record</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
   </section>
   {% endif %}
 
@@ -67,7 +80,18 @@
     {% else %}
     <p class="first">No door activity recorded for {{ b.date }}.</p>
     {% endif %}
-    {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
+    {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none and not month_money %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if record or month_money %}
+  <section class="block record" id="record" aria-labelledby="recordh">
+    <h2 id="recordh">Carrier record, {{ b.date|month_name }}</h2>
+    {% if record %}<ul>{% for c in record %}<li>{{ c.text }}{% if c.demo %} <span class="badge b-demo">{{ 'demo' if c.all_demo else c.demo ~ ' demo' }}</span>{% endif %}
+      <details class="kept"><summary class="why">{{ c.n }} kept check{{ 's' if c.n != 1 }}</summary><ul class="why">{% for k in c.checks %}<li>{{ k.day }} {{ k.at }}{% if k.tracking %} · {{ k.tracking }}{% endif %}{% if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }}{% if k.demo %} · demo{% endif %} <form method="post" action="/checks/{{ k.id }}/delete" class="keep"><input type="hidden" name="back" value="/?date={{ b.date }}"><button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>{% endfor %}</ul></details>
+    </li>{% endfor %}</ul>{% endif %}
+    {% set mm = month_money %}
+    {% if mm %}<p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}{% if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}{% if mm.demo %} ({{ 'all' if mm.demo == mm.disputed else mm.demo }} demo){% endif %}{% if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door{% if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}{% endif %}.{% if mm.each %} <span class="why">At {{ mm.each }} each{% if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>{% else %}, your number{% endif %}.</span>{% endif %}</p>{% endif %}
   </section>
   {% endif %}
 

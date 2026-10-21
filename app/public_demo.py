@@ -74,7 +74,7 @@ WHAT = (("/deliveries/", "record what staff found when they unpacked the order")
         ("/deliveries", "add an order"), ("/orders/import", "import an orders file"),
         ("/setup", "save the shop's name and hours"), ("/frames/", "delete a door frame"),
         ("/webhooks/ring", "store a Ring webhook"), ("/connect", "save or forget a Ring sign-in"),
-        ("/pair", "pair a phone"))
+        ("/pair", "pair a phone"), ("/checks", "keep or remove a scan check in the carrier record"))
 
 BANNER = ('<div class="banner note" role="note" id="public-demo"><strong>Public demo: made-up shop, made-up '
           'deliveries.</strong> The door events are generated and the one Ring alert is a signed replay; '
@@ -103,6 +103,7 @@ class Demo:
 
 def _read_only_stores():
     from app.cache import ClassificationCache
+    from app.checks import CheckBook
     from app.deliveries import DeliveryBook, FrameStore
     from app.live import LiveLog
     from app.ring import RingSource
@@ -138,6 +139,10 @@ def _read_only_stores():
         def _expire(self):
             pass
 
+    class Checks(CheckBook):
+        def _write(self, rows):
+            raise ReadOnly("a kept check")
+
     class Cache(ClassificationCache):
         def put(self, event_id, row):
             raise ReadOnly("a classification")
@@ -158,7 +163,7 @@ def _read_only_stores():
         def forget_token(self):
             raise ReadOnly("a Ring sign-in")
 
-    return Book, Profile, Frames, Webhooks, Live, Cache, Source
+    return Book, Profile, Frames, Webhooks, Live, Cache, Source, Checks
 
 
 class _NoBedrock:
@@ -229,6 +234,7 @@ def seed(data: Path, tz, today: date) -> tuple[date, str]:
     demo._import_orders(data, orders)
     key = secrets.token_hex(16)  # signs this one replay and is then forgotten; the app holds no webhook key
     demo.feed_package_alert(_Direct(WebhookLog(data / "ring-webhooks.jsonl"), key), day, tz, key)
+    demo.seed_past_checks(data, day, tz)  # the carrier record's history, marked demo
     return day, orders
 
 
@@ -242,11 +248,12 @@ def install(main: ModuleType, data: Path, today: date | None = None, setattr=set
     tz = main.settings.tz
     data.mkdir(parents=True, exist_ok=True)
     day, orders = seed(data, tz, today or datetime.now(tz).date())
-    Book, Profile, Frames, Webhooks, Live, Cache, Source = _read_only_stores()
+    Book, Profile, Frames, Webhooks, Live, Cache, Source, Checks = _read_only_stores()
     for name, value in {
         "DATA": data,
         "profile": Profile(data / "shop.json", demo_script.SHOP_NAME, demo_script.SHOP_HOURS),
         "book": Book(data / "expected-deliveries.json"),
+        "checks": Checks(data / "checks.json"),
         "frames": Frames(data),
         "classifier": RulesClassifier(),
         "cache": Cache(None),

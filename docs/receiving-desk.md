@@ -142,6 +142,21 @@ It is the sender's cost per failed parcel, not the shop's lost trade, so the pag
 average and ask for the owner's number. Other currencies get no default. The "At stake" line also
 names the order's own value from the imported CSV, as written there.
 
+## The carrier record (`app/checks.py`, `/checks`)
+
+A checked scan can be kept: "Keep in Northline Parcel's record" under the verdict POSTs the scan's
+details to `/checks`, which checks the scan again (the outcome is never taken from the form) and keeps the
+finding in `checks.json` (0600, like every store). Keeping the same scan again replaces it. It is a write
+like any other: owner-only and same-site (`app/owner.py`), refused in the public demo, and each kept check
+has a Remove button (`/checks/{id}/delete`).
+
+From the kept checks the desk shows, for the month on screen, one line per carrier ("Northline Parcel
+scanned you closed 3 times in October, every time during posted hours"), with a demo badge when any of them
+were checked on demo data, and the month's money: disputed scans times the cost per missed delivery above
+(the owner's number or the labelled survey average), next to the orders whose courier Ring or Bedrock saw
+at the door that month. Order values are listed per check as written, never summed. `scripts/demo.py`
+keeps two earlier demo checks of its made-up carrier, so the demo's desk has a record to show.
+
 ## 4. Staff tap (`/deliveries/{id}/received`)
 
 Optional. Once Ring or Bedrock has seen the courier for an order, staff can tap **All there**,
