@@ -71,11 +71,13 @@ def test_bedrock_without_a_frame_says_so():
 
 
 def test_bedrock_reply_is_parsed_with_request_id():
+    from tests.bedrock_fakes import label
+
     class Fake:
         def converse(self, **kw):
             assert kw["messages"][0]["content"][0]["image"]["source"]["bytes"] == b"jpg"
-            return {"output": {"message": {"content": [{"text": '{"type": "delivery", "confidence": 0.9, "reason": "parcel"}'}]}},
-                    "ResponseMetadata": {"RequestId": "rid"}}
+            assert kw["toolConfig"]["toolChoice"] == {"tool": {"name": "label_door_frame"}}
+            return label("delivery", 0.9, "parcel", "rid")
 
     e = RING.events_for_day(date(2026, 10, 7))[0]
     e.snapshot = b"jpg"

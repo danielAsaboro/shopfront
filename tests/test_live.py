@@ -12,6 +12,7 @@ from app.classify.bedrock import BedrockClassifier
 from app.classify.rules import RulesClassifier
 from app.live import MAX_FRAMES_CLASSIFIED, LiveError, LiveLog
 from app.ring.api import RingApiClient, RingAuth, RingError, RingStatus
+from tests.bedrock_fakes import label
 
 TZ = ZoneInfo("America/Los_Angeles")
 DEV = "ava1.ring.device.TEST"
@@ -68,9 +69,8 @@ class FakeBedrock:
 
     def converse(self, **kw):
         self.calls += 1
-        conf = "0.9" if self.calls == 2 else "0.6"
-        return {"output": {"message": {"content": [{"text": f'{{"type": "delivery", "confidence": {conf}, "reason": "parcel {self.calls}"}}'}]}},
-                "ResponseMetadata": {"RequestId": f"br-{self.calls}"}}
+        conf = 0.9 if self.calls == 2 else 0.6
+        return label("delivery", conf, f"parcel {self.calls}", f"br-{self.calls}")
 
 
 def test_session_is_labelled_by_its_most_confident_frame_and_caps_bedrock_calls(tmp_path):

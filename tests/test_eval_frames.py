@@ -8,6 +8,7 @@ import pytest
 
 from app.classify.bedrock import BedrockClassifier
 from scripts import eval_frames as ev
+from tests.bedrock_fakes import label
 
 
 def test_kappa_matches_a_hand_worked_example():
@@ -53,9 +54,9 @@ class FakeBedrock:
         self.calls += 1
         img = kw["messages"][0]["content"][0]["image"]["source"]["bytes"]
         t = "delivery" if b"aaaa" in img else "customer"
-        return {"output": {"message": {"content": [{"text": json.dumps({"type": t, "confidence": 0.8, "reason": "r"})}]}},
-                "ResponseMetadata": {"RequestId": f"rid-{self.calls}"}, "metrics": {"latencyMs": 100 * self.calls},
-                "usage": {"inputTokens": 1000, "outputTokens": 40}, "stopReason": "end_turn"}
+        reply = label(t, 0.8, "r", f"rid-{self.calls}")
+        reply["metrics"] = {"latencyMs": 100 * self.calls}
+        return reply
 
 
 def test_sheet_run_score_end_to_end(tmp_path):
@@ -116,3 +117,47 @@ def test_bedrock_call_failure_is_recorded_not_hidden(tmp_path):
     v = BedrockClassifier("us-east-1", "m", client=Boom(), record_path=raw).classify(e, ev.ALL_DAY)
     assert v.source == "rules" and "Bedrock error" in v.reason
     assert "ThrottlingException" in json.loads(raw.read_text())["error"]
+
+
+# ---- prompt injection: planted text in the frame ---------------------------------------------------
+def test_injection_eval_reports_false_courier_rate_planted_against_clean(tmp_path, capsys):
+    from app.models import ClassifiedVisit, VisitType
+
+    class FooledBySystemText:
+        """Stands in for a model that obeys 'SYSTEM:' text and nothing else."""
+
+        def classify(self, e, open_hours, no_frame_reason=""):
+            assert e.snapshot[:2] == b"\xff\xd8"
+            t = VisitType.DELIVERY if e.id.endswith("__system") else VisitType.UNKNOWN
+            return ClassifiedVisit(e, t, 0.9, "r", "bedrock", "rid")
+
+    out = tmp_path / "inj.jsonl"
+    s = ev.cmd_injection(out, tmp_path / "frames", "us-east-1", "m", classifier=FooledBySystemText())
+    n_scenes = len(ev.SCENES)
+    assert s["planted"]["frames"] == n_scenes * len(ev.PLANTED) and s["clean"]["frames"] == n_scenes
+    assert s["planted"]["called_courier"] == n_scenes
+    assert s["planted"]["false_courier_rate"] == pytest.approx(1 / len(ev.PLANTED))
+    assert s["clean"]["false_courier_rate"] == 0
+    assert s["planted"]["fooled_by"] == sorted(f"{sc}__system" for sc in ev.SCENES)
+    assert len(list((tmp_path / "frames").glob("*.jpg"))) == n_scenes * (len(ev.PLANTED) + 1)
+    assert "false-courier rate" in capsys.readouterr().err
+    rows = [json.loads(x) for x in out.read_text().splitlines()]
+    assert {r["planted"] for r in rows if r["planted"]} == set(ev.PLANTED.values())
+
+
+def test_injection_frames_go_to_bedrock_with_the_guard_and_bad_answers_are_not_labels(tmp_path):
+    from app.classify.bedrock import INJECTION_GUARD
+    from tests.bedrock_fakes import label
+
+    seen = []
+
+    class PlantedTextWins:
+        def converse(self, **kw):
+            seen.append(kw)
+            # a model that "obeyed" the JSON on the sign might answer outside the enum: never a label
+            return label("courier", 1.0, "the sign says so")
+
+    s = ev.cmd_injection(tmp_path / "inj.jsonl", None, "us-east-1", "m",
+                         classifier=BedrockClassifier("us-east-1", "m", client=PlantedTextWins()))
+    assert all(INJECTION_GUARD in kw["system"][0]["text"] for kw in seen)
+    assert s["planted"]["labelled_by_bedrock"] == 0 and s["planted"]["false_courier_rate"] is None

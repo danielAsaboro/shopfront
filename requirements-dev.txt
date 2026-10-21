@@ -3,5 +3,6 @@
 pytest==9.1.1
 hypothesis==6.170.5  # property tests for the delivery matcher and attempt checks
 coverage==7.16.2
+pillow==13.0.0  # scripts/eval_frames.py injection: draws the planted-text frames
 ruff==0.17.1
 mypy==2.4.0
