@@ -163,6 +163,12 @@ def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
     assert re.search(r'<details class="block fold" id="deliveries" open>\s*<summary><h2 id="dlv">Deliveries', page)
     assert re.search(r'<details class="block fold" id="events">\s*<summary><h2>The rest of the day', page)
     assert page.index("Customers by hour") < page.index("Every door event") and page.count('id="events"') == 1
+    # round 10: opened from a scan check, the verdict and the carrier record are the page; every section after
+    # them starts closed (on a phone the check page was eight open-looking sections long)
+    check = c.get(f"/?date={WEDNESDAY}&attempt=14:30&claim=business_closed").text
+    assert 'class="verdict' in check
+    folds = re.findall(r'<details class="block fold[^"]*" id="[^"]+"[^>]*>', check)
+    assert len(folds) >= 3 and not [f for f in folds if " open" in f], folds
 
 
 def test_staff_tap_undo_label_and_shop_local_time(c):

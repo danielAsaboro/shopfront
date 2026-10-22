@@ -188,8 +188,9 @@
   {% set ns = namespace(said=[]) %}
   {% for x in rows %}{% set v = x.visit or (x.possible[0] if x.possible else none) %}{% if v %}{% set k = v.labelled_by|badge(v.event_source) %}{% if k in ('demo', 'replay') and k not in ns.said %}{% set ns.said = ns.said + [k] %}{% endif %}{% endif %}{% endfor %}
   {% set n_possible = r.expected|selectattr('status', 'equalto', 'possible')|list|length %}
-  {# Open on every visit (round 7): the deliveries are the desk; the other folds stay closed #}
-  <details class="block fold" id="deliveries" open>
+  {# Open on every visit (round 7): the deliveries are the desk; the other folds stay closed. Opened from a scan
+     check (round 10), the verdict and the carrier record are the page, so every section after them starts closed #}
+  <details class="block fold" id="deliveries"{{ ' open' if not attempt }}>
     <summary><h2 id="dlv">Deliveries</h2>{% if r.total %}<span class="legend">{% if n_possible %}{{ r.seen }} confirmed, {{ n_possible }} possible, of {{ r.total }} expected{% elif ring_down %}{{ r.seen }} of {{ r.total }} confirmed by webhook{% else %}{{ r.seen }} of {{ r.total }} expected reached the door{% endif %}</span>{% else %}<span class="legend">no orders</span>{% endif %}{% for k in ns.said %} <span class="badge b-{{ k }}">{{ k }}</span>{% endfor %}</summary>
     {# The day's deliveries in a line or two, inside their own section (round 10: under the carrier record it read
        as a stray headline). With no scan checked, the first line leads; with one, the lines are a list. #}
