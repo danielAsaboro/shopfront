@@ -370,12 +370,15 @@ def _facts(p: dict) -> str:
         conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
                               f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
         line = f"Our posted hours that day were {p['posted_hours']}, and {_recorder(p['timeline'])} recorded " \
-               f"{kinds} {_window(a)}{conf}."
+               f"{kinds} {_window(a)}{conf}.{_sides(a, tol)}"
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
         if f["outcome"] == rc.OPEN_DOOR_BUSY:  # what backs "open"; the door log names every event near the scan
-            return line + " We were open, and our door was in use around the time of the scan."
+            when = ("around the time of the scan" if a.get("before") and a.get("after") else
+                    "after the scan" if a.get("after") else "before the scan" if a.get("before") else
+                    "around the time of the scan")  # a check kept before round 9 has no sides: as it said then
+            return line + f" We were open, and our door was in use {when}."
         if not a.get("near"):
             return line + f" It recorded nothing at our door within {tol} minutes of the scan."
         return line + (f" {'The visit' if a['near'] == 1 else 'Every visit'} it recorded within {tol} minutes of "
@@ -386,6 +389,25 @@ def _facts(p: dict) -> str:
         return f"The visit {_recorder([v])} recorded nearest that time, at {v['time']}, was not a courier, " \
                f"judged from the camera frame."
     return f["text"]
+
+
+def _sides(a: dict, tol: int) -> str:
+    """" Outside the 10 minutes either side of the scan, the last door event before it was at 14:12 and the first
+    after it at 14:45.": which side of the scan the door was used on, from the finding's own window, so the draft
+    never stretches use on one side to "around". Events near the scan aren't named here (one could be the courier;
+    the door log lists them)."""
+    b, f = a.get("before"), a.get("after")
+    mins = int(rc.ACTIVITY.total_seconds() // 60)
+    if b and f:
+        return (f" Outside the {tol} minutes either side of the scan, the last door event before it was at {b} and "
+                f"the first after it at {f}.")
+    if f:
+        return (f" Outside the {tol} minutes either side of the scan, nothing was recorded at our door in the {mins} "
+                f"minutes before it; the first event after it was at {f}.")
+    if b:
+        return (f" Outside the {tol} minutes either side of the scan, the last door event before it was at {b}; "
+                f"nothing was recorded in the {mins} minutes after it.")
+    return ""
 
 
 def _people(a: dict) -> str:

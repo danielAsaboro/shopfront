@@ -376,6 +376,20 @@ def _no_courier_frame(door: list[dict]) -> dict:
     return {"ok": None, "text": "No frame confirmed the courier" if held else "No camera frame of the courier"}
 
 
+def _sides(door: list[dict], scan: int | None) -> str:
+    """" (2 before the scan, 3 after)" or " (all after the scan)": which side of the scan the door was used on, so
+    "a busy door" never stands for use on one side only. The times are in the strip and under Details."""
+    ms = [m for r in door if (m := _mins(r.get("time", ""))) is not None]
+    if scan is None or not ms:
+        return ""
+    b = sum(1 for m in ms if m < scan)
+    if not b:
+        return " (all after the scan)"
+    if b == len(ms):
+        return " (all before the scan)"
+    return f" ({b} before the scan, {len(ms) - b} after)"
+
+
 def verdict_facts(c: dict | None) -> list[dict]:
     """Three short facts under a scan's one-line verdict, each {"ok": True/False/None, "text": ...}: the posted
     hours, the door around the scan, and the courier (or the camera, when that is what decides it). None is a
@@ -398,7 +412,8 @@ def verdict_facts(c: dict | None) -> list[dict]:
             return facts + [{"ok": False, "text": "No door events that day"}]
         lo, hi = a.get("from", ""), a.get("to", "")
         n = a.get("events", len(door))
-        facts.append({"ok": True, "text": f"{_events(n)} {lo}–{hi}{_people(door)}"} if n else
+        facts.append({"ok": True, "text": f"{_events(n)} {lo}–{hi}{'' if out == 'posted_closed' else _sides(door, scan)}"
+                                          f"{_people(door)}"} if n else
                      {"ok": False, "text": f"No door events {lo}–{hi}"})
         if out == "posted_closed":
             return facts
@@ -500,7 +515,8 @@ def _strip_label(r: dict) -> str:
 
 def door_strip(c: dict | None, hours: str | None = None, order: dict | None = None,
                frame: dict | None = None) -> dict | None:
-    """The door around a scan as a picture: a 60-minute track centred on the carrier's scan, the posted hours
+    """The door around a scan as a picture: a 60-minute track centred on the carrier's scan (the same 30 minutes
+    either side that the finding, its text and the pack's door log call "around the scan", labelled so), the posted hours
     shaded, one mark per door event by what it rests on, the scan as its own tick, the 10 minutes that count
     as "near" bracketed, the order's delivery window when it overlaps, and a frame thumbnail when Shopfront
     holds one. Positions are percentages, so the SVG fits any width with readable text. `text` is the same
@@ -536,7 +552,7 @@ def door_strip(c: dict | None, hours: str | None = None, order: dict | None = No
         dots.append({"x": pct(m), "kind": _strip_kind(r), "label": _strip_label(r)})
     ticks = [{"x": pct(m), "label": _clock(m)} for m in range(lo, hi + 1, 15)]
     kinds = [k for k in STRIP_KIND if any(d["kind"] == k for d in dots)]
-    words = (f"Door from {_clock(lo)} to {_clock(hi)}. "
+    words = (f"Door around the scan, {reach} minutes either side: {_clock(lo)} to {_clock(hi)}. "
              + ((f"Posted hours {hours} cover " + ("all of it. " if band["w"] >= 99.9 else "the shaded part. "))
                 if band else "Posted hours: closed that day. " if hours == "closed" else
                 f"All of it is outside the posted hours ({hours}). " if hours else "")
@@ -545,6 +561,7 @@ def door_strip(c: dict | None, hours: str | None = None, order: dict | None = No
              + (f"{len(dots)} door event{'' if len(dots) == 1 else 's'}: " + "; ".join(d["label"] for d in dots) + "."
                 if dots else "No door events in this hour."))
     return {"scan": pct(scan), "scan_label": f"Scan {_clock(scan)}", "near": {"x": pct(scan - tol),
-            "w": round(pct(scan + tol) - pct(scan - tol), 2), "label": f"±{tol} min"},
+            "w": round(pct(scan + tol) - pct(scan - tol), 2), "label": f"near ±{tol}"},
+            "around": f"around ±{reach} min",
             "band": band, "window": win, "dots": dots, "ticks": ticks, "kinds": kinds,
             "kind_text": STRIP_KIND, "text": words, "frame": frame}

@@ -41,15 +41,20 @@ def test_the_demo_day_has_no_doorbell_press_in_the_scanned_orders_window():
     assert not demo.bell_quiet([at(10, 9), at(14, 36)], date(2026, 10, 20), TZ)  # round 7's demo day
     assert demo.bell_quiet([at(10, 9), at(12, 59), at(16, 1)], date(2026, 10, 20), TZ)
     assert not demo.has_scan_slot(date(2026, 10, 20), TZ)
-    assert demo.demo_day(date(2026, 10, 21), usable=lambda d: demo.has_scan_slot(d, TZ)) == date(2026, 10, 19)
+    # round 9: Oct 19's door was only in use after the 14:30 scan (14:35-14:51), so the demo moves to Oct 15
+    assert not demo.has_scan_slot(date(2026, 10, 19), TZ)
+    assert demo.demo_day(date(2026, 10, 21), usable=lambda d: demo.has_scan_slot(d, TZ)) == date(2026, 10, 15)
 
 
 def test_the_scan_is_a_fixed_afternoon_minute_not_a_quiet_one():
     """Round 2: the demo used to hunt for a minute with nothing near it. It now takes 14:30 in the dairy
-    window, and only asks that the door was in use 10 to 30 minutes either side."""
+    window, and only asks that the door was in use 10 to 30 minutes before it and 10 to 30 minutes after it
+    (round 9: both sides, so "in use around the scan" is true of the demo's door)."""
     assert demo.SCAN_WINDOW[0] <= demo.SCAN_AT < demo.SCAN_WINDOW[1]
     at = lambda h, m: datetime(2026, 10, 20, h, m, tzinfo=TZ)  # noqa: E731
-    assert demo.door_in_use([at(14, 2), at(14, 31)], at(14, 30))  # 14:02 is 28 min away
+    assert demo.door_in_use([at(14, 2), at(14, 45)], at(14, 30))  # 28 min before, 15 after
+    assert not demo.door_in_use([at(14, 2), at(14, 31)], at(14, 30))  # nothing beyond the near minutes after it
+    assert not demo.door_in_use([at(14, 35), at(14, 45), at(14, 51)], at(14, 30))  # round 8's demo: all after
     assert not demo.door_in_use([at(14, 25), at(14, 36)], at(14, 30))  # only events near enough to be the courier
     assert not demo.door_in_use([at(13, 50)], at(14, 30))
 

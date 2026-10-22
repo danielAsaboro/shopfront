@@ -5,8 +5,9 @@
 What it does, in order:
 
 1. Picks the demo day: the most recent day before today when the demo shop is open, its synthetic
-   door was in use around the scan time, and nobody rang the bell in the scanned order's delivery window
-   (a press there would hand the carrier "our driver rang"), so nothing it shows is in the future.
+   door was in use on both sides of the scan time, and nobody rang the bell in the scanned order's
+   delivery window (a press there would hand the carrier "our driver rang"), so nothing it shows is in
+   the future.
 2. Copies samples/orders.csv with its dates moved to that day and imports it into a fresh data
    folder (.data/demo, git-ignored), the same way the CSV upload on /setup does.
 3. Starts Shopfront on that folder with synthetic door events (no Ring account needed; every page
@@ -101,9 +102,12 @@ def dated_orders(text: str, day: date) -> str:
 
 
 def door_in_use(events: list[datetime], t: datetime) -> bool:
-    """Whether the door recorded something 10 to 30 minutes either side of `t`: use of the door beyond
-    anything near enough to the scan to have been the courier (app/reconcile.py, check_closed_scan)."""
-    return any(10 < abs((e - t).total_seconds()) / 60 <= 30 for e in events)
+    """Whether the door recorded something 10 to 30 minutes before `t` and something 10 to 30 minutes after it: use
+    of the door on both sides of the scan, beyond anything near enough to have been the courier
+    (app/reconcile.py, check_closed_scan). Round 8: a demo day whose door was only used after the scan let the
+    draft say "in use around the time of the scan" about events all after it."""
+    mins = [(e - t).total_seconds() / 60 for e in events]
+    return any(-30 <= m < -10 for m in mins) and any(10 < m <= 30 for m in mins)
 
 
 def _package_at(day: date, tz: ZoneInfo) -> datetime:
@@ -123,8 +127,8 @@ def bell_quiet(presses: list[datetime], day: date, tz: ZoneInfo) -> bool:
 
 
 def has_scan_slot(day: date, tz: ZoneInfo) -> bool:
-    """Whether `day` tells the demo's story: the synthetic door was in use around SCAN_AT (people, not the
-    courier), and nobody rang the bell in the dairy order's window. The same generator, hours and time zone the
+    """Whether `day` tells the demo's story: the synthetic door was in use on both sides of SCAN_AT (people, not
+    the courier), and nobody rang the bell in the dairy order's window. The same generator, hours and time zone the
     demo server uses; the demo picks its day, it doesn't change what the generator makes."""
     from app.hours import parse_hours
     from app.ring.synthetic import SyntheticRingClient

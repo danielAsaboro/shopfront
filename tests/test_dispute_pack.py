@@ -370,8 +370,8 @@ def test_every_window_is_named_where_it_appears_and_the_hedge_is_one_line(monkey
                                                          "claim": "business_closed"}).text
     assert "Door log, 30 minutes either side of the scan</h2>" in page
     # round 4: the window is the verdict's fact and its picture, which brackets the 10 minutes that count as near
-    assert "door events 12:10–13:10" in page and "<desc id=\"pack-d\">Door from 12:10 to 13:10." in page
-    assert "10 minutes either side bracketed as near the scan" in page and ">±10 min</text>" in page
+    assert "door events 12:10–13:10" in page and "<desc id=\"pack-d\">Door around the scan, 30 minutes either side: 12:10 to 13:10." in page
+    assert "10 minutes either side bracketed as near the scan" in page and ">near ±10</text>" in page and ">around ±30 min</text>" in page
     assert page.count("door answered") == 1 and page.count("can miss people") == 1
 
 
