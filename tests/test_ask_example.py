@@ -14,7 +14,7 @@ from app.deliveries import DeliveryBook, FrameStore
 from app.ring import RingSource
 from app.ring.webhooks import WebhookLog
 from app.shop import ShopProfile
-from tests.test_pages import ring_courier
+from tests.test_pages import replayed_courier
 
 DAY = date(2026, 10, 7)  # a Wednesday, open 8-18
 
@@ -94,17 +94,19 @@ def test_a_lasting_failure_takes_the_box_away(c, monkeypatch):
 
 
 def test_the_example_is_what_the_fake_agent_answers_from_the_tools(c, monkeypatch):
-    """The recording behind pages.ASK_EXAMPLE: the demo's flour order and Ring's 10:12 package alert, the fake
-    agent reading the real deliveries tool, the answer built only from what the tool returned."""
+    """The recording behind pages.ASK_EXAMPLE: the demo's flour order and its replayed 10:12 package alert (round
+    10: the demo's alert is Shopfront's replay, so the example never credits Ring for it), the fake agent reading
+    the real deliveries tool, the answer built only from what the tool returned."""
     main.book.add(DAY, "Hillside Mill", "10:00", "11:00", order_ref="PO-1041")
-    ring_courier(main.webhook_log, datetime(2026, 10, 7, 10, 12, tzinfo=main.settings.tz))
+    replayed_courier(main.webhook_log, datetime(2026, 10, 7, 10, 12, tzinfo=main.settings.tz))
 
     def factory(tools, trace, shop, region, model_id):
         def run(question):
             trace.tools.append({"tool": "deliveries", "args": {"day": "yesterday"}})
             x = next(r for r in tools.deliveries("yesterday")["expected"] if r["visit"])
-            assert x["visit"]["labelled_by"] == "ring"
-            return (f"Yes. Ring's package alert put a courier at the door at {x['visit']['time']}, and Shopfront "
+            assert x["visit"]["provenance"] == "replay"
+            return (f"Yes. A replayed delivery alert (demo data, not sent by Ring) put a courier at the door at "
+                    f"{x['visit']['time']}, and Shopfront "
                     f"matched it to {x['supplier']}'s order {x['order_ref']}. Ring has no door-answered signal, so "
                     f"this doesn't show the sacks were handed over.")
         return run
@@ -118,5 +120,6 @@ def test_the_example_is_what_the_fake_agent_answers_from_the_tools(c, monkeypatc
     assert t["call"] == f'deliveries(day="{d["tools"][0]["args"]["day"]}")'
     x = next(r for r in main._agent_tools(date(2026, 10, 8)).deliveries("yesterday")["expected"] if r["visit"])
     assert t["returned"] == (f"{x['supplier']}, order {x['order_ref']}, due {x['window_start']}–{x['window_end']}: "
-                             f"courier at {x['visit']['time']}, labelled by Ring's package_delivery alert "
-                             f"(labelled_by: {x['visit']['labelled_by']})")
+                             f"courier at {x['visit']['time']}, from a replayed package alert "
+                             f"(provenance: {x['visit']['provenance']})")
+    assert "Ring's package alert" not in pages.ASK_EXAMPLE["answer"] + t["returned"]

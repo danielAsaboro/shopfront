@@ -8,10 +8,13 @@ opening to an hour after closing, the shape of Shopfront's own GET /v1/devices/{
 (app/ring/status.py), so the demo's dispute pack shows its camera-coverage line. Each is marked `demo`, and the
 coverage sentence says they were made up, not asked of Ring.
 
-Like a doorbell with Ring's Smart Alerts on, some motion by people carries `ring_subtype="human"` (API
-reference, Notifications > Motion Detection: sub_type `human`, "Human detected"), so the demo shows the path
-Ring's own person signal takes. They are drawn from a separate seed, so the events themselves don't change, and
-they stay `source="synthetic"`: every page and pack names them demo data, never Ring's alerts.
+Like a doorbell with Ring's Smart Alerts on, motion by people carries `ring_subtype="human"` (API reference,
+Notifications > Motion Detection: sub_type `human`, "Human detected"; Event History's `motion.human` filter,
+docs/ring.md section 3), so the demo shows the path Ring's own person signal takes. Every customer's visit carries
+it (round 10: a third of them used to be time-of-day guesses, "customer (guess)" rows all over the demo's door
+log); staff and after-hours motion only partly, as from people Ring didn't classify. Whether an event carries it
+is drawn from a separate seed, so the events themselves don't change, and they stay `source="synthetic"`: every
+page and pack names them demo person alerts, never Ring's.
 """
 
 from __future__ import annotations
@@ -27,8 +30,9 @@ from app.ring.base import RingClient
 STATUS_EVERY_S = 300  # the demo's made-up status checks, as often as the live sampler's default
 
 # Share of people's motion events that the demo marks the way Ring's Smart Alert would ("human"); the rest stay
-# plain motion, as from a doorbell with Smart Alerts off or a person Ring didn't classify
-HUMAN_SHARE = {VisitType.CUSTOMER: 0.7, VisitType.STAFF: 0.7, VisitType.AFTER_HOURS: 0.4}
+# plain motion, as from a person Ring didn't classify. Customers always: the demo's door traffic is person alerts,
+# not rule guesses. Staff partly, so the desk still shows the time-of-day rules at work (staff before opening).
+HUMAN_SHARE = {VisitType.CUSTOMER: 1.0, VisitType.STAFF: 0.7, VisitType.AFTER_HOURS: 0.4}
 
 # Relative customer traffic per hour of the day (morning coffee + lunch peaks).
 HOURLY_WEIGHT = {8: 6, 9: 8, 10: 5, 11: 6, 12: 10, 13: 8, 14: 4, 15: 4, 16: 5, 17: 6, 18: 3}

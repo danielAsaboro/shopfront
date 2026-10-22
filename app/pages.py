@@ -201,14 +201,14 @@ def scan_lead(finding: dict | None, carrier: str = "") -> str | None:
 # tests/test_ask_example.py (the same tools over the demo's door data), never from Bedrock: the page says so.
 ASK_EXAMPLE = {
     "question": "Did the flour come yesterday?",
-    "answer": "Yes. Ring's package alert put a courier at the door at 10:12, and Shopfront matched it to "
-              "Hillside Mill's order PO-1041. Ring has no door-answered signal, so this doesn't show the sacks "
-              "were handed over.",
+    "answer": "Yes. A replayed delivery alert (demo data, not sent by Ring) put a courier at the door at 10:12, "
+              "and Shopfront matched it to Hillside Mill's order PO-1041. Ring has no door-answered signal, so "
+              "this doesn't show the sacks were handed over.",
     "tools": "deliveries(yesterday)",
     # the tool calls behind the answer, each with what the tool returned that the answer rests on
     "trace": [{"call": 'deliveries(day="yesterday")',
-               "returned": "Hillside Mill, order PO-1041, due 10:00–11:00: courier at 10:12, labelled by Ring's "
-                           "package_delivery alert (labelled_by: ring)"}],
+               "returned": "Hillside Mill, order PO-1041, due 10:00–11:00: courier at 10:12, from a replayed "
+                           "package alert (provenance: replay)"}],
 }
 
 

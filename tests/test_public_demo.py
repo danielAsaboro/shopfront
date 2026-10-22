@@ -503,3 +503,19 @@ def test_one_banner_and_no_owner_only_wording(client, demo):
     assert 'name="token"' not in connect.text and 'action="/connect"' not in connect.text
     check = client.get(demo.links["check"].split("#")[0]).text
     assert "Keep in Northline Parcel&#39;s record</button>" in check and "public demo saves nothing" in check
+
+
+def test_the_demo_door_is_demo_person_alerts_not_guesses_or_ring(client, demo):
+    """Round 10: every customer the demo door makes up carries Ring's motion + human sub_type shape, so the door
+    log reads as demo person alerts rather than rows of "customer (guess)", and nothing credits Ring for them."""
+    from app.reconcile import person
+
+    visits = main._visits(demo.day)
+    customers = [v for v in visits if v.event.truth and v.event.truth.value == "customer"]
+    assert customers and all(person(v) and v.event.source == "synthetic" for v in customers)
+    page = client.get(demo.links["desk"]).text
+    log = page.split('id="every-event"', 1)[1]
+    assert "customer (guess)" not in log
+    assert log.count('<td>person</td><td class="why">Demo person alert, no camera</td>') >= len(customers)
+    flat = " ".join(re.sub(r"<[^>]+>", " ", page).split())
+    assert re.search(r"· 0 labelled by Ring · \d+ by demo or replayed alerts, not Ring ·", flat), flat[-600:]
