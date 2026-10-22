@@ -13,6 +13,7 @@ from app import checks as kept_checks
 from app import bedrock_budget, dispute, pages, provenance
 from app.reconcile import CLAIMS, REFUSED
 from app.deliveries import RECEIVED, STATUS_TEXT, default_cost, headline, money_line
+from app.briefing import presses_line
 from app.hours import posted_hours
 from app.ring.api import RingError, RingStatus
 from app.routes import common
@@ -153,6 +154,11 @@ def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> di
     courier = [ln for ln in b.headline if "while the shop was closed" in ln]
     presses = [ln for ln in b.headline if ln.startswith("Doorbell pressed while closed")]
     rest = [ln for ln in b.headline if ln not in courier + presses]
+    # A press already offered as an order's possible courier (one inside a window set outside posted hours) is
+    # listed there only, never also as a press while closed
+    offered = {p["event_id"] for x in r["expected"] for p in x["possible"]}
+    left = [m for m in b.presses_while_closed if m["id"] not in offered]
+    presses = [presses_line(left)] if presses and left else []
     if {m["time"] for m in b.deliveries_while_closed} <= matched:
         courier = []  # the receipts already say it
     closed = courier + presses

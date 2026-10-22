@@ -416,6 +416,30 @@ def test_import_page_flow_and_staff_tap(isolated, monkeypatch):
     assert c.get("/dispute?date=2026-10-11").status_code == 400
 
 
+def test_a_press_is_listed_as_a_possible_courier_or_as_pressed_while_closed_never_both(isolated, monkeypatch):
+    """Round 8: the 18:46 press after an 18:00 close was the windowless order's possible courier and also
+    "Doorbell pressed while closed". Now a windowless order is offered presses in posted hours only, and a press in
+    a window set before opening is listed under that order, not again as a press while closed."""
+    from app import briefing
+    tz, rules, hours = main.settings.tz, RulesClassifier(), (time(8), time(18))
+
+    def press(hh, mm):
+        return rules.classify(DoorEvent(f"ding-{hh}{mm}", "d", datetime.combine(DAY, time(hh, mm), tzinfo=tz),
+                                        "ding", "ring"), hours)
+    day = [press(6, 30), press(10, 14), press(18, 46)]
+    monkeypatch.setattr(main, "_visits", lambda d: list(day) if d == DAY else [])
+    monkeypatch.setattr(briefing, "classify_day", lambda ring, cl, d, *a, **k: list(day) if d == DAY else [])
+    main.book.add(DAY, "Dairy Co", "06:00", "07:00")
+    main.book.add(DAY, "Pinecrest Paper Goods", order_ref="INV-2208")
+    page = TestClient(main.app).get("/", params={"date": DAY.isoformat()}).text
+    assert "Possible courier for Dairy Co: a doorbell press at 06:30, not confirmed by a camera frame." in page
+    assert ("Possible courier for Pinecrest Paper Goods: a doorbell press at 10:14, not confirmed by a camera frame."
+            in page)
+    assert "Doorbell pressed while closed, at 18:46; no camera frame confirmed who it was." in page
+    assert "Doorbell pressed while closed, at 06:30" not in page and "06:30, 18:46" not in page
+    assert "A doorbell press at 10:14 came during posted hours" in page
+
+
 def lunchtime(d):
     """A busy Wednesday lunchtime that Bedrock looked at: customers, no courier near 12:30."""
     tz = main.settings.tz

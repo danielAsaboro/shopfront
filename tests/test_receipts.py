@@ -127,3 +127,29 @@ def test_headline_says_a_bedrock_or_replayed_courier_exactly():
     assert headline(r) == ["Bay Mills: a replayed Ring package alert puts the courier at the door at 10:05."]
     late = receipts(rows, [seen(12, 0)], OPEN, NO_FRAMES)
     assert headline(late) == ["Bay Mills: Ring's package alert saw the courier at 12:00, outside its 09:00–11:00 window."]
+
+
+def test_an_order_with_no_window_is_only_offered_presses_during_posted_hours():
+    """Round 8, the demo's Pinecrest Paper Goods: staff in at 07:45, presses at 07:47, 10:14, 10:40 and 18:46,
+    open 08:00-18:00. The 07:47 press (before opening) and the 18:46 one (after closing) were offered as its
+    possible courier, and 18:46 was also listed as pressed while closed. Only presses in posted hours fit."""
+    pine = Expected("p", DAY.isoformat(), "Pinecrest Paper Goods", order_ref="INV-2208")
+    presses = [RULES.classify(ev(hh, mm), OPEN) for hh, mm in ((7, 47), (10, 14), (10, 40), (18, 46))]
+    r = receipts([pine], [staff(7, 45)] + presses, OPEN, NO_FRAMES)
+    row = r["expected"][0]
+    assert row["status"] == "possible" and [p["time"] for p in row["possible"]] == ["10:14", "10:40"]
+    assert headline(r) == ["Possible courier for Pinecrest Paper Goods: doorbell presses at 10:14 and 10:40, "
+                           "not confirmed by a camera frame."]
+    # only presses outside posted hours: nothing to offer, so nobody was seen
+    r = receipts([pine], [RULES.classify(ev(7, 47), OPEN), RULES.classify(ev(18, 46), OPEN)], OPEN, NO_FRAMES)
+    assert r["expected"][0]["status"] == "not_seen" and r["expected"][0]["possible"] == []
+    # a closed day has no posted hours, so no press fits an order with no window
+    r = receipts([pine], [RULES.classify(ev(11, 0), None)], None, NO_FRAMES)
+    assert r["expected"][0]["status"] == "not_seen" and r["expected"][0]["possible"] == []
+
+
+def test_an_order_with_a_window_before_opening_is_still_offered_the_press_in_it():
+    """The window is the supplier's own time, so a press inside it fits even before opening."""
+    dairy = Expected("d", DAY.isoformat(), "Dairy Co", "06:00", "07:00")
+    r = receipts([dairy], [RULES.classify(ev(6, 30), OPEN), RULES.classify(ev(18, 46), OPEN)], OPEN, NO_FRAMES)
+    assert [p["time"] for p in r["expected"][0]["possible"]] == ["06:30"]

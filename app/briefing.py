@@ -285,6 +285,12 @@ def _n(count: int, word: str) -> str:
     return f"{count} {word}" + ("" if count == 1 else "s")
 
 
+def presses_line(presses: list[dict]) -> str:
+    """"Doorbell pressed while closed, at 18:46; ...": the lead's line for presses nobody was in for."""
+    times = ", ".join(m["time"] for m in presses)
+    return f"Doorbell pressed while closed, at {times}; no camera frame confirmed who it was."
+
+
 def _headline(b: Briefing, hours: tuple[time, time] | None, has_last_week: bool) -> list[str]:
     lines: list[str] = []
     if b.deliveries_while_closed:
@@ -292,8 +298,7 @@ def _headline(b: Briefing, hours: tuple[time, time] | None, has_last_week: bool)
         n = len(b.deliveries_while_closed)
         lines.append(f"{n} courier{'' if n == 1 else 's'} at the door while the shop was closed, at {times}.")
     if b.presses_while_closed:  # a guess from the clock: say what Ring recorded, not who it was
-        times = ", ".join(m["time"] for m in b.presses_while_closed)
-        lines.append(f"Doorbell pressed while closed, at {times}; no camera frame confirmed who it was.")
+        lines.append(presses_line(b.presses_while_closed))
     if b.first_activity:
         lines.append(f"Staff activity at the door from {b.first_activity}"
                      + (f" until {b.last_activity}." if b.last_activity else "."))

@@ -320,7 +320,16 @@ def _due_by(e: Expected, tz) -> datetime:
     return datetime.combine(d + timedelta(days=1), time(0), tzinfo=tz)
 
 
-def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit]) -> dict[str, Expected]:
+def _fits(v: ClassifiedVisit, e: Expected, open_hours) -> bool:
+    """Whether an unidentified door event could be this order's courier: inside the order's window, or, for an
+    order with no window, during posted hours. A press before opening or after closing named no order's time,
+    so it stays a doorbell press while closed and is never offered to an order that could have come any time."""
+    if e.window():
+        return _distance(v, e) == timedelta(0)
+    return _is_open(v.event.timestamp, open_hours)
+
+
+def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit], open_hours) -> dict[str, Expected]:
     """Each unidentified door event goes to at most one unmatched order: the best fit among those it fits.
     An order with a window beats one without, a narrower window beats a wider one, then the order listed
     first. The same doorbell press is never offered as the possible courier of two orders at once."""
@@ -330,7 +339,7 @@ def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit]) -> 
         return (width, orders.index(e))
     out = {}
     for v in guessed:
-        fits = [o for o in orders if _distance(v, o) == timedelta(0)]
+        fits = [o for o in orders if _fits(v, o, open_hours)]
         if fits:
             out[v.event.id] = min(fits, key=fit)
     return out
@@ -349,14 +358,14 @@ def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours
     guessed = [v for v in visits if is_possible_courier(v)]
     pick = _assign(_costs(expected, couriers)) if expected else []
     unmatched = [e for e, j in zip(expected, pick) if j >= len(couriers)]
-    owner = _possible_owners(unmatched, guessed)
+    owner = _possible_owners(unmatched, guessed, open_hours)
     used: set[str] = set()
     rows = []
     for e, j in zip(expected, pick):
         if j >= len(couriers):
             possible, elsewhere = [], []
             for v in guessed:
-                fits = [o for o in unmatched if _distance(v, o) == timedelta(0)]
+                fits = [o for o in unmatched if _fits(v, o, open_hours)]
                 if e not in fits:
                     continue
                 best = owner[v.event.id]

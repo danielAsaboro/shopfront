@@ -51,6 +51,14 @@ def in_window(v: ClassifiedVisit, e: Expected) -> bool:
     return w is None or w[0] <= t <= w[1]
 
 
+def guess_fits(v: ClassifiedVisit, e: Expected) -> bool:
+    """A guess fits an order inside its window; an order with no window only during posted hours (round 8: a
+    press after closing was offered to a windowless order and also listed as pressed while closed)."""
+    if e.window():
+        return in_window(v, e)
+    return OPEN[0] <= v.event.timestamp.time() < OPEN[1]
+
+
 def best_possible_in_window(expected, couriers) -> int:
     """Brute force: the most expected deliveries that could be matched inside their window."""
     best = 0
@@ -78,7 +86,7 @@ def test_matcher_invariants(expected, visits):
     offered = [p["event_id"] for x in r["expected"] for p in x["possible"]]
     assert len(offered) == len(set(offered))
     for x, e in zip(r["expected"], expected):
-        fits = [v.event.id for v in guesses if in_window(v, e)]
+        fits = [v.event.id for v in guesses if guess_fits(v, e)]
         if x["visit"]:
             assert x["possible"] == []
         else:
