@@ -29,7 +29,7 @@ What it does, in order:
    builds the dispute pack, and prints the links to both. The pack must have a draft; if the door
    doesn't support one, the demo stops and says why.
 
-The server keeps running until Ctrl-C. Nothing is sent to any carrier or supplier.
+The server keeps running until Ctrl-C (or SIGTERM), which stops it. Nothing is sent to any carrier or supplier.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ import csv
 import io
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -133,6 +134,14 @@ def has_scan_slot(day: date, tz: ZoneInfo) -> bool:
     events = SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)
     return door_in_use([e.timestamp for e in events], _scan_at(day, tz)) and \
         bell_quiet([e.timestamp for e in events if e.kind == "ding"], day, tz)
+
+
+def stop_on_sigterm() -> None:
+    """SIGTERM (`kill`, a process manager, a container stopping) ends the demo the way Ctrl-C does, so the
+    `finally` in main() stops the Shopfront server it started instead of leaving it running on the port."""
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)
 
 
 def _port_busy(port: int) -> bool:
@@ -335,6 +344,7 @@ def main() -> None:
     env = {**os.environ, "SHOPFRONT_DATA_DIR": str(data), "RING_MODE": "synthetic", "RING_HMAC_KEY": key,
            "SHOP_NAME": SHOP_NAME, "SHOP_HOURS": SHOP_HOURS, "SHOP_TIMEZONE": settings.timezone,
            "RING_ACCESS_TOKEN": "", "RING_REFRESH_TOKEN": ""}
+    stop_on_sigterm()
     server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                                "--port", str(a.port), "--log-level", "warning"], cwd=ROOT, env=env)
     try:

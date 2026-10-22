@@ -159,3 +159,25 @@ def test_business_closed_sweep_through_open_hours_yields_a_pack(monkeypatch):
             assert "nobody came" not in d["body"].lower()
         packs += bool(p["drafts"])
     assert packs >= 0.9 * len(rows), rows
+
+
+def test_sigterm_stops_the_demo_like_ctrl_c():
+    """Round 8: `kill <demo pid>` left the uvicorn child running on the port. SIGTERM now raises KeyboardInterrupt
+    in the demo, so main()'s `finally` terminates the server, as Ctrl-C does."""
+    import inspect
+    import os
+    import signal
+
+    import pytest
+    before = signal.getsignal(signal.SIGTERM)
+    try:
+        demo.stop_on_sigterm()
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGTERM)
+            for _ in range(100):  # the handler runs between bytecodes of this thread
+                pass
+    finally:
+        signal.signal(signal.SIGTERM, before)
+    src = inspect.getsource(demo.main)
+    assert src.index("stop_on_sigterm()") < src.index("subprocess.Popen(")
+    assert "except KeyboardInterrupt" in src and "server.terminate()" in src.split("finally:", 1)[1]
