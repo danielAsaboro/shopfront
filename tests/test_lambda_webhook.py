@@ -323,8 +323,13 @@ def test_queue_and_dead_letter_queue_config():
     src = cons["Events"]["Queue"]["Properties"]
     assert src["Queue"] == {"GetAtt": "WebhookQueue.Arn"}
     assert src["FunctionResponseTypes"] == ["ReportBatchItemFailures"]
-    tls = res["WebhookQueuesPolicy"]["Properties"]["PolicyDocument"]["Statement"][0]
-    assert tls["Effect"] == "Deny" and tls["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
+    for name, queue in (("WebhookQueuesPolicy", "WebhookQueue"), ("WebhookDeadLetterQueuePolicy", "WebhookDeadLetterQueue")):
+        pol = res[name]["Properties"]
+        assert pol["Queues"] == [{"Ref": queue}]
+        for st in pol["PolicyDocument"]["Statement"]:  # SQS refuses a statement naming more than one resource
+            assert st["Resource"] == {"GetAtt": f"{queue}.Arn"}
+        tls = pol["PolicyDocument"]["Statement"][0]
+        assert tls["Effect"] == "Deny" and tls["Condition"] == {"Bool": {"aws:SecureTransport": "false"}}
 
 
 def test_the_lambda_package_needs_only_the_standard_library(tmp_path):

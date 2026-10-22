@@ -191,11 +191,28 @@ Resources:
         deadLetterTargetArn: !GetAtt WebhookDeadLetterQueue.Arn
         maxReceiveCount: 5
 
+  # One policy per queue: SQS refuses a statement naming more than one resource.
   WebhookQueuesPolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
         - !Ref WebhookQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: "*"
+            Action: "sqs:*"
+            Resource: !GetAtt WebhookQueue.Arn
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  WebhookDeadLetterQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
         - !Ref WebhookDeadLetterQueue
       PolicyDocument:
         Version: "2012-10-17"
@@ -204,9 +221,7 @@ Resources:
             Effect: Deny
             Principal: "*"
             Action: "sqs:*"
-            Resource:
-              - !GetAtt WebhookQueue.Arn
-              - !GetAtt WebhookDeadLetterQueue.Arn
+            Resource: !GetAtt WebhookDeadLetterQueue.Arn
             Condition:
               Bool:
                 aws:SecureTransport: "false"
