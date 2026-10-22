@@ -354,7 +354,7 @@ def test_dispute_page_leads_with_a_verdict_and_hides_the_jargon(c):
     e = main.book.add(SUNDAY, "Sunday bread", order_ref="PO-7")
     main.book.mark_received(e.id, "damaged", "", datetime(2026, 10, 11, 9, 0, tzinfo=TZ))
     page = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
-    assert '<a class="primary" href="/dispute.zip?' in page and "Back to the dashboard" in page
+    assert '<a class="primary" href="/dispute.zip?' in page and "Back to the receiving desk" in page
     assert "Back to the briefing" not in page
     visible = re.sub(r"<details.*?</details>", "", page, flags=re.S)
     for jargon in ("SHA-256", "X-Request-ID", "sub_type", "WHEP", "by rules:"):
