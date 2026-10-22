@@ -13,6 +13,7 @@ import app.main as main
 from app import checks as kc
 from app import dispute
 from app import reconcile as rc
+from app.deliveries import DeliveryBook
 from app.models import ClassifiedVisit, DoorEvent, VisitType
 from scripts import demo
 
@@ -161,6 +162,45 @@ def test_demo_seeds_two_earlier_checks_this_month_marked_demo(tmp_path):
     [r] = kc.carrier_record(kc.CheckBook(tmp_path / "checks.json").all(), day)
     assert r["text"] == f"{demo.CARRIER} scanned you closed twice in October, every time during posted hours."
     assert r["all_demo"]
+    # round 8: each kept check carries its order (samples/past-orders.csv, by tracking number), at its own time
+    # (both used to be 14:30 with no order, so /report's Order column was all dashes)
+    assert [(k["order_ref"], k["supplier"], k["amount"], k["perishable"]) for k in kept] == [
+        ("PO-1031", "Valley Creamery", "$318.75", True), ("PO-1036", "Hillside Mill", "$212.40", False)]
+    assert len({k["at"] for k in kept}) == 2
+    book = DeliveryBook(tmp_path / "expected-deliveries.json")
+    for k in kept:  # the order is in the book on the scan's day, its window around the scan
+        [o] = book.for_day(date.fromisoformat(k["day"]))
+        assert o.order_ref == k["order_ref"] and o.window_start <= k["at"] <= o.window_end
+    assert kc.perishable_at_risk(kc.CheckBook(tmp_path / "checks.json").all(), day, dispute.DISPUTE) == [
+        "PO-1031 ($318.75)"]
+
+
+def test_demo_report_ties_each_scan_to_its_order(monkeypatch):
+    """Round 8: /report's Order column read "—" on every demo row."""
+    demo.seed_past_checks(main.DATA, date(2026, 10, 20), TZ)
+    page = TestClient(main.app).get("/report", params={"month": "2026-10"}).text
+    rows = page.split("<table", 1)[1].split("</table>", 1)[0]
+    assert "PO-1031 · Valley Creamery · $318.75" in rows and "PO-1036 · Hillside Mill · $212.40" in rows
+    assert "<td>—</td>" not in rows
+
+
+def test_keeping_a_scan_for_an_order_with_no_tracking_number_keeps_that_order(monkeypatch):
+    """"Carrier says closed?" on an order with no tracking number carries the order to the check and to Keep."""
+    monkeypatch.setattr(main, "_visits", lambda d: busy(d))
+    e = main.book.add(DAY, "Pinecrest Paper Goods", order_ref="INV-2208", amount="$96.00")
+    c = TestClient(main.app)
+    desk = c.get("/", params={"date": "2026-10-14"}).text
+    assert f"&amp;order={e.id}#atth" in desk and f'data-order="{e.id}"' in desk
+    page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
+                              "carrier": "Northline Parcel", "order": e.id}).text
+    assert f'name="order" value="{e.id}"' in page.split('action="/checks"', 1)[1].split("</form>", 1)[0]
+    assert c.post("/checks", data=form(tracking="", order=e.id), follow_redirects=False).status_code == 303
+    [k] = main.checks.all()
+    assert (k["order_ref"], k["supplier"], k["amount"]) == ("INV-2208", "Pinecrest Paper Goods", "$96.00")
+    # a tracking number that names another order wins over a stale pick
+    other = main.book.add(DAY, "Valley Creamery", order_ref="PO-1042", tracking="NP4471002958")
+    assert main.book.for_scan(DAY, "NP4471002958", e.id).id == other.id
+    assert main.book.for_scan(DAY, "", "exp-nope") is None
 
 
 def test_desk_offers_the_demo_scan_already_filled_in_only_on_a_demo_install():

@@ -82,7 +82,8 @@ def month_report(request: Request, month: str | None = Query(None)):
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, date: str | None = Query(None), attempt: str | None = Query(None),
-              claim: str | None = Query(None), carrier: str = Query(""), tracking: str = Query("")):
+              claim: str | None = Query(None), carrier: str = Query(""), tracking: str = Query(""),
+              order: str = Query("")):
     day = common._parse_day(date)
     if not date:  # the receiving desk opens on today once today has orders to watch for; else yesterday's door
         today = datetime.now(common.settings.tz).date()
@@ -121,7 +122,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
         **({"ring_problem": None} if ring_down else {}),  # the page's own notice says it, with what still works
         "status_text": STATUS_TEXT,
         "profile": common.profile.get(), "claims": CLAIMS, "claim": claim, "carrier": carrier.strip()[:40],
-        "tracking": tracking.strip()[:60], "received": RECEIVED, "disputable": dispute.DISPUTE, "refused": REFUSED,
+        "tracking": tracking.strip()[:60], "order_id": order.strip()[:40], "received": RECEIVED, "disputable": dispute.DISPUTE, "refused": REFUSED,
         "posted": f"{oh[0]:%H:%M}–{oh[1]:%H:%M}" if (oh := posted_hours(common.profile.hours(), day)) else "closed",
         **({"can_ask": True, "ask_reason": None} if (ask := common._ask_state()) is None else
            {"can_ask": False, "ask_reason": ask}), "ask_example": pages.ASK_EXAMPLE,
@@ -207,7 +208,7 @@ async def check_keep(request: Request):
 
     def keep():
         found = common._check_attempt(when, claim)
-        order = next((e for e in common.book.for_day(day) if tracking and e.tracking == tracking), None)
+        order = common.book.for_scan(day, tracking, str(form.get("order", "")))
         return common.checks.keep(found, carrier, tracking, order, demo=common._ring().name == "synthetic")
     try:
         await run_in_threadpool(keep)

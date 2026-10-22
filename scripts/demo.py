@@ -20,7 +20,8 @@ What it does, in order:
    day, marked demo), so the pack's camera line shows the coverage path; the demo stops if it doesn't.
 6. Keeps two earlier "business closed" checks for the same made-up carrier, on open days earlier in the
    month, checked against that day's synthetic door the way the desk checks one, and marked demo; the desk's
-   carrier record then has a history to show. It also notes the demo scan (demo-scan.json), so the desk
+   carrier record then has a history to show. Each is for an order in samples/past-orders.csv, imported on its
+   day and kept with the check (the dairy one marked perishable, so the record shows the stock at risk). It also notes the demo scan (demo-scan.json), so the desk
    offers it, already filled in, as "Try the business-closed check".
 7. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
    It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
@@ -62,8 +63,11 @@ SCAN_ORDER = "PO-1042"        # the dairy order the carrier scanned "business cl
 SCAN_WINDOW = ("13:00", "16:00")  # its delivery window in samples/orders.csv
 SCAN_AT = "14:30"  # the "business closed" scan: an ordinary afternoon minute in that window, not a chosen one
 DEMO_HMAC_KEY = "demo-key"
-PAST_SCANS = ("14:30", "11:40", "15:20", "10:50")  # times tried, in order, for the two earlier kept checks
-PAST_TRACKING = ("NP4471001736", "NP4471002204")  # made up, in the sample's style
+PAST_SAMPLE = ROOT / "samples" / "past-orders.csv"  # the orders behind the two earlier kept checks
+# The two earlier "business closed" scans: each is for one order in PAST_SAMPLE (by its tracking number), at its own
+# time in that order's window, the times tried in order until the synthetic door was in use around one
+PAST_SCANS = (("NP4471001736", ("11:40", "12:20", "11:10")), ("NP4471002204", ("15:20", "14:40", "15:50")))
+PERISHABLE = ("PO-1031",)  # the dairy order behind an earlier scan, marked perishable the way the owner does on the desk
 
 
 def open_hours(spec: str, day: date) -> tuple[int, int] | None:
@@ -187,21 +191,23 @@ def _door(day: date, tz: ZoneInfo) -> list:
     return classify_day(SyntheticRingClient(tz, hours), RulesClassifier(), day, hours)
 
 
-def past_scans(day: date, tz: ZoneInfo, n: int = 2) -> list[datetime]:
-    """Earlier open days in `day`'s month, newest first and at least three days apart, each with a time in
-    PAST_SCANS when its synthetic door was in use: the demo's earlier "business closed" scans."""
-    out: list[datetime] = []
+def past_scans(day: date, tz: ZoneInfo) -> list[tuple[datetime, str]]:
+    """The demo's earlier "business closed" scans, one per PAST_SCANS entry: (when, tracking number). Each is on an
+    earlier open day in `day`'s month, newest first and at least three days apart, at the first of its times when
+    that day's synthetic door was in use."""
+    out: list[tuple[datetime, str]] = []
     for back in range(1, day.day):
-        d = day - timedelta(days=back)
-        if not open_hours(SHOP_HOURS, d) or (out and (out[-1].date() - d).days < 3):
-            continue
-        events = [e.timestamp for e in _door_events(d, tz)]
-        t = next((datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in PAST_SCANS
-                  if door_in_use(events, datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz))), None)
-        if t:
-            out.append(t)
-        if len(out) == n:
+        if len(out) == len(PAST_SCANS):
             break
+        d = day - timedelta(days=back)
+        if not open_hours(SHOP_HOURS, d) or (out and (out[-1][0].date() - d).days < 3):
+            continue
+        tracking, times = PAST_SCANS[len(out)]
+        events = [e.timestamp for e in _door_events(d, tz)]
+        t = next((at for at in (datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in times)
+                  if door_in_use(events, at)), None)
+        if t:
+            out.append((t, tracking))
     return out
 
 
@@ -214,17 +220,35 @@ def _door_events(day: date, tz: ZoneInfo) -> list:
 
 def seed_past_checks(data: Path, day: date, tz: ZoneInfo) -> list[dict]:
     """Keep the demo's earlier checks in data/checks.json, each computed by app/reconcile.py against that
-    day's synthetic door, and marked demo."""
+    day's synthetic door, and marked demo. Each scan's order (samples/past-orders.csv, dated to the scan's day) is
+    imported first, and the check keeps the order its tracking number names, the way "Keep" on the desk does, so
+    the carrier record and /report tie each scan to its order, supplier and amount."""
     from app import reconcile as rc
     from app.checks import CheckBook
+    from app.deliveries import DeliveryBook
     from app.hours import parse_hours, posted_hours
 
-    kept, book = [], CheckBook(data / "checks.json")
-    for at, tracking in zip(past_scans(day, tz), PAST_TRACKING):
+    sample = list(csv.DictReader(io.StringIO(PAST_SAMPLE.read_text())))
+    book = DeliveryBook(data / "expected-deliveries.json")
+    kept, checks = [], CheckBook(data / "checks.json")
+    for at, tracking in past_scans(day, tz):
+        row = next(r for r in sample if r["tracking"] == tracking)
+        _import_orders(data, dated_orders(_csv([row]), at.date()))
+        order = book.for_scan(at.date(), tracking)
+        if order.order_ref in PERISHABLE:
+            order = book.set_perishable(order.id, True)
         visits = [v for v in _door(at.date(), tz) if abs(rc.gap(v.event.timestamp, at)) <= rc.ACTIVITY]
         check = rc.check_closed_scan(at, visits, posted_hours(parse_hours(SHOP_HOURS), at.date()))
-        kept.append(book.keep(check, CARRIER, tracking, demo=True))
+        kept.append(checks.keep(check, CARRIER, tracking, order, demo=True))
     return kept
+
+
+def _csv(rows: list[dict]) -> str:
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=list(rows[0].keys()), lineterminator="\n")
+    w.writeheader()
+    w.writerows(rows)
+    return out.getvalue()
 
 
 def note_demo_scan(data: Path, day: date, orders_text: str) -> dict:

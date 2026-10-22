@@ -210,7 +210,7 @@ def test_a_rules_match_is_only_possible_but_staff_can_still_say_what_arrived(c):
     form = page.split(f'action="/deliveries/{e.id}/received"')[1].split("</form>")[0]
     assert 'value="ok" class="quiet"' in form and ">It arrived</button>" in form
     assert 'value="short"' not in form and 'value="damaged"' not in form and 'name="note"' not in form
-    assert f"order={e.id}" not in page  # no dispute pack from a guess
+    assert f"/dispute?date={SUNDAY}&amp;order={e.id}" not in page  # no dispute pack from a guess
     assert "0<small> confirmed</small>" in page and "1 possible, of 1 expected" in page  # not counted as seen
 
 
@@ -457,11 +457,12 @@ def test_the_story_is_on_screen_first(c):
     first = c.get(f"/?date={WEDNESDAY}").text
     line = '<p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>'
     assert line in first
-    main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
-                  tracking="NP 44/71")
+    e = main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
+                      tracking="NP 44/71")
     page = c.get(f"/?date={WEDNESDAY}").text
     assert line in page and page.index(line) < page.index('id="atth"')
-    href = f"/?date={WEDNESDAY}&amp;claim=business_closed&amp;carrier=Northline%20Parcel&amp;tracking=NP%2044/71#atth"
+    href = (f"/?date={WEDNESDAY}&amp;claim=business_closed&amp;carrier=Northline%20Parcel&amp;tracking=NP%2044/71"
+            f"&amp;order={e.id}#atth")  # the order rides along, so a kept check stores it even with no tracking
     assert f'<a class="claim-link" href="{href}"' in page and ">Carrier says closed?</a>" in page
     form = page.split('id="atth"')[1].split("</form>")[0]
     assert '<option value="business_closed" selected>' in form  # the story's scan is the default

@@ -7,6 +7,7 @@
 {% set back = "/?date=" ~ b.date %}
 {% set prefill = request.query_params.get('claim') %}
 {% set scan_order = (r.expected|selectattr('tracking', 'equalto', tracking)|first) if tracking else none %}
+{% set scan_order = scan_order or ((r.expected|selectattr('id', 'equalto', order_id)|first) if order_id else none) %}
 {% set dflt = default_cost(profile.currency) %}
 {% set per_miss = profile.redelivery_cost if profile.redelivery_cost is not none else dflt %}
 {% macro stake(o) %}{% if o and (o.amount or per_miss is not none) %}<p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}{% if o.amount and per_miss is not none %}, and {% endif %}{% if per_miss is not none %}{{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery{% if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}{% endif %}.</p>{% if o.amount %}{% if o.perishable %}<p class="reason stake lost"><strong>Lost trading:</strong> {{ o.order_ref or 'this order' }} is perishable, so all {{ o.amount }} is at risk if it isn't redelivered in time (the order's own value, from your orders), not only the redelivery fee.</p>{% else %}<form method="post" action="/deliveries/{{ o.id }}/perishable" class="keep perish"><input type="hidden" name="on" value="1"><input type="hidden" name="back" value="{{ request.url.path ~ '?' ~ request.url.query }}"><button type="submit" class="quiet">Perishable stock? Count {{ o.amount }} as at risk</button></form>{% endif %}{% endif %}{% endif %}{% endmacro %}
@@ -43,7 +44,7 @@
         <form method="post" action="/checks/{{ kept.id }}/delete" class="keep"><input type="hidden" name="back" value="{{ back_here }}"><span class="why">Kept in {{ (carrier or 'the carrier') ~ "'s" }} record.</span> <button type="submit" class="quiet">Remove</button></form>
         {% else %}
         <form method="post" action="/checks" class="keep">
-          {% for k, v in (("date", b.date), ("at", asked_time), ("claim", attempt.claim), ("carrier", carrier), ("tracking", tracking), ("back", back_here)) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          {% for k, v in (("date", b.date), ("at", asked_time), ("claim", attempt.claim), ("carrier", carrier), ("tracking", tracking), ("order", scan_order.id if scan_order else ""), ("back", back_here)) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
           <button type="submit" class="secondary">Keep in {{ (carrier ~ "'s") if carrier else "the carrier" }} record</button>
         </form>
         {% endif %}
@@ -123,6 +124,7 @@
     {% else %}
     <form method="get" action="/" class="fields scan-form" style="margin-top:10px">
       <input type="hidden" name="date" value="{{ b.date }}">
+      <input type="hidden" name="order" value="{{ order_id }}">
       <label class="field fit">Scan<select name="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == (claim if prefill or asked_time else 'business_closed') }}>{{ label }}</option>{% endfor %}</select></label>
       <label class="field fit">At<input type="time" name="attempt" value="{{ asked_time }}" required{{ " autofocus" if prefill and not asked_time }}></label>
       <label class="field grow">Carrier (optional)<input name="carrier" value="{{ carrier }}" maxlength="40"></label>
@@ -178,7 +180,7 @@
             </form>{% elif x.status in ('possible', 'not_seen') and not x.received and not unknown %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="ok" class="quiet" aria-label="{{ x.supplier }}: it arrived, all there">It arrived</button></form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
             {% if x.amount %}<form method="post" action="/deliveries/{{ x.id }}/perishable" class="tapform"><input type="hidden" name="on" value="{{ '0' if x.perishable else '1' }}"><button class="quiet" aria-label="{{ x.supplier }}: {{ 'not perishable' if x.perishable else 'mark perishable' }}">{{ 'Not perishable' if x.perishable else 'Perishable?' }}</button></form>{% endif %}
-            {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}">Carrier says closed?</a>{% endif %}
+            {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}&amp;order={{ x.id|urlencode }}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}" data-order="{{ x.id }}">Carrier says closed?</a>{% endif %}
           </div></td>
         <td class="why src-cell">{% if x.visit %}{{ source(x.visit.labelled_by, x.visit.reason, x.visit.event_source, x.visit.frame_url, ns.said) }}{% elif maybe %}{{ source(maybe.labelled_by, maybe.reason, maybe.event_source, maybe.frame_url, ns.said) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
@@ -283,6 +285,7 @@ document.querySelectorAll("a.claim-link").forEach(a => a.addEventListener("click
   f.claim.value = "business_closed";
   f.carrier.value = a.dataset.carrier || "";
   f.tracking.value = a.dataset.tracking || "";
+  f.order.value = a.dataset.order || "";
   f.scrollIntoView({behavior: "smooth", block: "center"});
   f.attempt.focus({preventScroll: true});
 }));

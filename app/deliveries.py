@@ -109,6 +109,14 @@ class DeliveryBook:
     def get(self, expected_id: str) -> Expected | None:
         return next((e for e in self._all() if e.id == expected_id), None)
 
+    def for_scan(self, day: date, tracking: str = "", order_id: str = "") -> Expected | None:
+        """The order a carrier's scan was for, on the scan's day: the one its tracking number names, else the one the
+        owner picked ("Carrier says closed?" on an order with no tracking number). A kept check stores it, so the
+        record ties the scan to the order."""
+        rows = self.for_day(day)
+        return (next((e for e in rows if tracking and e.tracking == tracking), None)
+                or next((e for e in rows if order_id and e.id == order_id), None))
+
     def import_rows(self, rows: list[Expected]) -> dict:
         """Add imported orders. Re-importing the same file updates rows instead of duplicating them:
         an order is the same one when its order_ref and day match, and a staff tap is kept."""
