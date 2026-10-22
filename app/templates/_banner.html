@@ -1,6 +1,8 @@
 {# Where the door data comes from, on every page (design.md: Banner). One sentence each. #}
 {# source_said: the page says where its data came from itself (the dispute pack's watermark), so not twice #}
-{% if ring_mode == "synthetic" and not source_said %}
+{# public_demo: the hosted demo's own banner (app/public_demo.py) says it once, so this one stays out #}
+{% if public_demo %}
+{% elif ring_mode == "synthetic" and not source_said %}
 {# One line on a phone (round 4): the short form there, the sentence on wider screens #}
 <div class="banner warn-bg" role="status"><span class="b-long">Demo data: these door events were made up on this computer, not read from a Ring doorbell{% if replayed %}, and some were replayed by Shopfront's feeder{% endif %}. <a href="/connect">Connect Ring</a> to use yours.</span><span class="b-short">Demo data, not from Ring. <a href="/connect">Connect Ring</a></span></div>
 {% elif replayed and not source_said %}

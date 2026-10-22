@@ -235,7 +235,9 @@ def _chrome(request: Request) -> dict:
     except RingError as exc:
         mode, problem = "error", exc.status.value
     return {"shop": shop, "ring_mode": mode, "ring_problem": None if mode == "synthetic" else problem,
-            "replayed": _replayed_anywhere(), "nav_here": request.url.path}
+            "replayed": _replayed_anywhere(), "nav_here": request.url.path,
+            # the hosted read-only demo (app/public_demo.py): pages explain instead of offering what can't be saved
+            "public_demo": bool(getattr(gate, "public_demo", False))}
 
 
 def _page(request: Request, name: str, ctx: dict | None = None, status_code: int = 200) -> HTMLResponse:

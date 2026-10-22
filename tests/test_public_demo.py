@@ -9,7 +9,9 @@ import re
 import socket
 from dataclasses import replace
 from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import urlencode, urljoin, urlsplit
 
 import pytest
 from fastapi.routing import iter_route_contexts
@@ -21,7 +23,7 @@ from app.owner import COOKIE, OwnerGate, PublicDemoGate, admit_visitor
 from tests.aws_fakes import template
 
 HOST = "abc123example.lambda-url.us-east-1.on.aws"
-BANNER = "Public demo: made-up shop, made-up deliveries."
+BANNER = "Public demo of a made-up shop."
 METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 
@@ -115,7 +117,8 @@ def test_the_demo_is_the_one_command_demos_shop(demo):
 
 def test_landing_page_opens_on_the_demo_day_with_the_banner(client, demo):
     r = client.get("/")
-    assert r.status_code == 302 and r.headers["location"] == demo.links["desk"]
+    # round 10: "/" opens on the business-closed verdict, the check scripts/demo.py prints first
+    assert r.status_code == 302 and r.headers["location"] == demo.links["check"].split("#")[0]
     page = client.get(demo.links["desk"])
     assert page.status_code == 200 and BANNER in page.text
     assert page.text.count('id="public-demo"') == 1
@@ -203,7 +206,7 @@ def test_owner_actions_are_refused_before_the_app_reads_them(client, demo, outbo
     assert outbound == []
 
 
-@pytest.mark.parametrize("path", ["/connect", "/pair", "/live", "/docs", "/openapi.json", "/api/live/sessions"])
+@pytest.mark.parametrize("path", ["/pair", "/docs", "/openapi.json", "/api/live/sessions"])
 def test_pages_outside_the_demo_say_so(client, path):
     r = client.get(path)
     assert r.status_code == 403
@@ -320,7 +323,7 @@ def test_lambda_handler_answers_function_url_events(demo, outbound):
 
     handler = Mangum(public_demo.PublicDemoApp(main, demo), lifespan="off")
     r = handler(url_event("GET", "/"), None)
-    assert r["statusCode"] == 302 and r["headers"]["location"] == demo.links["desk"]
+    assert r["statusCode"] == 302 and r["headers"]["location"] == demo.links["check"].split("#")[0]
     r = handler(url_event("GET", "/", demo.links["desk"].split("?")[1]), None)
     assert r["statusCode"] == 200 and BANNER in r["body"]
     r = handler(url_event("GET", "/dispute", demo.links["pack"].split("?")[1]), None)
@@ -378,3 +381,122 @@ def test_demo_package_holds_the_app_and_its_seed_data(tmp_path):
                     if "==" in line and not line.startswith("#"))
     for name in ("fastapi", "jinja2", "python-multipart", "python-dotenv", "httpx"):
         assert pins[name] == app_pins[name], name
+
+
+# ---- round 10: every visible control on the hosted pages leads somewhere, never to an error page ------------------
+
+class _Controls(HTMLParser):
+    """The links, GET forms (with what they would submit) and POST forms of one page."""
+
+    def __init__(self):
+        super().__init__()
+        self.links: list[str] = []
+        self.get_forms: list[tuple[str, dict, int]] = []  # (action, fields, enabled submit buttons)
+        self.post_forms: list[dict] = []  # {"action", "enabled": [labels of controls a visitor could press]}
+        self._form: dict | None = None
+        self._off = 0  # inside a disabled fieldset
+        self._select: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag in ("a", "link") and a.get("href"):
+            self.links.append(a["href"])
+        elif tag == "img" and a.get("src"):
+            self.links.append(a["src"])
+        elif tag == "form":
+            self._form = {"method": (a.get("method") or "get").lower(), "action": a.get("action") or "",
+                          "fields": {}, "enabled": []}
+        elif self._form is not None:
+            if tag == "fieldset" and "disabled" in a:
+                self._off += 1
+            enabled = not self._off and "disabled" not in a
+            if tag == "input" and a.get("name") and a.get("type") not in ("submit", "button", "file"):
+                if a.get("type") != "checkbox" or "checked" in a:
+                    self._form["fields"][a["name"]] = a.get("value") or ""
+            if tag == "select" and a.get("name"):
+                self._select = a["name"]
+            if tag == "option" and self._select and ("selected" in a or self._select not in self._form["fields"]):
+                self._form["fields"][self._select] = a.get("value") or ""
+            if tag == "button" and enabled and a.get("type") != "button" or \
+                    tag == "input" and enabled and a.get("type") in ("submit", "image", "file", "text", "time"):
+                self._form["enabled"].append(a.get("name") or tag)
+
+    def handle_endtag(self, tag):
+        if self._form is None:
+            return
+        if tag == "fieldset" and self._off:
+            self._off -= 1
+        elif tag == "select":
+            self._select = None
+        elif tag == "form":
+            f, self._form = self._form, None
+            if f["method"] == "post":
+                self.post_forms.append(f)
+            else:
+                self.get_forms.append((f["action"], f["fields"], len(f["enabled"])))
+
+
+def _same_site(url: str) -> str | None:
+    """The path and query a same-site link opens, or None for another site, a fragment or a data: URI."""
+    parts = urlsplit(url)
+    if parts.scheme in ("data", "mailto", "javascript") or (parts.netloc and parts.netloc != HOST):
+        return None
+    if not parts.path and not parts.query:
+        return None  # "#atth": the same page
+    return (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+
+
+def test_every_link_and_button_on_the_hosted_pages_works(client, demo, outbound):
+    """A judge clicking around the hosted demo never lands on a 4xx/5xx page: every same-site link, image and
+    GET form (submitted as it stands) answers, and every form that would save something is shown switched off,
+    with the reason on the page, instead of leading to a refusal."""
+    seen, queue, pages, crawled = set(), ["/"], 0, []
+    while queue:
+        path = queue.pop(0)
+        if path in seen:
+            continue
+        seen.add(path)
+        r = client.get(path, follow_redirects=True)
+        assert r.status_code < 400, (path, r.status_code, r.text[:300])
+        if not r.headers.get("content-type", "").startswith("text/html"):
+            continue
+        pages += 1
+        assert pages < 200, "the crawl should stay small; something links without end"
+        crawled.append(path)
+        assert r.text.count('id="public-demo"') == 1, path
+        controls = _Controls()
+        controls.feed(r.text)
+        for form in controls.post_forms:
+            assert not form["enabled"], (path, form["action"], form["enabled"])
+        if controls.post_forms:
+            assert public_demo.OFF_FORM in r.text or "public demo saves nothing" in r.text, path
+        found = [_same_site(urljoin(str(r.url), u)) for u in controls.links]
+        for action, fields, _buttons in controls.get_forms:  # every GET form, as it stands
+            target = urlsplit(urljoin(str(r.url), action or str(r.url))).path
+            found.append(_same_site(target + "?" + urlencode(fields)))
+        queue += [u for u in found if u and u not in seen]
+    assert outbound == [] and len(crawled) > 10, crawled
+    # the crawl reached the story and the pages the nav names
+    assert {"/connect", "/live", "/setup"} <= {urlsplit(p).path for p in seen}
+    assert any(p.startswith("/dispute?") for p in seen) and any(p.startswith("/report?") for p in seen)
+
+
+def test_the_root_opens_on_the_business_closed_verdict(client, demo):
+    r = client.get("/")
+    assert r.status_code == 302 and r.headers["location"] == demo.links["check"].split("#")[0]
+    page = client.get(r.headers["location"]).text
+    assert 'aria-label="The door&#39;s answer to the scan"' in page or "aria-label=\"The door's answer to the scan\"" in page
+
+
+def test_one_banner_and_no_owner_only_wording(client, demo):
+    """Round 10: the public demo's banner is the only one (not also the app's "made up on this computer"), and
+    the nav's Connect Ring explains instead of refusing."""
+    for path in (demo.links["desk"], demo.links["check"].split("#")[0], "/setup", "/live", "/connect"):
+        page = client.get(path).text
+        assert page.count('class="banner') - page.count('class="banner note msg"') == 1, path
+        assert "made up on this computer" not in page and "Something's not right" not in page, path
+    connect = client.get("/connect")
+    assert connect.status_code == 200 and "Generate Token" in connect.text and "evidence/README.md" in connect.text
+    assert 'name="token"' not in connect.text and 'action="/connect"' not in connect.text
+    check = client.get(demo.links["check"].split("#")[0]).text
+    assert "Keep in Northline Parcel&#39;s record</button>" in check and "public demo saves nothing" in check

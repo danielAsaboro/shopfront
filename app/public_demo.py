@@ -24,7 +24,10 @@ What a visitor can and can't do, from the outside in:
 - No Bedrock: the rules classifier labels events, Ask shows its recorded example (the page's own fallback),
   the screenshot reader says it isn't available, and the agent factory raises. The Lambda's role has no
   Bedrock permission either.
-- Every HTML page gets a banner: "Public demo: made-up shop, made-up deliveries."
+- Every HTML page gets one banner: "Public demo of a made-up shop." (read-only, no Ring or Bedrock calls), and
+  every form that would save something is shown switched off with that reason, so no visible control ends on a
+  refusal page. "/" opens on the business-closed check; /connect and /live explain what they do on a shop's
+  own Shopfront.
 
 tests/test_public_demo.py walks every route of app.main with every method and checks that nothing is
 written and nothing leaves the process.
@@ -51,7 +54,8 @@ log = logging.getLogger(__name__)
 ENV_FLAG = "SHOPFRONT_PUBLIC_DEMO"
 
 # GET/HEAD reads a visitor may make. Everything else is refused before it reaches the app.
-READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/healthz", "/favicon.ico",
+# /connect and /live render their read-only explanations here (the nav links to both on every page).
+READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/connect", "/live", "/healthz", "/favicon.ico",
                         "/api/deliveries", "/api/events", "/api/briefing", "/api/attempt", "/api/dispute",
                         "/api/webhooks", "/.well-known/shopfront-pack-key", "/report"})
 READ_PREFIXES = ("/frames/",)
@@ -76,9 +80,13 @@ WHAT = (("/deliveries/", "record what staff found when they unpacked the order")
         ("/webhooks/ring", "store a Ring webhook"), ("/connect", "save or forget a Ring sign-in"),
         ("/pair", "pair a phone"), ("/checks", "keep or remove a scan check in the carrier record"))
 
-BANNER = ('<div class="banner note" role="note" id="public-demo"><strong>Public demo: made-up shop, made-up '
-          'deliveries.</strong> The door events are generated and the one Ring alert is a signed replay; '
-          'nothing here calls Ring or Bedrock, and nothing you do is saved.{links}</div>')
+# The one banner on every page (round 10: the app's own "demo data" banner stays out, see _banner.html)
+BANNER = ('<div class="banner note" role="note" id="public-demo"><strong>Public demo of a made-up shop.</strong> '
+          'Read-only: the door events are generated, the one delivery alert is a replay, and nothing here calls '
+          'Ring or Bedrock.{links}</div>')
+# Every form that would save something is shown switched off, with why, so no button leads to a refusal page
+OFF_FORM = "Read-only: the public demo saves nothing"
+_POST_FORM = re.compile(rb'(<form\b[^>]*\bmethod="post"[^>]*>)(.*?)(</form>)', re.I | re.S)
 
 
 class ReadOnly(PermissionError):
@@ -327,11 +335,22 @@ _MAIN_OPEN, _BODY_OPEN = re.compile(rb"<main[^>]*>", re.I), re.compile(rb"<body[
 
 
 def with_banner(page: bytes, banner: bytes) -> bytes:
-    """The banner first inside <main> (the page's column), or after <body> on a page without one."""
+    """The banner first inside <main> (the page's column), or after <body> on a page without one. Every POST
+    form is switched off too (read_only_forms)."""
+    page = read_only_forms(page)
     for tag in (_MAIN_OPEN, _BODY_OPEN):
         if tag.search(page):
             return tag.sub(lambda m: m.group(0) + banner, page, count=1)
     return page
+
+
+def read_only_forms(page: bytes) -> bytes:
+    """Each form that POSTs (an owner's action: staff taps, Perishable?, Remove, Save, Import) gets its controls
+    in a disabled fieldset, so a visitor sees what the owner could do but can't press it into a refusal page.
+    Deny by default: a form added to a template later is switched off here without anyone remembering to."""
+    off = html.escape(OFF_FORM, quote=True).encode()
+    return _POST_FORM.sub(lambda m: m[1] + b'<fieldset disabled class="demo-off" title="' + off + b'">' + m[2]
+                          + b"</fieldset>" + m[3], page)
 
 
 class PublicDemoApp:
@@ -339,9 +358,10 @@ class PublicDemoApp:
 
     def __init__(self, main: ModuleType, demo: Demo):
         self.main, self.demo, self.inner = main, demo, main.app
-        names = (("desk", "the receiving desk"), ("check", "the business-closed check"), ("pack", "the dispute pack"))
+        names = (("check", "the business-closed check"), ("pack", "the dispute pack"), ("desk", "the receiving desk"))
         links = [f'<a href="{html.escape(self.demo.links[k])}">{label}</a>' for k, label in names
                  if k in self.demo.links]
+        self.landing = self.demo.links.get("check", self.demo.links["desk"]).split("#")[0]
         self.banner = BANNER.format(links=" Start with " + " · ".join(links) + "." if links else "").encode()
 
     async def __call__(self, scope, receive, send):
@@ -353,7 +373,8 @@ class PublicDemoApp:
         if path == "/robots.txt":
             return await self._plain(send, 200, b"User-agent: *\nDisallow: /\n")
         if method in READ_METHODS and path == "/" and not scope.get("query_string"):
-            return await self._redirect(send, self.demo.links["desk"])
+            # the story's answer first (round 10): the business-closed verdict, as scripts/demo.py prints it
+            return await self._redirect(send, self.landing)
         if not readable(method, path):
             return await self._refuse(scope, receive, send)
         from app.owner import admit_visitor

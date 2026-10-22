@@ -92,7 +92,10 @@
       <div class="next">
         {% if pack_href %}<a class="primary" href="{{ pack_href }}">Build the dispute pack</a>{% endif %}
         {% if attempt.outcome not in refused %}
-        {% if kept %}
+        {% if public_demo %}
+        {# The hosted read-only demo: the button as the owner sees it, switched off, with why on the page itself #}
+        <p class="keep"><button type="button" class="secondary" disabled>Keep in {{ (carrier ~ "'s") if carrier else "the carrier" }} record</button> <span class="why">Read-only: the public demo saves nothing, so this check isn't added to the record.</span></p>
+        {% elif kept %}
         <form method="post" action="/checks/{{ kept.id }}/delete" class="keep"><input type="hidden" name="back" value="{{ back_here }}"><span class="why">Kept in {{ (carrier or 'the carrier') ~ "'s" }} record.</span> <button type="submit" class="quiet">Remove</button></form>
         {% else %}
         <form method="post" action="/checks" class="keep">

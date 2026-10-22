@@ -26,10 +26,13 @@
   <div class="eyebrow">Set up</div>
   <h1>{{ p.name }}</h1>
   <p class="why" style="margin:6px 0 0">Four steps: connect your doorbell, tell Shopfront your hours, list what you're expecting, then watch the door.</p>
+  {% if public_demo %}<p class="banner note msg" role="note">Read-only in the public demo: this is the made-up shop's set-up as its owner would see it, and the forms are switched off because nothing here is saved.</p>{% endif %}
 
   <section class="setup-step" id="ring">
     <h2><span class="n">1</span>Ring doorbell</h2>
-    {% if ring == "ring" and ring_linked %}
+    {% if public_demo %}
+    <p>The public demo's door is made up, so it isn't connected to Ring. <a href="/connect">What connecting Ring does</a> on a shop's own Shopfront.</p>
+    {% elif ring == "ring" and ring_linked %}
     <p>Linked to your Ring account (…{{ ring_linked.account_id[-6:] }}): Shopfront reads your doorbell's history and stays signed in. <a href="/ring/link">Linked account</a></p>
     {% elif ring == "ring" %}
     <p>Connected to Ring: Shopfront reads your doorbell's history. <a href="/connect">Change token</a></p>
@@ -38,7 +41,7 @@
     {% else %}
     <p>Not connected, so Shopfront is showing synthetic demo data. <a href="/connect">Connect Ring</a> with a token from the Ring Developer Playground.</p>
     {% endif %}
-    {% if not ring_linked %}<p class="why">Or <a href="/ring/link">link your Ring account</a>: add Shopfront from the Ring app once and it stays signed in, instead of a Playground token that lasts 30 minutes.</p>{% endif %}
+    {% if not ring_linked and not public_demo %}<p class="why">Or <a href="/ring/link">link your Ring account</a>: add Shopfront from the Ring app once and it stays signed in, instead of a Playground token that lasts 30 minutes.</p>{% endif %}
   </section>
 
   <form method="post" action="/setup">

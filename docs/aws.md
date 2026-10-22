@@ -183,14 +183,17 @@ Visitor ──HTTPS GET──▶ Function URL (no auth) ──▶ Lambda: Mangum
 script's own functions: the most recent open day before today whose synthetic door leaves a scan the
 door can answer, [samples/orders.csv](../samples/orders.csv) dated to that day, one signed
 `package_delivery` webhook replay for the flour courier, and the dairy order's "business closed" scan,
-picked and checked through the app. `/` opens on that day, and every page carries the banner
-**"Public demo: made-up shop, made-up deliveries."** with links to the desk, the check and the pack.
+picked and checked through the app. `/` opens on that scan's business-closed verdict, and every page
+carries one banner, **"Public demo of a made-up shop."** (read-only, no Ring or Bedrock calls), with links to
+the check, the pack and the desk. Every form that would save something is shown switched off with that reason,
+and Connect Ring and Live door explain what they do on a shop's own Shopfront, so no visible control ends on
+a refusal page (a test follows every link and button).
 
 **What it can't do.** Nothing a visitor does is kept, and nothing reaches Ring or Bedrock:
 
 | Layer | How |
 |---|---|
-| Allowlist ([`PublicDemoApp`](../app/public_demo.py)) | Only `GET`/`HEAD` on `/`, `/dispute`, `/dispute.zip`, `/setup`, `/api/{deliveries,events,briefing,attempt,dispute,webhooks}`, `/healthz`, `/frames/*` (and the favicon) reach the app. Everything else, on every path, is answered 403 before the body is read: a page that says what the action would do on the shop's own computer, or `{"error": "PUBLIC_DEMO"}` for `/api/*` and the webhook. New routes are refused until someone adds them. The business-closed check and the dispute pack are GETs that compute in memory, so they work. |
+| Allowlist ([`PublicDemoApp`](../app/public_demo.py)) | Only `GET`/`HEAD` on `/`, `/dispute`, `/dispute.zip`, `/setup`, `/connect`, `/live`, `/report`, `/api/{deliveries,events,briefing,attempt,dispute,webhooks}`, `/healthz`, `/frames/*` (and the favicon) reach the app. Everything else, on every path, is answered 403 before the body is read: a page that says what the action would do on the shop's own computer, or `{"error": "PUBLIC_DEMO"}` for `/api/*` and the webhook. New routes are refused until someone adds them. The business-closed check and the dispute pack are GETs that compute in memory, so they work. |
 | Owner gate ([`PublicDemoGate`](../app/owner.py)) | There is no owner: no request is local, no cookie is valid, no code pairs, no secret exists. A request passes only inside the allowlist's `admit_visitor()` (a context variable, not anything a visitor sends). `app.main:app` started with `SHOPFRONT_PUBLIC_DEMO=1` but without the allowlist refuses every route, the webhook included. |
 | Stores | Orders, profile, frames, webhook log, live sessions and the classification cache are swapped for versions that raise on any write. The Ring source is pinned to the synthetic generator and never reads a token file; pasting a token or pairing is refused. |
 | No Bedrock | The rules classifier labels the door; Ask shows its labelled example answer; the screenshot reader is off; the agent factory raises. The function's IAM role can only write its own logs and X-Ray traces, so it couldn't call Bedrock, DynamoDB, S3 or Secrets Manager anyway. |

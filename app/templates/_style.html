@@ -47,6 +47,7 @@
   .frame-del { margin: 2px 0 0; font-size: 12px; }
   button.quiet { border: 0; padding: 0; background: none; color: var(--muted); text-decoration: underline; font-size: inherit; }
   button:disabled { opacity: .4; cursor: default; }
+  fieldset.demo-off { border: 0; margin: 0; padding: 0; min-width: 0; display: contents; } /* the public demo's switched-off forms */
   .field { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
   .field > input, .field > select { color: var(--ink); }
   .fields { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
@@ -89,7 +90,7 @@
   .verdict .next { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0 0; }
   .verdict .next .primary { margin: 0; }
   .verdict .thumb img { width: 160px; }
-  .verdict form.keep { display: inline-flex; gap: 8px; align-items: center; margin: 0; }
+  .verdict form.keep, .verdict p.keep { display: inline-flex; gap: 8px; align-items: center; margin: 0; flex-wrap: wrap; }
   /* The desk's top: title and date picker side by side; the verdict or the three steps under both.
      On a phone the date picker sits right under the title, on one line (round 7: it fell between the carrier
      record and the headline). */

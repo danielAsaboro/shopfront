@@ -3,6 +3,25 @@
 {% block main %}
   <div class="eyebrow">Ring doorbell</div>
   <h1>Connect Ring</h1>
+  {% if public_demo %}
+  {# The hosted read-only demo (round 10): what connecting does and how, never a token box that can't save #}
+  <p style="font-size:17px;margin:12px 0 0">This public demo isn't connected to Ring: its door events are generated and its one delivery alert is a replay. On a shop's own Shopfront, connecting Ring is what makes the receiving desk real.</p>
+  <h2 style="margin-top:24px">What connecting does</h2>
+  <ul style="margin:6px 0 0;padding-left:18px">
+    <li>Shopfront reads the doorbell's Event History for each day: motion, doorbell presses, and Ring's person and package alerts.</li>
+    <li>With Amazon Bedrock on, it downloads the camera frame of a door event near an order or a carrier's scan and asks Bedrock who it shows.</li>
+    <li>It accepts Ring's signed webhooks, so Ring's package alerts reach the receiving desk.</li>
+    <li>It reads from Ring and changes none of the doorbell's settings; the token stays on the shop's computer and never reaches the browser.</li>
+  </ul>
+  <h2 style="margin-top:24px">How an owner connects (Ring Developer Playground)</h2>
+  <ol class="steps">
+    <li>Open the <a href="https://developer.amazon.com/ring/console/playground" target="_blank" rel="noopener">Ring Developer Playground</a> and click <strong>Generate Token</strong>.</li>
+    <li>On Shopfront's own Connect Ring page, paste the access token. It lasts about 30 minutes.</li>
+    <li>Press a scene in the Playground. Shopfront shows frames for door events filed after the token was issued.</li>
+  </ol>
+  <p style="margin-top:16px">Which calls to Ring's API have been captured live so far (each with Ring's <code>X-Request-ID</code>), and what hasn't been captured yet, is listed in the repository's <code>evidence/README.md</code>; the proof table is in <code>docs/status.md</code>.</p>
+  <p style="margin-top:24px"><a class="primary" href="/">Back to the business-closed check</a></p>
+  {% else %}
   <ol class="steps">
     <li>Open the <a href="https://developer.amazon.com/ring/console/playground" target="_blank" rel="noopener">Ring Developer Playground</a> and click <strong>Generate Token</strong>.</li>
     <li>Paste the access token below. It lasts about 30 minutes; paste a fresh one when Shopfront says the Ring sign-in expired.</li>
@@ -20,4 +39,5 @@
   {% endif %}
   <p style="margin-top:24px"><a href="/">Back to the receiving desk</a></p>
   <p class="proof">The token is saved on this computer (git-ignored, readable only by you) and is never shown again.</p>
+  {% endif %}
 {% endblock %}
