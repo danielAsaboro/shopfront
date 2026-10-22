@@ -87,8 +87,14 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
     day = common._parse_day(date)
     if not date:  # the receiving desk opens on today once today has orders to watch for; else yesterday's door
         today = datetime.now(common.settings.tz).date()
+        demo = common._demo_scan() if common._ring().name == "synthetic" else None
         if common.book.for_day(today):
             day = today
+        elif demo:  # a demo install on made-up door data opens on the demo's day, not an empty yesterday
+            try:
+                day = common._parse_day(demo["date"])
+            except HTTPException:
+                pass
     claim = common._claim(claim)
     when = None
     if attempt:

@@ -258,3 +258,18 @@ def test_the_survey_figure_is_explained_once_on_the_check_page(monkeypatch):
     page = c.get("/", params={"date": "2026-10-14"}).text
     assert "the survey average for a failed delivery (not your own number yet)" in page
     assert "Survey average: the average cost" in page
+
+
+def test_a_demo_install_opens_on_the_demo_day(monkeypatch):
+    """Round 8: "/" on the demo opened on yesterday, an empty day with "No orders listed". On a demo install with
+    made-up door data it opens on the demo's day; a date in the link, or orders today, still win."""
+    orders = demo.dated_orders(demo.SAMPLE.read_text(), DAY)
+    c = TestClient(main.app)
+    assert main._ring().name == "synthetic"
+    assert "Wednesday 14 October 2026" not in c.get("/").text
+    main.DATA.mkdir(parents=True, exist_ok=True)
+    demo.note_demo_scan(main.DATA, DAY, orders)
+    assert "<h1>Wednesday 14 October 2026</h1>" in c.get("/").text
+    assert "<h1>Thursday 15 October 2026</h1>" in c.get("/", params={"date": "2026-10-15"}).text
+    (main.DATA / demo.MARKER).unlink()  # not a demo install
+    assert "Wednesday 14 October 2026" not in c.get("/").text
