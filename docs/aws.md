@@ -1,10 +1,12 @@
 # Shopfront on AWS
 
-**Status: template ready, not yet deployed.** [infra/template.yaml](../infra/template.yaml) passes
-`sam validate --lint` (SAM CLI 1.169.0) and `cfn-lint` 1.53.3 with no findings, and `sam build` packages
-all three functions, but no stack has been deployed, no Ring webhook has reached it, no alarm has fired,
-no trace has been recorded, and there is no public demo URL yet. Until someone deploys it,
-every claim below is about the template and its tests, not about a running service.
+**Status: deployed 22 Oct 2026** as stack `shopfront` in us-east-1. The public demo is live at
+https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/ (Lambda request IDs in
+[evidence/aws-public-demo-20261022T041237Z.json](../evidence/aws-public-demo-20261022T041237Z.json)). The first
+deploy found one template bug (an SQS policy statement naming two queues), now fixed. This account's Lambda
+concurrency limit is 10, so the demo runs with `DemoConcurrency=-1` (no reserved cap; see section 2). The
+webhook endpoint is up, but no Ring webhook has reached it yet, no alarm has fired and no trace has been
+recorded, so claims about those are still about the template and its tests.
 
 Shopfront runs on the shop's own computer. Two things need more than that:
 

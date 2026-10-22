@@ -1,0 +1,47 @@
+{
+  "what": "Public read-only demo on AWS Lambda (Function URL), stack 'shopfront' in us-east-1, deployed with infra/template.yaml",
+  "captured_at": "2026-10-22T04:12:40+00:00",
+  "captured_by": "httpx GET from outside AWS; x-amzn-RequestId is Lambda's request ID for each call",
+  "demo_url": "https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/",
+  "calls": [
+    {
+      "request": "GET /healthz",
+      "status": 200,
+      "content_type": "application/json",
+      "x_amzn_request_id": "cf92304e-ec29-4e7f-bf76-a7d6d85d226d",
+      "bytes": 90
+    },
+    {
+      "request": "GET /?date=2026-10-20",
+      "status": 200,
+      "content_type": "text/html",
+      "x_amzn_request_id": "ceca2d18-9e73-45e7-be9d-84642656cf20",
+      "bytes": 47586
+    },
+    {
+      "request": "GET /setup",
+      "status": 200,
+      "content_type": "text/html",
+      "x_amzn_request_id": "1857d005-dfff-4924-9d2a-bcaf42a60624",
+      "bytes": 28098
+    },
+    {
+      "request": "GET /api/ask",
+      "status": 403,
+      "content_type": "application/json",
+      "x_amzn_request_id": "500ae27e-8681-4b36-b616-a8b7b13fb082",
+      "bytes": 174
+    },
+    {
+      "request": "GET /dispute.zip?date=2026-10-20&carrier=Northline+Parcel&tracking=NP4471002958&at=14%3A30&claim=business_closed",
+      "status": 200,
+      "content_type": "application/zip",
+      "x_amzn_request_id": "3110eaba-2844-4889-a5d8-c8b2f74b5dc8",
+      "bytes": 5923
+    }
+  ],
+  "notes": [
+    "/api/ask returns 403 by design: the public demo never calls Bedrock (app/public_demo.py).",
+    "The demo serves the synthetic demo shop; it calls neither Ring nor Bedrock."
+  ]
+}

@@ -36,7 +36,7 @@ token it uses synthetic events, and the banner says so.
 
 **Hosted demo, no install:** the same made-up shop, read-only, at a public link: the `DemoUrl` that
 `cd infra && sam build && sam deploy --guided` prints ([docs/aws.md](aws.md#2-the-public-demo)).
-Template ready, not yet deployed, so there is no link yet. Try that mode locally with
+Live since 22 Oct 2026 at https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/ (evidence/aws-public-demo-20261022T041237Z.json). Try that mode locally with
 `SHOPFRONT_PUBLIC_DEMO=1 .venv/bin/uvicorn app.public_demo:app --port 8404`.
 
 ## Tests

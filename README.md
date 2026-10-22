@@ -1,6 +1,8 @@
 # Shopfront
 **The carrier scanned "business closed". Your doorbell says you were open.**
 
+**Try it with no install:** [https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/](https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/), the demo shop, read-only, on AWS Lambda.
+
 ![The demo's check of a "business closed" scan at 14:30: posted hours, the door events either side, the verdict "You were open", and the carrier's record for the month](docs/img/verdict.png)
 
 ```bash
@@ -110,7 +112,7 @@ marked my stop as undeliverable because 'the business was closed.'" (the poster 
 ## Run the demo
 
 The three commands at the top. `--port` picks another port; data lives in `.data/demo` (git-ignored) and
-starts fresh each run. What each link shows, the hosted read-only demo (template ready, not deployed),
+starts fresh each run. What each link shows, the hosted read-only demo,
 tests, using Shopfront from a phone, and connecting a real Ring doorbell: [docs/run.md](docs/run.md).
 
 ## At home too
