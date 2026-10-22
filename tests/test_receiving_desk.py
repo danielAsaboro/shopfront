@@ -198,7 +198,8 @@ def test_closed_scan_while_open_and_busy_with_no_courier():
     assert r["outcome"] == OPEN_NO_COURIER and r["claim"] == "business_closed"
     assert r["activity"] == {"from": "13:35", "to": "14:35", "events": 4, "motion": 4, "presses": 0, "customers": 1,
                              "guessed_customers": 2, "staff": 0, "seen": 1, "people": 0, "people_source": [],
-                             "near": 1, "before": "13:40", "after": "14:20"}  # door use beyond the 10 min near it
+                             "near": 1, "before": "13:40", "after": "14:20",  # door use beyond the 10 min near it
+                             "times": ["13:40", "13:55", "14:20", "14:30"], "near_unidentified": []}
     assert "posted hours had you open (08:00–18:00)" in r["text"]
     assert ("4 motion events in the 30 minutes either side of the scan (13:35–14:35; 1 of them confirmed from the "
             "camera frame as a customer)") in r["text"]
@@ -210,7 +211,8 @@ def test_closed_scan_while_open_and_busy_with_no_courier():
 def test_a_busy_door_says_which_side_of_the_scan_it_was_used_on(tmp_path):
     """Round 8: the demo's door was used only after the 14:30 scan (a press at 14:35, people 14:45-14:51), yet the
     draft said "our door was in use around the time of the scan". The finding, the verdict facts and the draft
-    now name the last door event before the scan and the first after it, beyond the 10 minutes near it."""
+    now name the last door event before the scan and the first after it, beyond the 10 minutes near it. Round 10:
+    the draft lists every door time in the window instead, and which near the scan nothing identified."""
     from app import pages
     after_only = [visit(14, 35, VisitType.DOORBELL_PRESS, ring_event="ding"), visit(14, 45), visit(14, 51)]
     r = check_closed_scan(at(14, 30), after_only, OPEN)
@@ -219,17 +221,17 @@ def test_a_busy_door_says_which_side_of_the_scan_it_was_used_on(tmp_path):
             in r["text"])
     assert pages.verdict_facts(r)[1]["text"] == "3 door events 14:00–15:00 (all after the scan)"
     body = dispute.build_pack("Corner Bakery", DAY, after_only, frames_with(tmp_path), "08:00–18:00", r)["draft"]["body"]
-    assert ("Outside the 10 minutes either side of the scan, nothing was recorded at our door in the 30 minutes "
-            "before it; the first event after it was at 14:45.") in body
+    assert ("The door events were at 14:35, 14:45 and 14:51. Nothing identified who was at the door at 14:35, the "
+            "one event within 10 minutes of the scan.") in body
     assert "our door was in use after the scan." in body and "around the time of the scan" not in body
-    assert "14:35" not in body  # the press near the scan isn't named in the draft: it could be the courier
     both = [visit(14, 12)] + after_only
     r = check_closed_scan(at(14, 30), both, OPEN)
     assert "(beyond the 10 minutes near the scan, the last before it at 14:12 and the first after it at 14:45)" \
         in r["text"]
     assert pages.verdict_facts(r)[1]["text"] == "4 door events 14:00–15:00 (1 before the scan, 3 after)"
     body = dispute.build_pack("Corner Bakery", DAY, both, frames_with(tmp_path), "08:00–18:00", r)["draft"]["body"]
-    assert "the last door event before it was at 14:12 and the first after it at 14:45." in body
+    assert "The door events were at 14:12, 14:35, 14:45 and 14:51. Nothing identified who was at the door at " \
+        "14:35, the one event within 10 minutes of the scan." in body
     assert "our door was in use around the time of the scan." in body
 
 
@@ -324,9 +326,8 @@ def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_fa
     assert ("Swift Parcel scanned it \"business closed\" at 14:05 on 2026-10-07 (tracking SP999). Our front-door "
             "camera shows otherwise.") in d["body"]
     assert ("Our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 motion events in the 30 "
-            "minutes either side of the scan (13:35–14:35), 1 of them confirmed from the camera frame as a customer. Outside the 10 minutes "
-            "either side of the scan, the last door event before it was at 13:40 and the first after it at 14:20. "
-            "The visit it recorded within 10 minutes of the scan was not a courier, judged from the camera frame.") \
+            "minutes either side of the scan (13:35–14:35), 1 of them confirmed from the camera frame as a customer. "
+            "The door events were at 13:40, 13:55 and 14:20. The visit it recorded within 10 minutes of the scan was not a courier, judged from the camera frame.") \
         in d["body"]
     assert "Your posted hours" not in d["body"]  # written by the shop, not to the owner
     assert "order PO-1042 from Bay Mills (Flour 25kg x4)" in d["body"]

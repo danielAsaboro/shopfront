@@ -153,7 +153,12 @@ def test_busy_door_with_a_press_at_the_scan_is_open_and_names_the_press(tmp_path
         body = d["body"].lower()
         assert "4 motion events and 1 doorbell press in the 30 minutes either side of the scan (14:00–15:00)" in body
         assert "we were open" in body
-        assert "14:36" not in body and "might have been" not in body and "possible courier" not in body
+        # round 10: every door time in the window, plainly, and the ones near the scan nothing identified (naming only
+        # the times either side of the scan read as cherry-picking); still no guess that it was the courier
+        assert "the door events were at 14:02, 14:11, 14:25, 14:36 and 14:51." in body
+        assert "nothing identified who was at the door at 14:25 and 14:36, the 2 events within 10 minutes of the " \
+               "scan." in body
+        assert "might have been" not in body and "possible courier" not in body
         assert "nobody" not in body and "no courier" not in body and "nothing at our door" not in body
     assert any(t["time"].startswith("14:36") for t in p["timeline"])  # the attached log names the press
 
@@ -381,3 +386,21 @@ def test_the_rules_guess_line_shows_only_when_a_rules_label_is_in_the_log(tmp_pa
     seen = [visit(12, 20, "customer", "bedrock", rid="r1"), visit(12, 50, "customer", "bedrock", rid="r2")]
     clean = pack(seen, rc.check_closed_scan(at(12, 40), seen, OPEN, now=NOW), tmp=tmp_path)
     assert dispute.RULES_LIMIT not in clean["limits"]
+
+
+def test_the_draft_lists_the_door_times_plainly():
+    """Round 10: the draft says every door time in the window and which near the scan nothing identified, exactly
+    from the finding; a very busy door is said by its first and last events with the count between."""
+    t = dispute._door_times
+    assert t({"times": ["14:22"], "near": 1, "near_unidentified": ["14:22"]}, 10) == (
+        " The one door event was at 14:22. Nothing identified who was at the door at 14:22, the one event within 10 "
+        "minutes of the scan.")
+    assert t({"times": ["14:10", "14:22", "14:28"], "near": 2, "near_unidentified": ["14:22"]}, 10).endswith(
+        "Nothing identified who was at the door at 14:22, one of the 2 events within 10 minutes of the scan.")
+    assert t({"times": ["14:10", "14:53"], "near": 0, "near_unidentified": []}, 10) == \
+        " The door events were at 14:10 and 14:53."
+    many = [f"14:{m:02d}" for m in range(0, 60, 4)]  # 15 events
+    said = t({"times": many, "near": 0, "near_unidentified": []}, 10)
+    assert said == (" The door events were at 14:00, 14:04, 14:08, 14:12, 14:16, 14:20, then 7 more, then 14:52 and "
+                    "14:56 (the door log attached lists each).")
+    assert t({"times": [], "near": 0}, 10) == ""

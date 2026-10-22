@@ -370,7 +370,7 @@ def _facts(p: dict) -> str:
         conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
                               f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
         line = f"Our posted hours that day were {p['posted_hours']}, and {_recorder(p['timeline'])} recorded " \
-               f"{kinds} {_window(a)}{conf}.{_sides(a, tol)}"
+               f"{kinds} {_window(a)}{conf}.{_door_times(a, tol) if 'times' in a else _sides(a, tol)}"
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
@@ -391,11 +391,40 @@ def _facts(p: dict) -> str:
     return f["text"]
 
 
+MAX_TIMES = 12  # a door busier than this is listed by its first and last events; the attached door log has each
+
+
+def _door_times(a: dict, tol: int) -> str:
+    """" The door events were at 14:01, 14:10, 14:22, 14:38 and 14:53. Nothing identified who was at the door at
+    14:22 and 14:38, the 2 events within 10 minutes of the scan.": every event in the window, plainly, then the
+    ones near the scan that nothing identified (round 10: naming only the last event before the scan and the first
+    after it read as picking the times that suit the shop)."""
+    ts = a.get("times") or []
+    if not ts:
+        return ""
+    if len(ts) == 1:
+        line = f" The one door event was at {ts[0]}."
+    elif len(ts) <= MAX_TIMES:
+        line = f" The door events were at {_and(ts)}."
+    else:
+        line = (f" The door events were at {', '.join(ts[:6])}, then {len(ts) - 8} more, then {ts[-2]} and {ts[-1]} "
+                f"(the door log attached lists each).")
+    near, n = a.get("near_unidentified") or [], a.get("near") or 0
+    if near:
+        which = (("the one event" if n == 1 else f"the {n} events") if len(near) >= n else
+                 f"{'one' if len(near) == 1 else len(near)} of the {n} events")
+        line += f" Nothing identified who was at the door at {_and(near)}, {which} within {tol} minutes of the scan."
+    return line
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def _sides(a: dict, tol: int) -> str:
-    """" Outside the 10 minutes either side of the scan, the last door event before it was at 14:12 and the first
-    after it at 14:45.": which side of the scan the door was used on, from the finding's own window, so the draft
-    never stretches use on one side to "around". Events near the scan aren't named here (one could be the courier;
-    the door log lists them)."""
+    """For a finding from before round 10 (no `times`): " Outside the 10 minutes either side of the scan, the last
+    door event before it was at 14:12 and the first after it at 14:45.": which side of the scan the door was used
+    on, from the finding's own window, so the draft never stretches use on one side to "around"."""
     b, f = a.get("before"), a.get("after")
     mins = int(rc.ACTIVITY.total_seconds() // 60)
     if b and f:
@@ -417,9 +446,10 @@ def _people(a: dict) -> str:
     if not n:
         return ""
     real = set(a.get("people_source") or []) <= {"ring", "ring-webhook"}
+    m = "all" if n > 1 and n == a.get("events") else n  # "all 6 of them" reads as "6 of them" and wonders which
     if not real:  # the draft's [DEMO] subject already says it is demo data
-        return f", {'one of them a person alert' if n == 1 else f'{n} of them person alerts'}"
-    return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
+        return f", {'one of them a person alert' if n == 1 else f'{m} of them person alerts'}"
+    return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{m} of them as people'}"
 
 
 def _kinds_text(a: dict) -> str:

@@ -332,7 +332,12 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
                 "before": _hhmm(max(b)) if (b := [v.event.timestamp for v in around
                                                   if gap(v.event.timestamp, scan) < -tolerance]) else None,
                 "after": _hhmm(min(f)) if (f := [v.event.timestamp for v in around
-                                                 if gap(v.event.timestamp, scan) > tolerance]) else None}
+                                                 if gap(v.event.timestamp, scan) > tolerance]) else None,
+                # every door event in the window, in time order, and the ones near the scan that nothing identified
+                # (round 10: the draft lists them all, so it never reads as picking the times that suit the shop)
+                "times": [_hhmm(v.event.timestamp) for v in sorted(around, key=lambda v: utc(v.event.timestamp))],
+                "near_unidentified": [_hhmm(v.event.timestamp) for v in sorted(near, key=lambda v: utc(v.event.timestamp))
+                                      if not confirmed(v)]}
     fmt = {"attempt": _hhmm(scan), "hours": base["posted_hours"], "lo": activity["from"],
            "hi": activity["to"], "tol": tol, "activity": _kinds(around),
            "span": _span(lo, hi, _cust(around, customers)), "sides": sides(activity["before"], activity["after"], tol),
