@@ -365,6 +365,11 @@ def test_demo_package_holds_the_app_and_its_seed_data(tmp_path):
     assert {"app/public_demo.py", "app/main.py", "app/templates/dashboard.html", "scripts/demo.py",
             "scripts/feed_webhook.py", "samples/orders.csv"} <= files
     assert not any("__pycache__" in f or f.startswith(("tests/", ".data", "evidence/")) for f in files)
+    # every sample file the demo seeds from ships with it (a missing one breaks the Lambda's seeding)
+    import re
+    demo_src = (Path(main.__file__).parent.parent / "scripts" / "demo.py").read_text()
+    samples = {f"samples/{n}" for n in re.findall(r'ROOT / "samples" / "([^"]+)"', demo_src)}
+    assert samples and samples <= files, samples - files
     # what the Lambda installs is pinned like the app's own requirements
     pins = dict(line.split("#")[0].strip().split("==") for line in pkg.REQUIREMENTS.read_text().splitlines()
                 if "==" in line)

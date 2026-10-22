@@ -15,7 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REQUIREMENTS = ROOT / "infra" / "public-demo-requirements.txt"
 TREES = ["app"]
-FILES = ["scripts/__init__.py", "scripts/demo.py", "scripts/feed_webhook.py", "samples/orders.csv"]
+FILES = ["scripts/__init__.py", "scripts/demo.py", "scripts/feed_webhook.py", "samples/orders.csv",
+         "samples/past-orders.csv"]
 LAMBDA = ["--platform", "manylinux2014_aarch64", "--implementation", "cp", "--python-version", "3.12",
           "--only-binary=:all:"]
 
