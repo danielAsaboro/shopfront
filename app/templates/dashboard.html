@@ -48,8 +48,9 @@
   <p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}
   {%- if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}
   {%- if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}
-  {%- if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door
-    {%- if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}
+  {#- round 10: "about $17.20 of redeliveries not needed" read as a sum nobody could place; say what it means -#}
+  {%- if mm.confirmed %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with {{ 'its courier' if mm.confirmed == 1 else 'their couriers' }} confirmed at the door: no redelivery fee{{ 's' if mm.confirmed != 1 }} there
+  {%- elif mm.confirmed is not none %} · no order's courier confirmed at the door yet
   {%- endif %}.
   {%- if mm.each %} <span class="why">At {{ mm.each }} each
     {%- if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>
@@ -142,7 +143,9 @@
         </details>
       </div>{% endfor %}
       {# Stock the owner could lose leads the money: each perishable order's own value, then the redelivery fees #}
-      {% if perishable_at_risk %}<p class="money lost"><strong>Lost trading:</strong> {{ perishable_at_risk|join(', ') }} of perishable stock behind those scans {{ 'is' if perishable_at_risk|length == 1 else 'are' }} at risk in full (each order's own value), on top of the redelivery fees.</p>{% endif %}
+      {# Each order named for what it is, linked to the kept check behind it (round 10: "PO-1031 ($318.75)" alone
+         left the owner asking which order that was) #}
+      {% if perishable_at_risk %}<p class="money lost"><strong>Lost trading:</strong> {% for x in perishable_at_risk %}<a href="{{ x.href }}">{{ x.ref }}</a>{% if x.supplier %}, {{ x.supplier }}'s order{% endif %} behind the {{ x.when }} scan ({{ x.amount }}){{ ', ' if not loop.last }}{% endfor %}: perishable stock at risk in full (each order's own value), on top of the redelivery fees.</p>{% endif %}
       {% if mm %}{{ month_money_line(mm) }}{% endif %}
       {% if record %}<p class="report-row"><a class="secondary report-link" href="/report?month={{ (b.date|string)[:7] }}">Monthly report</a> <span class="why">one printable page for the carrier's account manager or your supplier</span></p>{% endif %}
     </section>

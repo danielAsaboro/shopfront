@@ -112,6 +112,8 @@ def test_keep_recomputes_the_check_and_the_desk_shows_the_record(monkeypatch):
     assert "Northline Parcel: 1 &#34;business closed&#34; scan in October, during posted hours." in desk
     assert "1 disputed scan, about $17.20 of redeliveries at stake" in desk and "(all demo)" not in desk
     assert desk.count("$17.20 of redeliveries at stake") == 1 and "$17.20 at stake" not in desk
+    # round 10: no "$0 of redeliveries not needed"; with no courier confirmed it says so in words
+    assert "courier confirmed at the door yet" in desk and "not needed" not in desk
     assert '<span class="badge b-demo">demo</span>' in desk.split("Carrier record")[1]  # one chip for the section
     assert "the survey average" in desk  # the sourced default, said as such
     page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
@@ -171,8 +173,11 @@ def test_demo_seeds_two_earlier_checks_this_month_marked_demo(tmp_path):
     for k in kept:  # the order is in the book on the scan's day, its window around the scan
         [o] = book.for_day(date.fromisoformat(k["day"]))
         assert o.order_ref == k["order_ref"] and o.window_start <= k["at"] <= o.window_end
-    assert kc.perishable_at_risk(kc.CheckBook(tmp_path / "checks.json").all(), day, dispute.DISPUTE) == [
-        "PO-1031 ($318.75)"]
+    [lost] = kc.perishable_at_risk(kc.CheckBook(tmp_path / "checks.json").all(), day, dispute.DISPUTE)
+    k = next(k for k in kept if k["order_ref"] == "PO-1031")
+    assert (lost["ref"], lost["supplier"], lost["amount"]) == ("PO-1031", "Valley Creamery", "$318.75")
+    # round 10: it names the order and links to the kept check behind it
+    assert lost["href"].startswith(f"/?date={k['day']}&attempt={k['at'].replace(':', '%3A')}&claim=business_closed")
 
 
 def test_demo_report_ties_each_scan_to_its_order(monkeypatch):

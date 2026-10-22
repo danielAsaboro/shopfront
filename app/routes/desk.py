@@ -59,7 +59,7 @@ def _record(day: date) -> dict:
     cost, default = common._cost()
     record = kept_checks.carrier_record(kept, day, cost, common.profile.get().currency, dispute.DISPUTE)
     for c in record:  # the desk's one-line summary: the pattern without the money, which sits with its source
-        c["summary"] = c["headline"].removesuffix(f", about {c['at_stake']} at stake") if c["at_stake"] else c["headline"]
+        c["summary"] = c["pattern"]
     return {"record": record,
             "perishable_at_risk": kept_checks.perishable_at_risk(kept, day, dispute.DISPUTE),
             "month_money": kept_checks.month_money(kept, day, _month_confirmed(day), cost, common.profile.get().currency,

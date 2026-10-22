@@ -88,15 +88,23 @@ def test_kept_checks_carry_it_to_the_month_the_report_and_the_pack(monkeypatch):
                   follow_redirects=False).status_code == 303
     [k] = main.checks.all()
     assert k["perishable"] and k["outcome"] in dispute.DISPUTE
-    assert kc.perishable_at_risk(main.checks.all(), DAY, dispute.DISPUTE) == ["PO-1042 ($318.75)"]
-    desk = " ".join(text(c.get("/", params={"date": DAY.isoformat()}).text).split())
-    # round 8: the stock at risk leads the record's money, ahead of the redelivery fees
-    lost = ("Lost trading: PO-1042 ($318.75) of perishable stock behind those scans is at risk in full (each "
-            "order's own value), on top of the redelivery fees.")
-    assert lost in desk and desk.index(lost) < desk.index("October so far:")
+    [lost] = kc.perishable_at_risk(main.checks.all(), DAY, dispute.DISPUTE)
+    assert (lost["ref"], lost["supplier"], lost["amount"]) == ("PO-1042", "Valley Creamery", "$318.75")
+    page = c.get("/", params={"date": DAY.isoformat()}).text
+    desk = " ".join(text(page).split()).replace(" ,", ",")  # text() spaces out the link's tags
+    # round 8: the stock at risk leads the record's money, ahead of the redelivery fees. Round 10: it says what
+    # PO-1042 is, and the order links to the kept check behind it
+    said = (f"Lost trading: PO-1042, Valley Creamery's order behind the {DAY.day} October scan ($318.75): "
+            "perishable stock at risk in full (each order's own value), on top of the redelivery fees.")
+    assert said in desk and desk.index(said) < desk.index("October so far:")
+    assert f'<a href="{lost["href"].replace("&", "&amp;")}">PO-1042</a>' in page
+    assert c.get(lost["href"]).status_code == 200
     report = " ".join(text(c.get("/report", params={"month": "2026-10"}).text).split())
-    assert ("Stock at risk in full (perishable, each order's own value): PO-1042 ($318.75). On top of that, 1 scan "
-            "the door disputes") in report
+    assert ("Stock at risk in full (perishable, each order's own value): PO-1042 from Valley Creamery ($318.75). On "
+            "top of that, 1 scan the door disputes") in report
+    # the carrier's own line on the report leads with the stock, the fees second
+    assert ('Northline Parcel: 1 "business closed" scan in October, during posted hours; perishable stock at risk: '
+            "PO-1042 ($318.75), plus about $17.20 in redelivery fees.") in report
     pack = c.get("/api/dispute", params={"date": DAY.isoformat(), "at": "14:30", "claim": "business_closed",
                                          "tracking": "NP1"}).json()
     assert pack["order"]["perishable"] is True

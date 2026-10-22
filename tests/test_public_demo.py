@@ -133,6 +133,9 @@ def test_desk_shows_the_carrier_record_and_offers_the_demo_scan(client, demo):
     assert n == 2 or demo.day.day <= 7
     if n:
         assert "Northline Parcel: 2 &#34;business closed&#34; scans in October" in desk and "during posted hours" in desk
+    # round 10: the flour order's replayed alert, said as what it saves rather than "$17.20 ... not needed"
+    assert re.search(r"\d+ orders? with (its courier|their couriers) confirmed at the door: no redelivery fees? there",
+                     desk) and "not needed" not in desk
     button = desk.split('class="try-demo', 1)[1].split("</form>", 1)[0]
     assert "Try the business-closed check" in button and f'name="attempt" value="{demo.scan}"' in button
 
