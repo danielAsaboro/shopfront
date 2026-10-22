@@ -62,7 +62,7 @@
   </section>
   {% endfor %}
   {% set mm = rep.money %}
-  {% if mm and mm.disputed %}<p class="tot">{{ mm.disputed }} scan{{ 's' if mm.disputed != 1 }} the door disputes{% if mm.at_stake %}, about {{ mm.at_stake }} of redeliveries at stake, at {{ mm.each }} each{% if mm.default %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% else %} ({{ shop }}'s own figure){% endif %}{% endif %}.{% if rep.orders %} Orders named: {{ rep.orders|join(', ') }}.{% endif %}{% if rep.perishable %} Perishable, so at risk in full (each order's own value): {{ rep.perishable|join(', ') }}.{% endif %}</p>{% endif %}
+  {% if mm and mm.disputed %}<p class="tot">{% if rep.perishable %}Stock at risk in full (perishable, each order's own value): {{ rep.perishable|join(', ') }}. On top of that, {% endif %}{{ mm.disputed }} scan{{ 's' if mm.disputed != 1 }} the door disputes{% if mm.at_stake %}, about {{ mm.at_stake }} of redeliveries at stake, at {{ mm.each }} each{% if mm.default %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% else %} ({{ shop }}'s own figure){% endif %}{% endif %}.{% if rep.orders %} Orders named: {{ rep.orders|join(', ') }}.{% endif %}</p>{% endif %}
   {% endif %}
   <section class="block" aria-labelledby="lim">
     <h2 id="lim">What this does not show</h2>

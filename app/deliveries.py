@@ -519,10 +519,11 @@ def default_cost(currency: str) -> float | None:
 
 
 def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str,
-               default: bool = False) -> str | None:
+               default: bool = False, sourced_above: bool = False) -> str | None:
     """A redelivery cost times what the door saw: the owner's own number, or with `default` the survey
     average above, said as such. No cost means no line. Both counts must come from couriers Ring or
-    Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows)."""
+    Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows). With `sourced_above` the page has already
+    said what the survey average is and where it comes from, so the line only points back to it."""
     n = closed_attempts + missing
     if cost is None or n == 0:
         return None
@@ -532,6 +533,8 @@ def money_line(closed_attempts: int, missing: int, cost: float | None, currency:
     if missing:
         parts.append(f"{missing} expected deliver{'ies' if missing != 1 else 'y'} with no courier seen at the door")
     amount = f"{currency}{cost * n:,.2f}".replace(".00", "")
+    if default and sourced_above:
+        return f"Last 7 days: {' and '.join(parts)}. At {currency}{cost:.2f} each (the survey average above), that's about {amount}."
     if default:
         return (f"Last 7 days: {' and '.join(parts)}. At {currency}{cost:.2f} each, the survey average for a failed "
                 f"delivery (not your own number yet), that's about {amount}.")

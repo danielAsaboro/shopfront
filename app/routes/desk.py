@@ -21,7 +21,7 @@ from app.routes import common
 router = APIRouter()
 
 
-def _week_money(day: date) -> str | None:
+def _week_money(day: date, sourced_above: bool = False) -> str | None:
     p = common.profile.get()
     cost = p.redelivery_cost if p.redelivery_cost is not None else default_cost(p.currency)  # labelled default
     if cost is None:
@@ -35,7 +35,7 @@ def _week_money(day: date) -> str | None:
             return None
         closed += r["closed_couriers"]  # Ring- or Bedrock-confirmed couriers only, staff not in
         missing += sum(1 for x in r["expected"] if x["status"] == "not_seen" and not x.get("possible_elsewhere"))
-    return money_line(closed, missing, cost, p.currency, default=p.redelivery_cost is None)
+    return money_line(closed, missing, cost, p.currency, default=p.redelivery_cost is None, sourced_above=sourced_above)
 
 
 def _month_confirmed(day: date) -> int | None:
@@ -111,7 +111,7 @@ def dashboard(request: Request, date: str | None = Query(None), attempt: str | N
             desk = _desk(day, None, claim)
             # Without the door history no missed-delivery count or money is a fact: the month and the week
             # would count every order Ring didn't push as "no courier seen"
-            desk.update(record=[], month_money=None, perishable_at_risk=[], money=None)
+            desk.update(record=[], month_money=None, perishable_at_risk=[], money=None, cost_said=False)
         finally:
             common._ring_override.reset(token)
         desk["lead"] = _webhook_lead(desk["r"])
@@ -164,15 +164,20 @@ def _desk(day: date, when: datetime | None, claim: str, carrier: str = "") -> di
         courier = []  # the receipts already say it
     closed = courier + presses
     scan_first = bool(checked and checked["outcome"] in dispute.DISPUTE)
+    # The survey figure's caveat is said once, where the money first shows: the month's line in the carrier record
+    # when there is one; the week's line then only points back to it
+    record = _record(day)
+    mm = record["month_money"]
+    cost_said = bool(mm and mm["each"] and mm["default"])
     lead = headline(r) + closed  # a checked scan has its own verdict card above these lines
     return {"b": b, "lead": lead, "lead_is_scan": scan_first, "rest": rest, "r": r, "rows": pages.desk_rows(r),
             "peak": max(b.hourly_customers + b.hourly_customers_last_week) or 1,
             "device": getattr(ring, "_device_id", "") or "", "request_id": getattr(ring, "last_request_id", None),
-            "money": _week_money(day), "attempt": checked, "funnel": stats,
+            "money": _week_money(day, cost_said), "cost_said": cost_said, "attempt": checked, "funnel": stats,
             "labels": pages.labelled_by_text(stats, b.classifier), "first_run": not common.book._all(),
             "bedrock_cost": _bedrock_cost(day, b.classifier),
             "bedrock_held": stats.get("held_from_bedrock", 0) if b.classifier == "bedrock" else 0,
-            "replayed": bool(stats.get("replayed")), **_record(day)}
+            "replayed": bool(stats.get("replayed")), **record}
 
 
 def _bedrock_cost(day: date, labeller: str) -> str | None:

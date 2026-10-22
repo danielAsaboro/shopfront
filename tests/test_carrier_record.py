@@ -231,3 +231,30 @@ def test_demo_prints_the_check_url_first():
     printed = inspect.getsource(demo.main).split('print(f"""', 1)[1]
     assert printed.lstrip().startswith("Start here, the business-closed check:\n   {check_url}")
     assert printed.index("{check_url}") < printed.index("{desk}") < printed.index("{pack_url}")
+
+
+def test_the_survey_figure_is_explained_once_on_the_check_page(monkeypatch):
+    """Round 8: the check page said "$17.20 each, the survey average (Loqate ...)" three times: in the verdict's
+    details, in the month's line and again under the week's line. Now the month's line, where the money first
+    shows, says it with its source; the week's line points back to it, and the details keep their own note."""
+    from app.deliveries import COST_SOURCE
+    monkeypatch.setattr(main, "_visits", lambda d: busy(d))
+    main.book.add(DAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
+                  tracking="NP4471002958", amount="$318.75")
+    c = TestClient(main.app)
+    assert c.post("/checks", data=form(), follow_redirects=False).status_code == 303
+    page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
+                              "carrier": "Northline Parcel", "tracking": "NP4471002958"}).text
+    details = page.split('<details class="tech why-verdict">', 1)[1].split("</details>", 1)[0]  # closed
+    rest = page.replace(details, "")
+    assert rest.count(COST_SOURCE["name"]) == 1 and details.count(COST_SOURCE["name"]) == 1
+    assert "At $17.20 each, the survey average (" in rest  # the month's line, with its source
+    assert "Last 7 days: 1 expected delivery with no courier seen at the door. At $17.20 each (the survey " \
+           "average above), that&#39;s about $17.20." in rest
+    assert rest.index("At $17.20 each, the survey average (") < rest.index("(the survey average above)")
+    assert "Survey average: the average cost" not in page
+    # without a month line to say it first, the week's line says it in full, with its source
+    main.checks.remove(main.checks.all()[0]["id"])
+    page = c.get("/", params={"date": "2026-10-14"}).text
+    assert "the survey average for a failed delivery (not your own number yet)" in page
+    assert "Survey average: the average cost" in page

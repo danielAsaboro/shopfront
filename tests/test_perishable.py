@@ -90,10 +90,13 @@ def test_kept_checks_carry_it_to_the_month_the_report_and_the_pack(monkeypatch):
     assert k["perishable"] and k["outcome"] in dispute.DISPUTE
     assert kc.perishable_at_risk(main.checks.all(), DAY, dispute.DISPUTE) == ["PO-1042 ($318.75)"]
     desk = " ".join(text(c.get("/", params={"date": DAY.isoformat()}).text).split())
-    assert "Lost trading: perishable stock behind those scans, PO-1042 ($318.75), at risk as well as the " \
-           "redelivery fees (each order's own value)." in desk
+    # round 8: the stock at risk leads the record's money, ahead of the redelivery fees
+    lost = ("Lost trading: PO-1042 ($318.75) of perishable stock behind those scans is at risk in full (each "
+            "order's own value), on top of the redelivery fees.")
+    assert lost in desk and desk.index(lost) < desk.index("October so far:")
     report = " ".join(text(c.get("/report", params={"month": "2026-10"}).text).split())
-    assert "Perishable, so at risk in full (each order's own value): PO-1042 ($318.75)." in report
+    assert ("Stock at risk in full (perishable, each order's own value): PO-1042 ($318.75). On top of that, 1 scan "
+            "the door disputes") in report
     pack = c.get("/api/dispute", params={"date": DAY.isoformat(), "at": "14:30", "claim": "business_closed",
                                          "tracking": "NP1"}).json()
     assert pack["order"]["perishable"] is True
