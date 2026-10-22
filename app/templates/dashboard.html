@@ -10,7 +10,59 @@
 {% set scan_order = scan_order or ((r.expected|selectattr('id', 'equalto', order_id)|first) if order_id else none) %}
 {% set dflt = default_cost(profile.currency) %}
 {% set per_miss = profile.redelivery_cost if profile.redelivery_cost is not none else dflt %}
-{% macro stake(o) %}{% if o and (o.amount or per_miss is not none) %}<p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}{% if o.amount and per_miss is not none %}, and {% endif %}{% if per_miss is not none %}{{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery{% if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}{% endif %}.</p>{% if o.amount %}{% if o.perishable %}<p class="reason stake lost"><strong>Lost trading:</strong> {{ o.order_ref or 'this order' }} is perishable, so all {{ o.amount }} is at risk if it isn't redelivered in time (the order's own value, from your orders), not only the redelivery fee.</p>{% else %}<form method="post" action="/deliveries/{{ o.id }}/perishable" class="keep perish"><input type="hidden" name="on" value="1"><input type="hidden" name="back" value="{{ request.url.path ~ '?' ~ request.url.query }}"><button type="submit" class="quiet">Perishable stock? Count {{ o.amount }} as at risk</button></form>{% endif %}{% endif %}{% endif %}{% endmacro %}
+{# What a disputed scan puts at stake (under the verdict's Details): the order's stock and the redelivery fee, then
+   either the perishable order's lost trading or the button that marks it perishable. The `-` marks keep the output
+   on one line, as it was before these were split up. -#}
+{% macro stake_cost() -%}
+  {{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery
+  {%- if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}
+{%- endmacro -%}
+{% macro lost_or_perish(o) -%}
+  {% if o.perishable -%}
+    <p class="reason stake lost"><strong>Lost trading:</strong> {{ o.order_ref or 'this order' }} is perishable, so all {{ o.amount }} is at risk if it isn't redelivered in time (the order's own value, from your orders), not only the redelivery fee.</p>
+  {%- else -%}
+    <form method="post" action="/deliveries/{{ o.id }}/perishable" class="keep perish">
+      {#- -#}<input type="hidden" name="on" value="1"><input type="hidden" name="back" value="{{ request.url.path ~ '?' ~ request.url.query }}">
+      {#- -#}<button type="submit" class="quiet">Perishable stock? Count {{ o.amount }} as at risk</button></form>
+  {%- endif %}
+{%- endmacro -%}
+{% macro stake(o) -%}
+  {% if o and (o.amount or per_miss is not none) -%}
+    <p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}
+    {%- if o.amount and per_miss is not none %}, and {% endif %}
+    {%- if per_miss is not none %}{{ stake_cost() }}{% endif %}.</p>
+    {%- if o.amount %}{{ lost_or_perish(o) }}{% endif %}
+  {%- endif %}
+{%- endmacro -%}
+{# One kept check in the carrier record's list: the check's link, its tracking and order, what the door showed, Remove -#}
+{% macro kept_check(k) -%}
+  <li><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}, {{ k.at }}</a>
+  {%- if k.tracking %} · {{ k.tracking }}{% endif %}
+  {%- if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }} <form method="post" action="/checks/{{ k.id }}/delete" class="keep">
+    {#- -#}<input type="hidden" name="back" value="/?date={{ b.date }}">
+    {#- -#}<button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>
+{%- endmacro -%}
+{# The carrier record's money for the month: disputed scans and what they put at stake, the orders the door confirmed,
+   and the cost per redelivery with its source (said once on the page, here) -#}
+{% macro month_money_line(mm) -%}
+  <p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}
+  {%- if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}
+  {%- if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}
+  {%- if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door
+    {%- if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}
+  {%- endif %}.
+  {%- if mm.each %} <span class="why">At {{ mm.each }} each
+    {%- if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>
+    {%- else %}, your number{% endif %}.</span>
+  {%- endif %}</p>
+{%- endmacro -%}
+{# An order row's line about rule-guessed couriers: the presses that fit it, and the other orders they also fit -#}
+{% macro possible_text(x, maybe) -%}
+  {% set many = x.possible|length > 1 -%}
+  {{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ ('fit' if many else 'fits') ~ ' the window' if x.window_start else 'came during posted hours' }}; no camera frame confirmed a courier.
+  {%- set shared = x.possible|selectattr('also_fits')|list %}
+  {%- if shared %} {{ 'It also fits' if not many else 'They also fit' }} {{ shared|map(attribute='also_fits')|sum(start=[])|unique|join(' and ') }}; listed here only, the closer fit.{% endif %}
+{%- endmacro %}
 {% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
   {# The top of the desk: the title and the date picker, then the verdict (or the three steps), then the record #}
   <div class="desk-top">
@@ -83,12 +135,12 @@
       {% for c in record %}<div class="carrier-line">
         <p class="pattern">{{ c.summary }}.</p>
         <details class="tech kept-checks"><summary>The {{ c.n }} kept scan{{ 's' if c.n != 1 }}</summary>
-        <ul class="kept why">{% for k in c.checks %}<li><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}, {{ k.at }}</a>{% if k.tracking %} · {{ k.tracking }}{% endif %}{% if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }} <form method="post" action="/checks/{{ k.id }}/delete" class="keep"><input type="hidden" name="back" value="/?date={{ b.date }}"><button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>{% endfor %}</ul>
+        <ul class="kept why">{% for k in c.checks %}{{ kept_check(k) }}{% endfor %}</ul>
         </details>
       </div>{% endfor %}
       {# Stock the owner could lose leads the money: each perishable order's own value, then the redelivery fees #}
       {% if perishable_at_risk %}<p class="money lost"><strong>Lost trading:</strong> {{ perishable_at_risk|join(', ') }} of perishable stock behind those scans {{ 'is' if perishable_at_risk|length == 1 else 'are' }} at risk in full (each order's own value), on top of the redelivery fees.</p>{% endif %}
-      {% if mm %}<p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}{% if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}{% if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}{% if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door{% if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}{% endif %}.{% if mm.each %} <span class="why">At {{ mm.each }} each{% if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>{% else %}, your number{% endif %}.</span>{% endif %}</p>{% endif %}
+      {% if mm %}{{ month_money_line(mm) }}{% endif %}
       {% if record %}<p class="report-row"><a class="secondary report-link" href="/report?month={{ (b.date|string)[:7] }}">Monthly report</a> <span class="why">one printable page for the carrier's account manager or your supplier</span></p>{% endif %}
     </section>
     {% endif %}
@@ -171,7 +223,12 @@
       <tr>
         <td class="t {{ 'warn' if late }}{{ 'muted' if quiet }}">{{ x.visit.time if x.visit else (maybe.time if maybe else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—')) }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}{% if x.perishable %} · perishable{% endif %}</span>{% endif %}
-          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ ('fit' if many else 'fits') ~ ' the window' if x.window_start else 'came during posted hours' }}; no camera frame confirmed a courier.{% set shared = x.possible|selectattr('also_fits')|list %}{% if shared %} {{ 'It also fits' if not many else 'They also fit' }} {{ shared|map(attribute='also_fits')|sum(start=[])|unique|join(' and ') }}; listed here only, the closer fit.{% endif %}</span>{% endif %}{% if x.elsewhere_text %}<br><span class="why">{{ x.elsewhere_text }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be the courier for {{ x.also_fits|join(" or ") }}: {{ x.visit|not_whose }}.</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>
+          {%- else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}
+          {%- if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}
+          {%- if maybe %}<br><span class="why">{{ possible_text(x, maybe) }}</span>{% endif %}
+          {%- if x.elsewhere_text %}<br><span class="why">{{ x.elsewhere_text }}</span>{% endif %}
+          {%- if x.also_fits %}<br><span class="why">Could also be the courier for {{ x.also_fits|join(" or ") }}: {{ x.visit|not_whose }}.</span>{% endif %}
           {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if x.visit and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
