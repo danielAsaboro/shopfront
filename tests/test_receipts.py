@@ -124,7 +124,12 @@ def test_headline_says_a_bedrock_or_replayed_courier_exactly():
     replay = seen(10, 5)
     replay.event.source = "ring-webhook-replay"
     r = receipts(rows, [replay], OPEN, NO_FRAMES)
-    assert headline(r) == ["Bay Mills: a replayed Ring package alert puts the courier at the door at 10:05."]
+    # plain words, and never credited to Ring: a replay is Shopfront's demo feeder
+    assert headline(r) == ["Bay Mills's courier was announced by a delivery alert at 10:05 (a demo replay)."]
+    assert "Ring" not in headline(r)[0]
+    rows[0].order_ref = "PO-7"
+    assert headline(receipts(rows, [replay], OPEN, NO_FRAMES)) == ["Bay Mills's courier for PO-7 was announced by a delivery alert at 10:05 (a demo replay)."]
+    rows[0].order_ref = ""
     late = receipts(rows, [seen(12, 0)], OPEN, NO_FRAMES)
     assert headline(late) == ["Bay Mills: Ring's package alert saw the courier at 12:00, outside its 09:00–11:00 window."]
 

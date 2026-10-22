@@ -153,10 +153,11 @@ def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
 def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
     """Round 2: the scan check sits right under the lead, above the figures and the deliveries, so the story
     is on screen in the first 30 seconds on a phone too. Round 6: the deliveries, with their figures, are a named
-    fold under it, like the rest of the day."""
+    fold under it, like the rest of the day. Round 10: the day's lead line is the Deliveries section's own first
+    line, not a headline floating under the carrier record."""
     main.book.add(WEDNESDAY, "Bay Mills")
     page = c.get(f"/?date={WEDNESDAY}").text
-    assert page.index('class="lead"') < page.index('id="atth"') < page.index('id="dlv"') \
+    assert page.index('id="atth"') < page.index('id="dlv"') < page.index('class="lead"') \
         < page.index('class="figures"') < page.index('class="receipts"') < page.index("Customers by hour")
     # round 7: the deliveries fold is open on every visit; the rest of the day and every door event are one fold
     assert re.search(r'<details class="block fold" id="deliveries" open>\s*<summary><h2 id="dlv">Deliveries', page)

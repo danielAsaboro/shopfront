@@ -429,10 +429,12 @@ def _what(row: dict) -> str:
     return "a doorbell press" if row.get("ring_event") == "ding" else "a door event"
 
 
-# Who put the courier at the door, for the lead: said exactly for its source (app/provenance.py)
+# Who put the courier at the door, for the lead: said exactly for its source (app/provenance.py). A line with
+# {name} says the order itself; the others follow "Supplier (PO-1): ". A replay is Shopfront's demo feeder, never
+# Ring, so it is said in plain words with no Ring credit.
 SAW = {
     provenance.RING_ALERT: "Ring's package alert saw the courier at {t}",
-    provenance.REPLAY: "a replayed Ring package alert puts the courier at the door at {t}",
+    provenance.REPLAY: "{name}'s courier{po} was announced by a delivery alert at {t}{tail} (a demo replay)",
     provenance.BEDROCK_RING: "Bedrock saw the courier in the Ring frame at {t}",
     provenance.BEDROCK_LIVE: "Bedrock saw the courier in a frame from Ring live view at {t}",
 }
@@ -445,13 +447,20 @@ def _and(items: list[str]) -> str:
 def _seen_line(x: dict) -> str:
     v = x["visit"]
     name = x["supplier"] + (f" ({x['order_ref']})" if x.get("order_ref") else "")
-    saw = SAW.get(provenance.of(v), "the courier was at the door at {t}").format(t=v["time"])
+    saw = SAW.get(provenance.of(v), "the courier was at the door at {t}")
+    if "{name}" in saw:
+        po = f" for {x['order_ref']}" if x.get("order_ref") else ""
+        return saw.format(name=x["supplier"], po=po, t=v["time"], tail=_seen_tail(x)) + "."
+    return f"{name}: {saw.format(t=v['time'])}{_seen_tail(x)}."
+
+
+def _seen_tail(x: dict) -> str:
     tail = ""
     if x["status"].startswith("seen_while_closed"):
         tail = ", while the shop was closed"
     if x["status"].endswith("outside_window"):
         tail += f", outside its {x['window_start']}–{x['window_end']} window"
-    return f"{name}: {saw}{tail}."
+    return tail
 
 
 def _possible_line(x: dict) -> str:

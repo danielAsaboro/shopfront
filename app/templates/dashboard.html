@@ -160,14 +160,6 @@
       <li>When a tracking page says "business closed", <a href="#atth">Check a carrier's scan</a> below.</li>
     </ol>
   </section>
-  {% elif not attempt %}
-  {# No scan checked: the day's one line leads; the rest of the receiving desk is under Deliveries #}
-  <section class="lead">
-    {% if lead %}<p class="first">{{ lead[0] }}</p>
-    {% elif r.unexpected %}<p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
-    {% elif b.visits %}<p class="first">No orders listed for {{ b.date }}, and no courier seen.</p>
-    {% else %}<p class="first">No door activity recorded for {{ b.date }}.</p>{% endif %}
-  </section>
   {% endif %}
 
   <details class="block fold scan-check" id="check"{{ ' open' if not attempt and not demo_scan and not ring_down }}>
@@ -196,9 +188,19 @@
   {# Open on every visit (round 7): the deliveries are the desk; the other folds stay closed #}
   <details class="block fold" id="deliveries" open>
     <summary><h2 id="dlv">Deliveries</h2>{% if r.total %}<span class="legend">{% if n_possible %}{{ r.seen }} confirmed, {{ n_possible }} possible, of {{ r.total }} expected{% elif ring_down %}{{ r.seen }} of {{ r.total }} confirmed by webhook{% else %}{{ r.seen }} of {{ r.total }} expected reached the door{% endif %}</span>{% else %}<span class="legend">no orders</span>{% endif %}{% for k in ns.said %} <span class="badge b-{{ k }}">{{ k }}</span>{% endfor %}</summary>
-    {% if lead and (attempt or lead|length > 1) %}
+    {# The day's deliveries in a line or two, inside their own section (round 10: under the carrier record it read
+       as a stray headline). With no scan checked, the first line leads; with one, the lines are a list. #}
+    {% if not attempt and not first_run %}
     <section class="lead">
-      <ul>{% for line in (lead if attempt else lead[1:]) %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% if lead %}<p class="first">{{ lead[0] }}</p>
+      {% elif r.unexpected %}<p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
+      {% elif b.visits %}<p class="first">No orders listed for {{ b.date }}, and no courier seen.</p>
+      {% else %}<p class="first">No door activity recorded for {{ b.date }}.</p>{% endif %}
+      {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    </section>
+    {% elif lead and attempt %}
+    <section class="lead">
+      <ul>{% for line in lead %}<li>{{ line }}</li>{% endfor %}</ul>
     </section>
     {% endif %}
     {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none and not cost_said %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none and not month_money and not ring_down %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
