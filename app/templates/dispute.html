@@ -8,25 +8,30 @@
   .facts dt { color: var(--muted); font-size: 12px; padding-top: 2px; }
   .facts dd { margin: 0; }
   .hash { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; color: var(--muted); }
-  .frame-big { display:block; width: 100%; max-width: 480px; border-radius: 6px; margin-top: 8px; }
-  .draft { white-space: pre-wrap; border-left: 2px solid var(--line); padding: 4px 0 4px 14px; margin-top: 8px; }
-  .actions { display:flex; flex-wrap:wrap; gap: 10px; align-items:center; margin-top: 14px; }
+  .frame-big { display:block; width: 100%; max-width: 480px; border-radius: var(--r-lg); margin-top: 8px; }
+  .draft { white-space: pre-wrap; background: var(--bg); border-radius: var(--r-md); padding: 14px 16px; margin-top: 8px; }
+  .actions { display:flex; flex-wrap:wrap; gap: 10px 14px; align-items:center; margin-top: 16px; }
   .actions .primary { margin-top: 0; }
-  .watermark { border: 2px solid var(--warn); color: var(--warn); background: var(--warn-bg); border-radius: 8px;
+  /* The pack's one action, amber like the verdict's: download it */
+  .actions .primary[download] { border-color: transparent; color: var(--amber-ink); font-weight: 600; padding: 12px 24px;
+                                background: linear-gradient(160deg, var(--amber) 0%, var(--amber-2) 100%); box-shadow: var(--glow-amber); }
+  main > section.lead { margin: 18px 0 0; }
+  main > dl.facts { margin-top: 16px; }
+  .watermark { border: 2px solid var(--warn); color: var(--warn); background: var(--warn-bg); border-radius: var(--r-md);
                padding: 10px 14px; margin: 16px 0 0; font-weight: 700; letter-spacing: .02em; }
   .watermark span { display: block; font-weight: 400; font-size: 14px; letter-spacing: 0; margin-top: 2px; }
   /* One or two pictures around the scan, big enough to read, captioned in ink */
   .stills { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 360px)); gap: 14px; margin: 12px 0 0; }
   .stills figure { margin: 0; min-width: 0; }
-  .stills img { display:block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+  .stills img { display:block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--r-md); }
   .stills figcaption { font-size: 14px; color: var(--ink); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .limits { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
   .pick { border: 0; padding: 0; margin: 12px 0 4px; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
-  .pick label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--edge);
-                border-radius: 8px; cursor: pointer; font-size: 14px; }
-  .pick label:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .pick label { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--edge);
+                border-radius: var(--r-md); cursor: pointer; font-size: 14px; }
+  .pick label:has(input:checked) { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink), var(--glow-pill); }
   .pick input { margin-top: 3px; accent-color: var(--ink); width: 16px; height: 16px; flex: none; }
-  @media print { .actions { display:none; } .tech > summary { display: none; } .one-draft[hidden] { display: block; }
+  @media print { .actions { display:none; } .draft { background: none; border-left: 2px solid #c8c8c8; border-radius: 0; } .tech > summary { display: none; } .one-draft[hidden] { display: block; }
                  .watermark { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
   @media (max-width: 560px) { .facts { grid-template-columns: 1fr; gap: 2px; } .facts dt { padding-top: 8px; } }
 </style>
