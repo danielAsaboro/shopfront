@@ -1,0 +1,110 @@
+{
+ "kind": "shopfront-aws-deploy-check",
+ "stack": "shopfront",
+ "region": "us-east-1",
+ "dry_run": false,
+ "started_at": "2026-10-23T10:59:00+00:00",
+ "steps": [
+  {
+   "step": "stack",
+   "ok": true,
+   "detail": "CREATE_COMPLETE",
+   "request_id": "677a8890-04a3-42fb-97f8-ec9d49df4870",
+   "outputs": [
+    "AlarmTopicArn",
+    "AppPolicyArn",
+    "ConsumerLogGroupName",
+    "DeadLetterQueueArn",
+    "DemoLogGroupName",
+    "DemoUrl",
+    "FramesBucketName",
+    "HmacSecretArn",
+    "LogGroupName",
+    "QueueUrl",
+    "WebhookTableName",
+    "WebhookUrl"
+   ]
+  },
+  {
+   "step": "demo",
+   "ok": true,
+   "detail": "GET /healthz -> 200",
+   "url": "https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/healthz",
+   "lambda_request_id": "e2422295-1378-4ea6-a3e7-39703b01702a"
+  },
+  {
+   "step": "webhook",
+   "ok": true,
+   "detail": "POST -> 200 QUEUED",
+   "webhook_host": "86784be4518d",
+   "lambda_request_id": "6ff3aa68-3853-4201-b23c-be94566f7bd0",
+   "ring_request_id": "check-deploy-fdb254b86baa",
+   "account": "ac203c9843b5",
+   "device": "0534e4aad132"
+  },
+  {
+   "step": "stored",
+   "ok": true,
+   "detail": "event and request marker in DynamoDB, stored as a replay",
+   "dynamodb_request_id": "1K8LH1TJMCV75H6EFT4BJ04OV3VV4KQNSO5AEMVJF66Q9ASUAAJG",
+   "shop": "shop"
+  },
+  {
+   "step": "bad_hmac",
+   "ok": true,
+   "detail": "POST -> 401 BAD_SIGNATURE (want 401 BAD_SIGNATURE)",
+   "status_code": 401,
+   "lambda_request_id": "03124340-42ba-4082-bb51-49ac4145404d"
+  },
+  {
+   "step": "malformed",
+   "ok": true,
+   "detail": "POST -> 400 MALFORMED (want 400 MALFORMED)",
+   "status_code": 400,
+   "lambda_request_id": "9fc0c75c-9e7d-4607-ac05-5be235a05267"
+  },
+  {
+   "step": "replay",
+   "ok": true,
+   "detail": "POST -> 200 QUEUED (want 200 QUEUED); consumer logged DUPLICATE, the table holds one event",
+   "status_code": 200,
+   "lambda_request_id": "7fad0f83-5bd4-4e2f-a1d4-a454c5956dd6"
+  },
+  {
+   "step": "logs",
+   "ok": true,
+   "detail": "QUEUED and ACCEPTED logged for this request; no errors",
+   "log_lambda_request_ids": [
+    "6ff3aa68-3853-4201-b23c-be94566f7bd0",
+    "7fad0f83-5bd4-4e2f-a1d4-a454c5956dd6",
+    "ef565f90-a9f3-5e5a-b109-3cc5e9c5ca74"
+   ],
+   "error_lines": {},
+   "consumer_statuses": {
+    "ACCEPTED": 2,
+    "DUPLICATE": 1
+   }
+  },
+  {
+   "step": "alarms",
+   "ok": true,
+   "detail": "5 alarms: 5 OK",
+   "alarms": {
+    "ConsumerErrorsAlarm": "OK",
+    "DeadLetterQueueAlarm": "OK",
+    "DemoThrottlesAlarm": "OK",
+    "HmacFailureAlarm": "OK",
+    "WebhookErrorsAlarm": "OK"
+   },
+   "cloudwatch_request_id": "3fbd5b38-599f-44a1-b920-b4d840d1330b"
+  },
+  {
+   "step": "cleanup",
+   "ok": true,
+   "detail": "deleted the check's event and marker",
+   "dynamodb_request_id": "3ETF49GJEQ4O3R8R2VUM7T7RQJVV4KQNSO5AEMVJF66Q9ASUAAJG"
+  }
+ ],
+ "finished_at": "2026-10-23T10:59:24+00:00",
+ "ok": true
+}
