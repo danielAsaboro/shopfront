@@ -114,7 +114,7 @@ token it uses synthetic events, and the banner says so.
 
 **Hosted demo, no install:** the same made-up shop, read-only, at a public link: the `DemoUrl` that
 `cd infra && sam build && sam deploy --guided` prints ([docs/aws.md](docs/aws.md#2-the-public-demo)).
-Template ready, not yet deployed, so there is no link yet. Try that mode locally with
+Live at <https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/>. Try that mode locally with
 `SHOPFRONT_PUBLIC_DEMO=1 .venv/bin/uvicorn app.public_demo:app --port 8404`.
 
 Tests and lint need the dev requirements (pytest, hypothesis, ruff, mypy):
@@ -199,7 +199,7 @@ Built for the Amazon "Build, Ship, Shape" Developer Hackathon, Ring track and AW
 |---|---|
 | Repo calls Ring at runtime | ✓ [`app/ring/api.py`](app/ring/api.py): devices, Event History, image download, WHEP live view, token refresh |
 | Shown working through a Ring simulator or device | ✓ Live calls to the Ring Developer Playground (the simulator the hackathon FAQ accepts): devices, Event History and a live-view session, with request IDs below. ✗ Not yet: video frames from a playing Playground clip, and webhooks from Ring (the Playground sends none) |
-| AWS service with documented integration | ✓ Amazon Bedrock: [docs/bedrock.md](docs/bedrock.md) (frame labels, Converse) and the Strands agent in [`app/agent.py`](app/agent.py). ✗ No live Bedrock call captured yet. Webhook endpoint and read-only public demo on AWS (Lambda Function URLs, DynamoDB, Secrets Manager, S3, CloudWatch Logs): [docs/aws.md](docs/aws.md), **template ready, not yet deployed** (no demo URL yet) |
+| AWS service with documented integration | ✓ Amazon Bedrock: [docs/bedrock.md](docs/bedrock.md) (frame labels, Converse) and the Strands agent in [`app/agent.py`](app/agent.py). ✗ No live Bedrock call captured yet. Webhook endpoint and read-only public demo on AWS (Lambda Function URLs, DynamoDB, Secrets Manager, S3, CloudWatch Logs): [docs/aws.md](docs/aws.md), **deployed**: [public demo](https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/), `check_deploy` passed ([aws-deploy-20261023T105924Z.json](evidence/aws-deploy-20261023T105924Z.json)) |
 | Setup and run instructions | ✓ [Run the demo](#run-the-demo) |
 | Repo access for judges | ✓ [MIT](LICENSE) licence. ✗ Not yet on GitHub (private, shared with the Amazon reviewers at submission) |
 
@@ -243,8 +243,8 @@ Labels follow one rule: a claim is **live** only with a Ring or AWS request ID. 
 | Orders import | [`app/orders.py`](app/orders.py), `POST /orders/import` | CSV with column aliases (Order ID, PO number, Vendor, Tracking number, …) |
 | Receiving desk | [`app/deliveries.py`](app/deliveries.py), [`app/reconcile.py`](app/reconcile.py), [`app/dispute.py`](app/dispute.py) | Orders matched to couriers, carrier scans checked, dispute packs. [docs/receiving-desk.md](docs/receiving-desk.md), [docs/receipts.md](docs/receipts.md) |
 | Agent | [`app/agent.py`](app/agent.py), `POST /api/ask` | Strands agent with a Bedrock model and five tools |
-| AWS webhook endpoint | [`infra/template.yaml`](infra/template.yaml), [`app/store/`](app/store/) | **Template ready, not yet deployed.** SAM: Lambda Function URL running the same HMAC check, DynamoDB dedupe and log, key in Secrets Manager; `SHOPFRONT_WEBHOOK_STORE=dynamodb` reads it. [docs/aws.md](docs/aws.md) |
-| Hosted public demo | [`app/public_demo.py`](app/public_demo.py), [`infra/template.yaml`](infra/template.yaml) | **Template ready, not yet deployed.** The app on a Lambda Function URL (`DemoUrl`), seeded with the one-command demo's shop: GET-only allowlist, no owner (`PublicDemoGate`), read-only stores, no Ring or Bedrock calls, capped by reserved concurrency. [docs/aws.md](docs/aws.md#2-the-public-demo) |
+| AWS webhook endpoint | [`infra/template.yaml`](infra/template.yaml), [`app/store/`](app/store/) | **Deployed** (us-east-1); `check_deploy` passed all ten steps with signed replays ([record](evidence/aws-deploy-20261023T105924Z.json)). SAM: Lambda Function URL running the same HMAC check, DynamoDB dedupe and log, key in Secrets Manager; `SHOPFRONT_WEBHOOK_STORE=dynamodb` reads it. [docs/aws.md](docs/aws.md) |
+| Hosted public demo | [`app/public_demo.py`](app/public_demo.py), [`infra/template.yaml`](infra/template.yaml) | **Live:** <https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/>. The app on a Lambda Function URL (`DemoUrl`), seeded with the one-command demo's shop: GET-only allowlist, no owner (`PublicDemoGate`), read-only stores, no Ring or Bedrock calls, capped by reserved concurrency. [docs/aws.md](docs/aws.md#2-the-public-demo) |
 | Briefing | [`app/briefing.py`](app/briefing.py) | Today vs the same weekday last week |
 | Demo | [`scripts/demo.py`](scripts/demo.py), [`samples/orders.csv`](samples/orders.csv) | The one-command demo above |
 | Web | [`app/main.py`](app/main.py), [`app/templates/`](app/templates/) | Pages: `/`, `/setup`, `/dispute`, `/report` (the month's carrier record, printable), `/live`, `/connect`. JSON: `/api/deliveries`, `/api/attempt`, `/api/dispute`, `/api/events`, `/api/briefing`, `/api/webhooks`, `/api/ask`, `/healthz`. Zip: `/dispute.zip` |

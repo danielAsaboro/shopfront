@@ -1,10 +1,13 @@
 # Shopfront on AWS
 
-**Status: template ready, not yet deployed.** [infra/template.yaml](../infra/template.yaml) passes
-`sam validate --lint` (SAM CLI 1.169.0) and `cfn-lint` 1.53.3 with no findings, and `sam build` packages
-all three functions, but no stack has been deployed, no Ring webhook has reached it, no alarm has fired,
-no trace has been recorded, and there is no public demo URL yet. Until someone deploys it,
-every claim below is about the template and its tests, not about a running service.
+**Status: deployed** (stack `shopfront`, us-east-1, 23 Oct 2026). Public demo: <https://ernftkz4v7autlrr7dqtyczyom0lcqnu.lambda-url.us-east-1.on.aws/>.
+`scripts/check_deploy.py` passed all ten steps against the live stack
+([aws-deploy-20261023T105924Z.json](../evidence/aws-deploy-20261023T105924Z.json)): a signed webhook was queued (200) and stored in DynamoDB, a bad
+signature got 401, a malformed body 400, a replay was deduplicated, the logs held no errors and all five
+alarms were OK. The webhooks in that check are signed replays from `scripts/feed_webhook.py`, not
+webhooks sent by Ring: the Developer Playground sends none, so no Ring-originated webhook has reached the
+stack yet. Deployed with `DemoConcurrency=-1`, because the account's Lambda concurrency limit (10) is too
+low to reserve any.
 
 Shopfront runs on the shop's own computer. Two things need more than that:
 
