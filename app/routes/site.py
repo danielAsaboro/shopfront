@@ -1,11 +1,11 @@
-"""Health, the favicon, and the door frames (served and deleted, owner-only like every page)."""
+"""Health, the favicon, the welcome page, and the door frames (served and deleted, owner-only like every page)."""
 from __future__ import annotations
 
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 
 from app import pages
 from app.deliveries import frame_name
@@ -24,6 +24,12 @@ def healthz():
     return {"ok": err is None, "ring": ring.name if ring else None,
             "ring_error": err.status.value if err else None, "classifier": common.classifier.name,
             "token_pasted": bool(common.source.pasted_token())}
+
+
+@router.get("/welcome", response_class=HTMLResponse)
+def welcome(request: Request):
+    """What Shopfront is, on one page: the problem, the three steps, and what it never claims."""
+    return common._page(request, "landing.html")
 
 
 @router.get("/frames/{name}")

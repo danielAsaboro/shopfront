@@ -57,7 +57,7 @@ ENV_FLAG = "SHOPFRONT_PUBLIC_DEMO"
 # /connect and /live render their read-only explanations here (the nav links to both on every page).
 READ_PATHS = frozenset({"/", "/dispute", "/dispute.zip", "/setup", "/connect", "/live", "/healthz", "/favicon.ico",
                         "/api/deliveries", "/api/events", "/api/briefing", "/api/attempt", "/api/dispute",
-                        "/api/webhooks", "/.well-known/shopfront-pack-key", "/report"})
+                        "/api/webhooks", "/.well-known/shopfront-pack-key", "/report", "/welcome"})
 READ_PREFIXES = ("/frames/",)
 READ_METHODS = frozenset({"GET", "HEAD"})
 
