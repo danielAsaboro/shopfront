@@ -20,7 +20,7 @@ Invariants (never):
 - never claim AgentCore (it isn't used) or a live Bedrock/Ring-webhook capture that evidence/ doesn't hold
 - never put a real carrier's name or trademark in samples/ or the demo; the demo carrier is made up
 
-Design: follow design.md; tokens in app/templates/_style.html. One accent (blue) for today's data, warn orange only for things the owner should act on.
+Design: follow design.md; tokens in app/templates/_style.html. Poppins, near-black and white cards, pink-lavender pills for controls; lavender for today's data, amber only for things the owner should act on.
 
 Rules that disqualify (Devpost, Ring track): repo must call Ring at runtime (not just name it) · video < 3 min, public on YouTube/Vimeo, shows Ring working through a simulator or real device · open-source licence visible in the GitHub About box, or private repo shared with the Amazon reviewers · product feedback for every tool used · English.
 
