@@ -7,30 +7,84 @@
 {% set back = "/?date=" ~ b.date %}
 {% set prefill = request.query_params.get('claim') %}
 {% set scan_order = (r.expected|selectattr('tracking', 'equalto', tracking)|first) if tracking else none %}
+{% set scan_order = scan_order or ((r.expected|selectattr('id', 'equalto', order_id)|first) if order_id else none) %}
 {% set dflt = default_cost(profile.currency) %}
 {% set per_miss = profile.redelivery_cost if profile.redelivery_cost is not none else dflt %}
-{% macro stake(o) %}{% if o and (o.amount or per_miss is not none) %}<p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}{% if o.amount and per_miss is not none %}, and {% endif %}{% if per_miss is not none %}{{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery{% if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}{% endif %}.</p>{% if o.amount %}{% if o.perishable %}<p class="reason stake lost"><strong>Lost trading:</strong> {{ o.order_ref or 'this order' }} is perishable, so all {{ o.amount }} is at risk if it isn't redelivered in time (the order's own value, from your orders), not only the redelivery fee.</p>{% else %}<form method="post" action="/deliveries/{{ o.id }}/perishable" class="keep perish"><input type="hidden" name="on" value="1"><input type="hidden" name="back" value="{{ request.url.path ~ '?' ~ request.url.query }}"><button type="submit" class="quiet">Perishable stock? Count {{ o.amount }} as at risk</button></form>{% endif %}{% endif %}{% endif %}{% endmacro %}
+{# What a disputed scan puts at stake (under the verdict's Details): the order's stock and the redelivery fee, then
+   either the perishable order's lost trading or the button that marks it perishable. The `-` marks keep the output
+   on one line, as it was before these were split up. -#}
+{% macro stake_cost() -%}
+  {{ 'your ' if profile.redelivery_cost is not none else 'about ' }}{{ profile.currency }}{{ '%.2f'|format(per_miss) }} for the redelivery
+  {%- if profile.redelivery_cost is none %} (survey average, <a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>){% endif %}
+{%- endmacro -%}
+{% macro lost_or_perish(o) -%}
+  {% if o.perishable -%}
+    <p class="reason stake lost"><strong>Lost trading:</strong> {{ o.order_ref or 'this order' }} is perishable, so all {{ o.amount }} is at risk if it isn't redelivered in time (the order's own value, from your orders), not only the redelivery fee.</p>
+  {%- else -%}
+    <form method="post" action="/deliveries/{{ o.id }}/perishable" class="keep perish">
+      {#- -#}<input type="hidden" name="on" value="1"><input type="hidden" name="back" value="{{ request.url.path ~ '?' ~ request.url.query }}">
+      {#- -#}<button type="submit" class="quiet">Perishable stock? Count {{ o.amount }} as at risk</button></form>
+  {%- endif %}
+{%- endmacro -%}
+{% macro stake(o) -%}
+  {% if o and (o.amount or per_miss is not none) -%}
+    <p class="reason stake">At stake: {% if o.amount %}{{ o.order_ref or 'the order' }} from {{ o.supplier }}, {{ o.amount }} of stock{% endif %}
+    {%- if o.amount and per_miss is not none %}, and {% endif %}
+    {%- if per_miss is not none %}{{ stake_cost() }}{% endif %}.</p>
+    {%- if o.amount %}{{ lost_or_perish(o) }}{% endif %}
+  {%- endif %}
+{%- endmacro -%}
+{# One kept check in the carrier record's list: the check's link, its tracking and order, what the door showed, Remove -#}
+{% macro kept_check(k) -%}
+  <li><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}, {{ k.at }}</a>
+  {%- if k.tracking %} · {{ k.tracking }}{% endif %}
+  {%- if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }} <form method="post" action="/checks/{{ k.id }}/delete" class="keep">
+    {#- -#}<input type="hidden" name="back" value="/?date={{ b.date }}">
+    {#- -#}<button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>
+{%- endmacro -%}
+{# The carrier record's money for the month: disputed scans and what they put at stake, the orders the door confirmed,
+   and the cost per redelivery with its source (said once on the page, here) -#}
+{% macro month_money_line(mm) -%}
+  <p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}
+  {%- if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}
+  {%- if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}
+  {#- round 10: "about $17.20 of redeliveries not needed" read as a sum nobody could place; say what it means -#}
+  {%- if mm.confirmed %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with {{ 'its courier' if mm.confirmed == 1 else 'their couriers' }} confirmed at the door: no redelivery fee{{ 's' if mm.confirmed != 1 }} there
+  {%- elif mm.confirmed is not none %} · no order's courier confirmed at the door yet
+  {%- endif %}.
+  {%- if mm.each %} <span class="why">At {{ mm.each }} each
+    {%- if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>
+    {%- else %}, your number{% endif %}.</span>
+  {%- endif %}</p>
+{%- endmacro -%}
+{# An order row's line about rule-guessed couriers: the presses that fit it, and the other orders they also fit -#}
+{% macro possible_text(x, maybe) -%}
+  {% set many = x.possible|length > 1 -%}
+  {{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ ('fit' if many else 'fits') ~ ' the window' if x.window_start else 'came during posted hours' }}; no camera frame confirmed a courier.
+  {%- set shared = x.possible|selectattr('also_fits')|list %}
+  {%- if shared %} {{ 'It also fits' if not many else 'They also fit' }} {{ shared|map(attribute='also_fits')|sum(start=[])|unique|join(' and ') }}; listed here only, the closer fit.{% endif %}
+{%- endmacro %}
 {% if attempt and attempt.outcome in disputable %}{% set pack_href = "/dispute?date=" ~ b.date ~ "&at=" ~ asked_time ~ "&claim=" ~ attempt.claim ~ ("&carrier=" ~ carrier|urlencode if carrier else "") ~ ("&tracking=" ~ tracking|urlencode if tracking else "") %}{% endif %}
-  {# The top of the desk: on a phone the verdict (or the three steps) comes before the date picker #}
+  {# The top of the desk: the title and the date picker, then the verdict (or the three steps), then the record #}
   <div class="desk-top">
     <div class="head-text">
       <div class="eyebrow">Receiving desk{% if b.date|relative_day %} · {{ b.date|relative_day }}{% endif %}</div>
       <h1>{{ b.date|long_date }}</h1>
-      {% if not attempt %}<p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>{% endif %}
     </div>
     <form method="get" class="no-print day-pick">
-      <label class="field">Day<input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></label>
+      <label class="field">Change day<input type="date" name="date" value="{{ b.date }}" onchange="this.form.submit()"></label>
       <noscript><button type="submit" class="secondary">Show</button></noscript>
     </form>
+    {% if not attempt %}<p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>{% endif %}
     {% if attempt %}
     {# Verdict first (round 6): one sentence, one supporting line, the door as a picture and the next step.
        The reasoning and what's at stake sit under Details. #}
     {% set ans = attempt|answer %}
     <section class="verdict{{ ' act' if attempt.outcome in disputable }}" role="status" aria-label="The door's answer to the scan">
-      <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}{% if attempt.outcome not in refused %} <span class="badge b-{{ attempt.event_source|chip }}" title="Where this door data came from">{{ attempt.event_source|chip }}</span>{% endif %}</div>
+      <div class="eyebrow">{{ claims[attempt.claim] }} scan at {{ asked_time }}{% if carrier %} · {{ carrier }}{% endif %}{% if tracking %} · {{ tracking }}{% endif %}{% set ch = attempt.event_source|chip(b.ring_source) %}{% if ch and attempt.outcome not in refused %} <span class="badge b-{{ ch }}" title="Where this door data came from">{{ ch }}</span>{% endif %}</div>
       <p class="first{{ ' warn' if attempt.outcome in disputable }}">{{ ans.sentence }}</p>
       {% set facts = attempt|verdict_facts %}
-      {% if facts %}<p class="facts1" aria-label="What the door shows">{% for f in facts %}<span class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span> {{ f.text }}</span>{% endfor %}</p>
+      {% if facts %}<p class="facts1" aria-label="What the door shows">{% for f in facts %}{% if f.ok is none %}<span class="na">{{ f.text }}</span>{% else %}<span class="{{ 'yes' if f.ok else 'no' }}"><span class="mk" aria-hidden="true">{{ '✓' if f.ok else '✗' }}</span> {{ f.text }}</span>{% endif %}{% endfor %}</p>
       {% set fv = attempt.visit if attempt.visit and attempt.visit.frame_url else none %}
       {{ door_strip(attempt|strip(posted, {'order_ref': scan_order.order_ref, 'window_start': scan_order.window_start, 'window_end': scan_order.window_end} if scan_order else none, {'url': fv.frame_url, 'alt': (fv|frame_label) ~ ' at ' ~ fv.time} if fv else none), "chk") }}
       {% if fv %}{{ delete_frame(fv.frame_url, back) }}{% endif %}
@@ -39,11 +93,14 @@
       <div class="next">
         {% if pack_href %}<a class="primary" href="{{ pack_href }}">Build the dispute pack</a>{% endif %}
         {% if attempt.outcome not in refused %}
-        {% if kept %}
+        {% if public_demo %}
+        {# The hosted read-only demo: the button as the owner sees it, switched off, with why on the page itself #}
+        <p class="keep"><button type="button" class="secondary" disabled>Keep in {{ (carrier ~ "'s") if carrier else "the carrier" }} record</button> <span class="why">Read-only: the public demo saves nothing, so this check isn't added to the record.</span></p>
+        {% elif kept %}
         <form method="post" action="/checks/{{ kept.id }}/delete" class="keep"><input type="hidden" name="back" value="{{ back_here }}"><span class="why">Kept in {{ (carrier or 'the carrier') ~ "'s" }} record.</span> <button type="submit" class="quiet">Remove</button></form>
         {% else %}
         <form method="post" action="/checks" class="keep">
-          {% for k, v in (("date", b.date), ("at", asked_time), ("claim", attempt.claim), ("carrier", carrier), ("tracking", tracking), ("back", back_here)) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+          {% for k, v in (("date", b.date), ("at", asked_time), ("claim", attempt.claim), ("carrier", carrier), ("tracking", tracking), ("order", scan_order.id if scan_order else ""), ("back", back_here)) %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
           <button type="submit" class="secondary">Keep in {{ (carrier ~ "'s") if carrier else "the carrier" }} record</button>
         </form>
         {% endif %}
@@ -71,13 +128,26 @@
       {% endif %}
     </section>
     {% endif %}
-    {% if record %}
-    {# Second, after the verdict: the B2B edge in one line, each carrier's pattern this month and the printable
-       month for the carrier's account manager or a supplier. The checks and the money open below. #}
-    {% set more = record|length - 1 %}
-    <section class="record-line" id="record" aria-labelledby="recordh">
-      <h2 id="recordh">Carrier record, {{ b.date|month_name }}</h2>
-      <p>{{ record[0].summary }}{% if more %}; {{ more }} more carrier{{ 's' if more != 1 }}{% endif %}.{% if record|selectattr('demo')|list %} <span class="badge b-demo">demo</span>{% endif %} <a class="report-link" href="/report?month={{ (b.date|string)[:7] }}">Monthly report</a></p>
+    {% if record or month_money %}
+    {# Second, after the verdict: the carrier record, the one thing a shop takes to the carrier's account manager.
+       Each carrier's pattern this month, the money once (with its source), the kept scans under a toggle and the
+       printable month. Round 7: it was said twice, a summary line here and a fold further down. #}
+    {% set mm = month_money %}
+    <section class="record-line record" id="record" aria-labelledby="recordh">
+      <h2 id="recordh">Carrier record, {{ b.date|month_name }}</h2>{% if record|selectattr('demo')|list or (mm and mm.demo) %} <span class="badge b-demo">demo</span>{% endif %}
+      {% if not record %}<p class="pattern why">No carrier scans kept this month.</p>{% endif %}
+      {% for c in record %}<div class="carrier-line">
+        <p class="pattern">{{ c.summary }}.</p>
+        <details class="tech kept-checks"><summary>The {{ c.n }} kept scan{{ 's' if c.n != 1 }}</summary>
+        <ul class="kept why">{% for k in c.checks %}{{ kept_check(k) }}{% endfor %}</ul>
+        </details>
+      </div>{% endfor %}
+      {# Stock the owner could lose leads the money: each perishable order's own value, then the redelivery fees #}
+      {# Each order named for what it is, linked to the kept check behind it (round 10: "PO-1031 ($318.75)" alone
+         left the owner asking which order that was) #}
+      {% if perishable_at_risk %}<p class="money lost"><strong>Lost trading:</strong> {% for x in perishable_at_risk %}<a href="{{ x.href }}">{{ x.ref }}</a>{% if x.supplier %}, {{ x.supplier }}'s order{% endif %} behind the {{ x.when }} scan ({{ x.amount }}){{ ', ' if not loop.last }}{% endfor %}: perishable stock at risk in full (each order's own value), on top of the redelivery fees.</p>{% endif %}
+      {% if mm %}{{ month_money_line(mm) }}{% endif %}
+      {% if record %}<p class="report-row"><a class="secondary report-link" href="/report?month={{ (b.date|string)[:7] }}">Monthly report</a> <span class="why">one printable page for the carrier's account manager or your supplier</span></p>{% endif %}
     </section>
     {% endif %}
   </div>
@@ -93,26 +163,19 @@
     <p class="reason">When a carrier scans "business closed" while you were open, Shopfront shows what the door saw and drafts the message for you to send.</p>
     <ol class="next">
       <li><a class="primary" href="/setup#orders">Add your orders</a> <span class="why">a CSV from your till, accountant or supplier, or one by hand</span></li>
-      <li>When a tracking page says "business closed", <a href="#atth">check the scan</a> below.</li>
+      <li>When a tracking page says "business closed", <a href="#atth">Check a carrier's scan</a> below.</li>
     </ol>
-  </section>
-  {% elif not attempt %}
-  {# No scan checked: the day's one line leads; the rest of the receiving desk is under Deliveries #}
-  <section class="lead">
-    {% if lead %}<p class="first">{{ lead[0] }}</p>
-    {% elif r.unexpected %}<p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
-    {% elif b.visits %}<p class="first">No orders listed for {{ b.date }}, and no courier seen.</p>
-    {% else %}<p class="first">No door activity recorded for {{ b.date }}.</p>{% endif %}
   </section>
   {% endif %}
 
   <details class="block fold scan-check" id="check"{{ ' open' if not attempt and not demo_scan and not ring_down }}>
-    <summary><h2 id="atth">{{ "Check another scan" if attempt else "Check a carrier's scan" }}</h2></summary>
+    <summary><h2 id="atth">Check a carrier's scan</h2></summary>
     {% if ring_down %}
     <p class="why" style="margin:6px 0 0">Checking a scan needs the door history from Ring. <a href="/connect">Reconnect Ring</a>, then check it here.</p>
     {% else %}
     <form method="get" action="/" class="fields scan-form" style="margin-top:10px">
       <input type="hidden" name="date" value="{{ b.date }}">
+      <input type="hidden" name="order" value="{{ order_id }}">
       <label class="field fit">Scan<select name="claim">{% for k, label in claims.items() %}<option value="{{ k }}" {{ 'selected' if k == (claim if prefill or asked_time else 'business_closed') }}>{{ label }}</option>{% endfor %}</select></label>
       <label class="field fit">At<input type="time" name="attempt" value="{{ asked_time }}" required{{ " autofocus" if prefill and not asked_time }}></label>
       <label class="field grow">Carrier (optional)<input name="carrier" value="{{ carrier }}" maxlength="40"></label>
@@ -123,34 +186,31 @@
     {% endif %}
   </details>
 
-  {% if record or month_money %}
-  <details class="block fold" id="record-more">
-    <summary><h2>Carrier record and money, {{ b.date|month_name }}</h2></summary>
-    <section class="record">
-    {% for c in record %}<div class="carrier-line">
-      <p class="pattern">{{ c.headline }}.</p>
-      <ul class="kept why">{% for k in c.checks %}<li><a href="/?{{ {'date': k.day, 'attempt': k.at, 'claim': k.claim, 'carrier': k.carrier, 'tracking': k.tracking}|urlencode }}">{{ k.day|long_date }}, {{ k.at }}</a>{% if k.tracking %} · {{ k.tracking }}{% endif %}{% if k.order_ref %} · {{ k.order_ref }}{% if k.amount %} ({{ k.amount }}){% endif %}{% endif %} · {{ {'outcome': k.outcome}|verdict }} <form method="post" action="/checks/{{ k.id }}/delete" class="keep"><input type="hidden" name="back" value="/?date={{ b.date }}"><button type="submit" class="quiet" aria-label="Remove the {{ k.day }} {{ k.at }} check">Remove</button></form></li>{% endfor %}</ul>
-    </div>{% endfor %}
-    {% set mm = month_money %}
-    {% if mm %}<p class="money">{{ mm.month }} so far: {{ mm.disputed }} disputed scan{{ 's' if mm.disputed != 1 }}{% if mm.at_stake and mm.disputed %}, about {{ mm.at_stake }} of redeliveries at stake{% endif %}{% if mm.demo and mm.demo != mm.disputed %} ({{ mm.demo }} demo){% endif %}{% if mm.confirmed is not none %} · {{ mm.confirmed }} order{{ 's' if mm.confirmed != 1 }} with the courier confirmed at the door{% if mm.confirmed and mm.confirmed_value %}, about {{ mm.confirmed_value }} of redeliveries not needed{% endif %}{% endif %}.{% if mm.each %} <span class="why">At {{ mm.each }} each{% if mm.default %}, the survey average (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>); <a href="/setup#shop">use your own number</a>{% else %}, your number{% endif %}.</span>{% endif %}</p>{% endif %}
-    {% if perishable_at_risk %}<p class="money lost"><strong>Lost trading:</strong> perishable stock behind those scans, {{ perishable_at_risk|join(', ') }}, at risk as well as the redelivery fees (each order's own value).</p>{% endif %}
-    </section>
-  </details>
-  {% endif %}
-
   {# The receiving desk itself: the day's lines, the three figures and every order, under one named fold.
      A demo or replay badge is said once here, not on every row. #}
   {% set ns = namespace(said=[]) %}
   {% for x in rows %}{% set v = x.visit or (x.possible[0] if x.possible else none) %}{% if v %}{% set k = v.labelled_by|badge(v.event_source) %}{% if k in ('demo', 'replay') and k not in ns.said %}{% set ns.said = ns.said + [k] %}{% endif %}{% endif %}{% endfor %}
   {% set n_possible = r.expected|selectattr('status', 'equalto', 'possible')|list|length %}
-  <details class="block fold" id="deliveries"{{ ' open' if first_run and not attempt }}>
+  {# Open on every visit (round 7): the deliveries are the desk; the other folds stay closed. Opened from a scan
+     check (round 10), the verdict and the carrier record are the page, so every section after them starts closed #}
+  <details class="block fold" id="deliveries"{{ ' open' if not attempt }}>
     <summary><h2 id="dlv">Deliveries</h2>{% if r.total %}<span class="legend">{% if n_possible %}{{ r.seen }} confirmed, {{ n_possible }} possible, of {{ r.total }} expected{% elif ring_down %}{{ r.seen }} of {{ r.total }} confirmed by webhook{% else %}{{ r.seen }} of {{ r.total }} expected reached the door{% endif %}</span>{% else %}<span class="legend">no orders</span>{% endif %}{% for k in ns.said %} <span class="badge b-{{ k }}">{{ k }}</span>{% endfor %}</summary>
-    {% if lead and (attempt or lead|length > 1) %}
+    {# The day's deliveries in a line or two, inside their own section (round 10: under the carrier record it read
+       as a stray headline). With no scan checked, the first line leads; with one, the lines are a list. #}
+    {% if not attempt and not first_run %}
     <section class="lead">
-      <ul>{% for line in (lead if attempt else lead[1:]) %}<li>{{ line }}</li>{% endfor %}</ul>
+      {% if lead %}<p class="first">{{ lead[0] }}</p>
+      {% elif r.unexpected %}<p class="first">No orders listed for {{ b.date }}. The doorbell saw {{ r.unexpected|length }} courier{{ 's' if r.unexpected|length != 1 }} nobody listed.</p>
+      {% elif b.visits %}<p class="first">No orders listed for {{ b.date }}, and no courier seen.</p>
+      {% else %}<p class="first">No door activity recorded for {{ b.date }}.</p>{% endif %}
+      {% if lead|length > 1 %}<ul>{% for line in lead[1:] %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
+    </section>
+    {% elif lead and attempt %}
+    <section class="lead">
+      <ul>{% for line in lead %}<li>{{ line }}</li>{% endfor %}</ul>
     </section>
     {% endif %}
-    {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none and not month_money and not ring_down %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
+    {% if money %}<p class="money">{{ money }}</p>{% if profile.redelivery_cost is none and not cost_said %}<p class="why" style="margin:4px 0 0">Survey average: {{ cost_source.what }} (<a href="{{ cost_source.url }}" rel="noopener">{{ cost_source.name }}</a>). <a href="/setup#shop">Use your own number</a>.</p>{% endif %}{% elif profile.redelivery_cost is none and not month_money and not ring_down %}<p class="why" style="margin:10px 0 0"><a href="/setup#shop">Add what a missed delivery costs you</a> to see what the door saved or cost you this week.</p>{% endif %}
     {% if not first_run %}
     <section class="figures" aria-label="The day in three numbers">
       <div><span class="v {% if not ring_down and r.expected|selectattr('status', 'equalto', 'not_seen')|list %}warn{% endif %}">{% if not r.total %}—{% elif n_possible %}{{ r.seen }}<small> confirmed</small>{% else %}{{ r.seen ~ '/' ~ r.total }}{% endif %}</span><span class="l">{% if r.total and n_possible %}{{ n_possible }} possible, of {{ r.total }} expected{% else %}Expected deliveries seen{% endif %}</span></div>
@@ -172,7 +232,12 @@
       <tr>
         <td class="t {{ 'warn' if late }}{{ 'muted' if quiet }}">{{ x.visit.time if x.visit else (maybe.time if maybe else (x.window_start ~ '–' ~ x.window_end if x.window_start else '—')) }}</td>
         <td><strong>{{ x.supplier }}</strong>{% if x.order_ref %} <span class="why">· {{ x.order_ref }}</span>{% endif %}{% if x['items'] %}<br><span class="why">{{ x['items'] }}{% if x.amount %} · {{ x.amount }}{% endif %}{% if x.perishable %} · perishable{% endif %}</span>{% endif %}
-          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>{% else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}{% if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}{% if maybe %}{% set many = x.possible|length > 1 %}<br><span class="why">{{ ('Doorbell presses' if many else 'A doorbell press') if maybe.ring_event == 'ding' else ('Door events' if many else 'A door event') }} at {{ x.possible|map(attribute='time')|join(' and ') }} {{ 'fit' if many else 'fits' }} the window; no camera frame confirmed a courier.{% set shared = x.possible|selectattr('also_fits')|list %}{% if shared %} {{ 'It also fits' if not many else 'They also fit' }} {{ shared|map(attribute='also_fits')|sum(start=[])|unique|join(' and ') }}; listed here only, the closer fit.{% endif %}</span>{% endif %}{% if x.elsewhere_text %}<br><span class="why">{{ x.elsewhere_text }}</span>{% endif %}{% if x.also_fits %}<br><span class="why">Could also be the courier for {{ x.also_fits|join(" or ") }}: {{ x.visit|not_whose }}.</span>{% endif %}
+          <br>{% if unknown %}<span>Not confirmed: door history unavailable</span>
+          {%- else %}<span class="{{ 'warn' if x.status == 'not_seen' or 'closed' in x.status or late }}{{ 'muted' if quiet }}">{{ status_text[x.status] }}</span>{% endif %}
+          {%- if x.window_start %} <span class="why">· expected {{ x.window_start }}–{{ x.window_end }}</span>{% endif %}
+          {%- if maybe %}<br><span class="why">{{ possible_text(x, maybe) }}</span>{% endif %}
+          {%- if x.elsewhere_text %}<br><span class="why">{{ x.elsewhere_text }}</span>{% endif %}
+          {%- if x.also_fits %}<br><span class="why">Could also be the courier for {{ x.also_fits|join(" or ") }}: {{ x.visit|not_whose }}.</span>{% endif %}
           {% if x.received %}<br><span class="{{ 'warn' if x.received.status != 'ok' }}">Staff marked {{ received[x.received.status]|lower }} at {{ x.received.at|local_time(b.date) }}{% if x.received.note %}: {{ x.received.note }}{% endif %}</span>{% endif %}
           <div class="tap">
             {% if x.visit and not x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform" aria-label="Mark what arrived from {{ x.supplier }}">
@@ -182,7 +247,7 @@
             </form>{% elif x.status in ('possible', 'not_seen') and not x.received and not unknown %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="ok" class="quiet" aria-label="{{ x.supplier }}: it arrived, all there">It arrived</button></form>{% elif x.received %}<form method="post" action="/deliveries/{{ x.id }}/received" class="tapform"><button name="status" value="clear" class="quiet">{{ received['clear'] }}</button></form>{% endif %}
             {% if (x.status == 'not_seen' and not unknown) or (x.received and x.received.status != 'ok') %}<a href="/dispute?date={{ b.date }}&amp;order={{ x.id }}">Dispute pack</a>{% endif %}
             {% if x.amount %}<form method="post" action="/deliveries/{{ x.id }}/perishable" class="tapform"><input type="hidden" name="on" value="{{ '0' if x.perishable else '1' }}"><button class="quiet" aria-label="{{ x.supplier }}: {{ 'not perishable' if x.perishable else 'mark perishable' }}">{{ 'Not perishable' if x.perishable else 'Perishable?' }}</button></form>{% endif %}
-            {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}">Carrier says closed?</a>{% endif %}
+            {% if not ring_down %}<a class="claim-link" href="/?date={{ b.date }}&amp;claim=business_closed{% if x.carrier %}&amp;carrier={{ x.carrier|urlencode }}{% endif %}{% if x.tracking %}&amp;tracking={{ x.tracking|urlencode }}{% endif %}&amp;order={{ x.id|urlencode }}#atth" data-carrier="{{ x.carrier }}" data-tracking="{{ x.tracking }}" data-order="{{ x.id }}">Carrier says closed?</a>{% endif %}
           </div></td>
         <td class="why src-cell">{% if x.visit %}{{ source(x.visit.labelled_by, x.visit.reason, x.visit.event_source, x.visit.frame_url, ns.said) }}{% elif maybe %}{{ source(maybe.labelled_by, maybe.reason, maybe.event_source, maybe.frame_url, ns.said) }}{% endif %}</td>
         <td class="thumb">{% if x.visit and x.visit.frame_url %}<a href="{{ x.visit.frame_url }}"><img src="{{ x.visit.frame_url }}" alt="{{ x.visit|frame_label }} of the courier at {{ x.visit.time }}" loading="lazy"></a>{{ delete_frame(x.visit.frame_url, back) }}{% endif %}</td>
@@ -238,9 +303,10 @@
   </details>
   {% endif %}
 
-  {% if not ring_down %}
-  <details class="block fold">
-    <summary><h2>The rest of the day</h2><span class="legend">{{ b.customers }} customers, last week {{ b.customers_last_week }}</span></summary>
+  {# The rest of the day and every door event, one fold (round 7: two small-caps headings for one day) #}
+  <details class="block fold" id="events">
+    <summary><h2>{{ "Every door event" if ring_down else "The rest of the day" }}</h2><span class="legend">{% if not ring_down %}{{ b.customers }} customers, last week {{ b.customers_last_week }} · {% endif %}{{ b.visits|length }} door event{{ 's' if b.visits|length != 1 }}</span></summary>
+    {% if not ring_down %}
     {% if rest %}<ul style="margin:10px 0 0;padding-left:18px">{% for line in rest %}<li>{{ line }}</li>{% endfor %}</ul>{% endif %}
     <p style="margin:16px 0 0"><span class="why">Customers by hour</span><span class="legend"><i style="background:var(--today)"></i>Today<i style="background:var(--lw)"></i>Same day last week</span></p>
     <div class="chart" role="img" aria-label="Customers per hour, today vs last week">
@@ -252,11 +318,8 @@
       {% endfor %}
     </div>
     <div class="axis" aria-hidden="true">{% for h in range(6, 23) %}<span>{{ h }}</span>{% endfor %}</div>
-  </details>
-  {% endif %}
-
-  <details class="block fold" id="events">
-    <summary><h2>Every door event</h2><span class="legend">{{ b.visits|length }}</span></summary>
+    <p style="margin:20px 0 0" class="why" id="every-event">Every door event, with what labelled it</p>
+    {% endif %}
     <table>
       <tr><th scope="col">Time</th><th scope="col">Ring event</th><th scope="col">Label</th><th scope="col" class="why">How we know</th></tr>
       {% for v in b.visits %}<tr><td class="t">{{ v.time }}</td><td>{{ v.kind }}</td><td{% if v.classifier not in ('ring', 'bedrock') %} class="muted"{% endif %}>{{ v.type|visit_label(v.classifier in ('ring', 'bedrock'), v.event_source) }}</td><td class="why">{{ v.classifier|how(v.reason, v.event_source) }}</td></tr>{% endfor %}
@@ -269,16 +332,17 @@
     <details class="tech">
       <summary>Details</summary>
       {% if b.ring_source == "ring" %}Ring Event History API{% if device %} · device …{{ device[-6:] }}{% endif %}{% if request_id %} · last Ring X-Request-ID {{ request_id }}{% endif %}<br>{% endif %}
-      {% if funnel and funnel.events %}Funnel: {{ funnel.events }} door events{% if funnel.webhook_events %}, {{ funnel.webhook_events }} from Ring webhooks{% if funnel.replayed %} (some replayed by Shopfront's feeder){% endif %}{% endif %} · {{ funnel.skipped_stage0 }} skipped by Ring's sub_type · {{ funnel.labelled_by_ring }} labelled by Ring · {{ funnel.reached_bedrock }} reached Bedrock · {{ funnel.labelled_by_rules }} by rules{% if funnel.held_from_bedrock %} ({{ funnel.held_from_bedrock }} held back from Bedrock){% endif %}<br>{% endif %}
+      {% if funnel and funnel.events %}Funnel: {{ funnel.events }} door events{% if funnel.webhook_events %}, {{ funnel.webhook_events }} from Ring webhooks{% if funnel.replayed %} (some replayed by Shopfront's feeder){% endif %}{% endif %} · {{ funnel.skipped_stage0 }} skipped by Ring's sub_type {% set not_ring = (funnel.demo_people or 0) + (funnel.replayed_alerts or 0) %}· {{ funnel.labelled_by_ring - not_ring }} labelled by Ring{% if not_ring %} · {{ not_ring }} by demo or replayed alerts, not Ring{% endif %} · {{ funnel.reached_bedrock }} reached Bedrock · {{ funnel.labelled_by_rules }} by rules{% if funnel.held_from_bedrock %} ({{ funnel.held_from_bedrock }} held back from Bedrock){% endif %}<br>{% endif %}
       {% if bedrock_cost %}{{ bedrock_cost }}<br>{% endif %}
       <a href="/api/briefing?date={{ b.date }}">briefing JSON</a> · <a href="/api/events?date={{ b.date }}">events JSON</a> · <a href="/api/deliveries?date={{ b.date }}">deliveries JSON</a>
     </details>
+    <p class="about-link"><a href="/welcome">What Shopfront is</a></p>
   </footer>
 {% endblock %}
 {% block scripts %}
 <script>
 // "Carrier says closed?" on an order: fill the scan form from the order and go to it, no reload
-// "Check another scan" (and any link to the form) opens it first
+// "Check a carrier's scan" (and any link to the form) opens it first
 const scanCheck = document.getElementById("check");
 document.querySelectorAll('a[href="#atth"]').forEach(a => a.addEventListener("click", () => { if (scanCheck) scanCheck.open = true; }));
 document.querySelectorAll("a.claim-link").forEach(a => a.addEventListener("click", e => {
@@ -289,6 +353,7 @@ document.querySelectorAll("a.claim-link").forEach(a => a.addEventListener("click
   f.claim.value = "business_closed";
   f.carrier.value = a.dataset.carrier || "";
   f.tracking.value = a.dataset.tracking || "";
+  f.order.value = a.dataset.order || "";
   f.scrollIntoView({behavior: "smooth", block: "center"});
   f.attempt.focus({preventScroll: true});
 }));

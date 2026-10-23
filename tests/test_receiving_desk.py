@@ -198,13 +198,41 @@ def test_closed_scan_while_open_and_busy_with_no_courier():
     assert r["outcome"] == OPEN_NO_COURIER and r["claim"] == "business_closed"
     assert r["activity"] == {"from": "13:35", "to": "14:35", "events": 4, "motion": 4, "presses": 0, "customers": 1,
                              "guessed_customers": 2, "staff": 0, "seen": 1, "people": 0, "people_source": [],
-                             "near": 1}
+                             "near": 1, "before": "13:40", "after": "14:20",  # door use beyond the 10 min near it
+                             "times": ["13:40", "13:55", "14:20", "14:30"], "near_unidentified": []}
     assert "posted hours had you open (08:00–18:00)" in r["text"]
     assert ("4 motion events in the 30 minutes either side of the scan (13:35–14:35; 1 of them confirmed from the "
             "camera frame as a customer)") in r["text"]
     # each window is named where it appears; the hedge lives once, in the pack's "What this does not show"
     assert "within 10 minutes of the scan" in r["text"] and "between" not in r["text"]
     assert "labelled from the frame as not a courier" in r["text"] and "doesn't prove" not in r["text"]
+
+
+def test_a_busy_door_says_which_side_of_the_scan_it_was_used_on(tmp_path):
+    """Round 8: the demo's door was used only after the 14:30 scan (a press at 14:35, people 14:45-14:51), yet the
+    draft said "our door was in use around the time of the scan". The finding, the verdict facts and the draft
+    now name the last door event before the scan and the first after it, beyond the 10 minutes near it. Round 10:
+    the draft lists every door time in the window instead, and which near the scan nothing identified."""
+    from app import pages
+    after_only = [visit(14, 35, VisitType.DOORBELL_PRESS, ring_event="ding"), visit(14, 45), visit(14, 51)]
+    r = check_closed_scan(at(14, 30), after_only, OPEN)
+    assert r["outcome"] == rc.OPEN_DOOR_BUSY and (r["activity"]["before"], r["activity"]["after"]) == (None, "14:45")
+    assert ("(none in the 30 minutes before the scan beyond the 10 near it; the first after it at 14:45)"
+            in r["text"])
+    assert pages.verdict_facts(r)[1]["text"] == "3 door events 14:00–15:00 (all after the scan)"
+    body = dispute.build_pack("Corner Bakery", DAY, after_only, frames_with(tmp_path), "08:00–18:00", r)["draft"]["body"]
+    assert ("The door events were at 14:35, 14:45 and 14:51. Nothing identified who was at the door at 14:35, the "
+            "one event within 10 minutes of the scan.") in body
+    assert "our door was in use after the scan." in body and "around the time of the scan" not in body
+    both = [visit(14, 12)] + after_only
+    r = check_closed_scan(at(14, 30), both, OPEN)
+    assert "(beyond the 10 minutes near the scan, the last before it at 14:12 and the first after it at 14:45)" \
+        in r["text"]
+    assert pages.verdict_facts(r)[1]["text"] == "4 door events 14:00–15:00 (1 before the scan, 3 after)"
+    body = dispute.build_pack("Corner Bakery", DAY, both, frames_with(tmp_path), "08:00–18:00", r)["draft"]["body"]
+    assert "The door events were at 14:12, 14:35, 14:45 and 14:51. Nothing identified who was at the door at " \
+        "14:35, the one event within 10 minutes of the scan." in body
+    assert "our door was in use around the time of the scan." in body
 
 
 def test_closed_scan_with_a_courier_seen_by_ring_or_bedrock():
@@ -298,8 +326,9 @@ def test_closed_scan_pack_has_order_frame_hash_and_a_draft_that_traces_to_the_fa
     assert ("Swift Parcel scanned it \"business closed\" at 14:05 on 2026-10-07 (tracking SP999). Our front-door "
             "camera shows otherwise.") in d["body"]
     assert ("Our posted hours that day were 08:00–18:00, and our doorbell camera recorded 3 motion events in the 30 "
-            "minutes either side of the scan (13:35–14:35), 1 of them confirmed from the camera frame as a customer. The visit it recorded within "
-            "10 minutes of the scan was not a courier, judged from the camera frame.") in d["body"]
+            "minutes either side of the scan (13:35–14:35), 1 of them confirmed from the camera frame as a customer. "
+            "The door events were at 13:40, 13:55 and 14:20. The visit it recorded within 10 minutes of the scan was not a courier, judged from the camera frame.") \
+        in d["body"]
     assert "Your posted hours" not in d["body"]  # written by the shop, not to the owner
     assert "order PO-1042 from Bay Mills (Flour 25kg x4)" in d["body"]
     assert d["body"].endswith("Corner Bakery") and "sent" not in d["body"].lower()
@@ -414,6 +443,30 @@ def test_import_page_flow_and_staff_tap(isolated, monkeypatch):
     assert TestClient(main.app, client=("203.0.113.9", 5000)).get(f"/dispute.zip?date=2026-10-11&order={e.id}").status_code == 403
     assert c.get("/dispute?date=2026-10-11&order=exp-nope").status_code == 404
     assert c.get("/dispute?date=2026-10-11").status_code == 400
+
+
+def test_a_press_is_listed_as_a_possible_courier_or_as_pressed_while_closed_never_both(isolated, monkeypatch):
+    """Round 8: the 18:46 press after an 18:00 close was the windowless order's possible courier and also
+    "Doorbell pressed while closed". Now a windowless order is offered presses in posted hours only, and a press in
+    a window set before opening is listed under that order, not again as a press while closed."""
+    from app import briefing
+    tz, rules, hours = main.settings.tz, RulesClassifier(), (time(8), time(18))
+
+    def press(hh, mm):
+        return rules.classify(DoorEvent(f"ding-{hh}{mm}", "d", datetime.combine(DAY, time(hh, mm), tzinfo=tz),
+                                        "ding", "ring"), hours)
+    day = [press(6, 30), press(10, 14), press(18, 46)]
+    monkeypatch.setattr(main, "_visits", lambda d: list(day) if d == DAY else [])
+    monkeypatch.setattr(briefing, "classify_day", lambda ring, cl, d, *a, **k: list(day) if d == DAY else [])
+    main.book.add(DAY, "Dairy Co", "06:00", "07:00")
+    main.book.add(DAY, "Pinecrest Paper Goods", order_ref="INV-2208")
+    page = TestClient(main.app).get("/", params={"date": DAY.isoformat()}).text
+    assert "Possible courier for Dairy Co: a doorbell press at 06:30, not confirmed by a camera frame." in page
+    assert ("Possible courier for Pinecrest Paper Goods: a doorbell press at 10:14, not confirmed by a camera frame."
+            in page)
+    assert "Doorbell pressed while closed, at 18:46; no camera frame confirmed who it was." in page
+    assert "Doorbell pressed while closed, at 06:30" not in page and "06:30, 18:46" not in page
+    assert "A doorbell press at 10:14 came during posted hours" in page
 
 
 def lunchtime(d):

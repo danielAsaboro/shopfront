@@ -90,6 +90,15 @@ def how(source: str | None, reason: str | None, event_source: str | None = None,
     return f"{known}: {reason}" if reason else known
 
 
+def log_how(t: dict) -> str:
+    """A pack's door log row, "How we know": the same words on the page, in pack.txt and in pack.json, so no copy
+    of the pack credits Ring for a demo or replayed event. A demo event the rules guessed reads as the guess it is
+    (the pack's watermark already says the day is demo data); a demo person alert says it was the demo's."""
+    es = t.get("event_source")
+    return how(t.get("labelled_by"), t.get("reason"), None if es == "synthetic" and t.get("type") != "person" else es,
+               t.get("frame_url"))
+
+
 # One short word for what a label rests on (app/provenance.py), for the badge on a desk row; the full sentence
 # from how() sits behind it
 BADGE = {provenance.RING_ALERT: "ring", provenance.RING_PERSON: "ring", provenance.REPLAY: "replay", provenance.BEDROCK_RING: "bedrock",
@@ -192,14 +201,14 @@ def scan_lead(finding: dict | None, carrier: str = "") -> str | None:
 # tests/test_ask_example.py (the same tools over the demo's door data), never from Bedrock: the page says so.
 ASK_EXAMPLE = {
     "question": "Did the flour come yesterday?",
-    "answer": "Yes. Ring's package alert put a courier at the door at 10:12, and Shopfront matched it to "
-              "Hillside Mill's order PO-1041. Ring has no door-answered signal, so this doesn't show the sacks "
-              "were handed over.",
+    "answer": "Yes. A replayed delivery alert (demo data, not sent by Ring) put a courier at the door at 10:12, "
+              "and Shopfront matched it to Hillside Mill's order PO-1041. Ring has no door-answered signal, so "
+              "this doesn't show the sacks were handed over.",
     "tools": "deliveries(yesterday)",
     # the tool calls behind the answer, each with what the tool returned that the answer rests on
     "trace": [{"call": 'deliveries(day="yesterday")',
-               "returned": "Hillside Mill, order PO-1041, due 10:00–11:00: courier at 10:12, labelled by Ring's "
-                           "package_delivery alert (labelled_by: ring)"}],
+               "returned": "Hillside Mill, order PO-1041, due 10:00–11:00: courier at 10:12, from a replayed "
+                           "package alert (provenance: replay)"}],
 }
 
 
@@ -359,15 +368,41 @@ def _courier(v: dict, later: bool = False) -> str:
     return f"Courier at the door at {v['time']} ({said})"
 
 
+def _no_courier_frame(door: list[dict]) -> dict:
+    """The courier fact when nothing Ring or Bedrock labelled says who came: a neutral note ("ok": None), never a
+    cross. Round 7: "✗ Courier not identified" read as "no proof anyone came", when it only means no camera
+    frame shows the courier."""
+    held = any(r.get("frame_url") and not r.get("confirmed") for r in door)
+    return {"ok": None, "text": "No frame confirmed the courier" if held else "No camera frame of the courier"}
+
+
+def _sides(door: list[dict], scan: int | None) -> str:
+    """" (2 before the scan, 3 after)" or " (all after the scan)": which side of the scan the door was used on, so
+    "a busy door" never stands for use on one side only. The times are in the strip and under Details."""
+    ms = [m for r in door if (m := _mins(r.get("time", ""))) is not None]
+    if scan is None or not ms:
+        return ""
+    b = sum(1 for m in ms if m < scan)
+    if not b:
+        return " (all after the scan)"
+    if b == len(ms):
+        return " (all before the scan)"
+    return f" ({b} before the scan, {len(ms) - b} after)"
+
+
 def verdict_facts(c: dict | None) -> list[dict]:
-    """Three short facts under a scan's one-line verdict, each {"ok": True/False, "text": ...}: the posted hours,
-    the door around the scan, and the courier (or the camera, when that is what decides it). The full reasoning
-    stays in reconcile's text, which the page keeps under Details. Nothing a rule guessed is stated as a fact."""
+    """Three short facts under a scan's one-line verdict, each {"ok": True/False/None, "text": ...}: the posted
+    hours, the door around the scan, and the courier (or the camera, when that is what decides it). None is a
+    neutral note, shown after the ticks and crosses. The full reasoning stays in reconcile's text, which the page
+    keeps under Details. Nothing a rule guessed is stated as a fact."""
     if not c or not c.get("outcome") or c["outcome"] in ("not_happened_yet", "no_such_local_time"):
         return []
     out, at = c["outcome"], str(c.get("attempt", ""))[-5:]
     door, a, v = c.get("door") or [], c.get("activity") or {}, c.get("visit") or {}
     tol = c.get("tolerance_min") or 10
+    scan = _mins(at)
+    near = [r for r in door if scan is not None and _mins(r.get("time", "")) is not None
+            and abs(_mins(r["time"]) - scan) <= tol]
     facts: list[dict | None] = []
     if c.get("claim") == "business_closed":
         hours = c.get("posted_hours") or "closed"
@@ -377,7 +412,8 @@ def verdict_facts(c: dict | None) -> list[dict]:
             return facts + [{"ok": False, "text": "No door events that day"}]
         lo, hi = a.get("from", ""), a.get("to", "")
         n = a.get("events", len(door))
-        facts.append({"ok": True, "text": f"{_events(n)} {lo}–{hi}{_people(door)}"} if n else
+        facts.append({"ok": True, "text": f"{_events(n)} {lo}–{hi}{'' if out == 'posted_closed' else _sides(door, scan)}"
+                                          f"{_people(door)}"} if n else
                      {"ok": False, "text": f"No door events {lo}–{hi}"})
         if out == "posted_closed":
             return facts
@@ -389,14 +425,11 @@ def verdict_facts(c: dict | None) -> list[dict]:
             facts.append({"ok": False, "text": f"No courier within {tol} min of the scan" +
                           (" (checked from the frame)" if a.get("near") else "")})
         else:
-            facts.append({"ok": False, "text": "Courier not identified"})
-        return [f for f in facts if f]
+            facts.append(_no_courier_frame(near))
+        return _neutral_last(facts)
     # "delivery attempted": was anyone near the time, who, and was the camera watching
     if out == "no_door_data":
         return [{"ok": False, "text": "No door events that day"}]
-    scan = _mins(at)
-    near = [r for r in door if scan is not None and _mins(r.get("time", "")) is not None
-            and abs(_mins(r["time"]) - scan) <= tol]
     facts.append({"ok": True, "text": f"{_events(len(near))} within {tol} min of {at}{_people(near)}"} if near else
                  {"ok": False, "text": f"Nothing recorded within {tol} min of {at}"})
     if out in ("courier_at_door", "courier_came_later", "delivered_after_scan") and v:
@@ -405,11 +438,17 @@ def verdict_facts(c: dict | None) -> list[dict]:
         facts.append({"ok": False, "text": f"Not a courier: {visit_label(v.get('type'))} at {v['time']} "
                                            f"({SHORT_BY[provenance.of(v)]})"})
     elif out == "door_activity_unverified":
-        facts.append({"ok": False, "text": "Courier not identified"})
+        facts.append(_no_courier_frame(near))
     else:
         facts.append({"ok": False, "text": "No courier seen"})
     facts.append(_camera_fact(c.get("coverage"), at))
-    return [f for f in facts if f]
+    return _neutral_last(facts)
+
+
+def _neutral_last(facts: list[dict | None]) -> list[dict]:
+    """The ticks and crosses first, then any neutral note, so a note never reads as a pass or a fail."""
+    out = [f for f in facts if f]
+    return [f for f in out if f["ok"] is not None] + [f for f in out if f["ok"] is None]
 
 
 def answer(c: dict | None) -> dict:
@@ -431,16 +470,18 @@ def pack_check(p: dict) -> dict | None:
             "coverage": p.get("coverage"), "tolerance_min": p.get("tolerance_min"), "door": p.get("timeline") or []}
 
 
-def chip(sources) -> str:
-    """One word for where a check's door data came from: 'demo', 'replay', 'playground' or 'ring'."""
+def chip(sources, day_source: str | None = None) -> str:
+    """One word for where a check's door data came from: 'demo', 'replay', 'playground' or 'ring'. With no door
+    events around the scan there is nothing to credit: '' (no chip), or 'demo' when the day itself came from the
+    demo generator (`day_source`, the briefing's ring_source). Round 7: an empty set read "ring" on the demo."""
     s = set(sources or [])
-    if "synthetic" in s:
+    if "synthetic" in s or (not s and day_source == "synthetic"):
         return "demo"
     if provenance.PLAYGROUND_SOURCE in s:
         return "playground"
     if any("replay" in x for x in s):
         return "replay"
-    return "ring"
+    return "ring" if s else ""
 
 
 STRIP_KIND = {"courier": "courier, confirmed", "person": "person alert", "seen": "seen in a frame",
@@ -474,7 +515,8 @@ def _strip_label(r: dict) -> str:
 
 def door_strip(c: dict | None, hours: str | None = None, order: dict | None = None,
                frame: dict | None = None) -> dict | None:
-    """The door around a scan as a picture: a 60-minute track centred on the carrier's scan, the posted hours
+    """The door around a scan as a picture: a 60-minute track centred on the carrier's scan (the same 30 minutes
+    either side that the finding, its text and the pack's door log call "around the scan", labelled so), the posted hours
     shaded, one mark per door event by what it rests on, the scan as its own tick, the 10 minutes that count
     as "near" bracketed, the order's delivery window when it overlaps, and a frame thumbnail when Shopfront
     holds one. Positions are percentages, so the SVG fits any width with readable text. `text` is the same
@@ -510,7 +552,7 @@ def door_strip(c: dict | None, hours: str | None = None, order: dict | None = No
         dots.append({"x": pct(m), "kind": _strip_kind(r), "label": _strip_label(r)})
     ticks = [{"x": pct(m), "label": _clock(m)} for m in range(lo, hi + 1, 15)]
     kinds = [k for k in STRIP_KIND if any(d["kind"] == k for d in dots)]
-    words = (f"Door from {_clock(lo)} to {_clock(hi)}. "
+    words = (f"Door around the scan, {reach} minutes either side: {_clock(lo)} to {_clock(hi)}. "
              + ((f"Posted hours {hours} cover " + ("all of it. " if band["w"] >= 99.9 else "the shaded part. "))
                 if band else "Posted hours: closed that day. " if hours == "closed" else
                 f"All of it is outside the posted hours ({hours}). " if hours else "")
@@ -519,6 +561,7 @@ def door_strip(c: dict | None, hours: str | None = None, order: dict | None = No
              + (f"{len(dots)} door event{'' if len(dots) == 1 else 's'}: " + "; ".join(d["label"] for d in dots) + "."
                 if dots else "No door events in this hour."))
     return {"scan": pct(scan), "scan_label": f"Scan {_clock(scan)}", "near": {"x": pct(scan - tol),
-            "w": round(pct(scan + tol) - pct(scan - tol), 2), "label": f"±{tol} min"},
+            "w": round(pct(scan + tol) - pct(scan - tol), 2), "label": f"near ±{tol}"},
+            "around": f"around ±{reach} min",
             "band": band, "window": win, "dots": dots, "ticks": ticks, "kinds": kinds,
             "kind_text": STRIP_KIND, "text": words, "frame": frame}

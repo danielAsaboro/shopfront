@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 
@@ -27,13 +28,21 @@ def test_rules_never_read_the_answer_key():
     assert RulesClassifier().classify(e, None).reason != "mock ground truth"
 
 
+class _NoSmartAlerts(SyntheticRingClient):
+    """The generator's door as from a doorbell with Smart Alerts off: no person sub_type, so the rules label all."""
+
+    def events_for_day(self, day):
+        return [replace(e, ring_subtype=None) for e in super().events_for_day(day)]
+
+
 def test_rules_agree_with_the_synthetic_generator():
     """Regression check only. The generator and the rules encode the same assumptions, so agreement
-    here is circular and says nothing about accuracy on real Ring footage."""
+    here is circular and says nothing about accuracy on real Ring footage. Round 10: every demo customer carries
+    the person sub_type, so the rules are checked on the same door with Smart Alerts off."""
     rules, total, right, per = RulesClassifier(), 0, 0, {}
     for i in range(14):
         day = date(2026, 9, 28) + timedelta(days=i)
-        for v in classify_day(RING, rules, day, HOURS):
+        for v in classify_day(_NoSmartAlerts(TZ, HOURS), rules, day, HOURS):
             if v.source != "rules":  # the demo's stand-in for Ring's person alert labelled it, not the rules
                 continue
             total += 1

@@ -22,6 +22,7 @@ import threading
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urlencode
 
 from app import reconcile as rc
 from app.files import write_private
@@ -119,15 +120,17 @@ def carrier_record(checks: list[dict], month: date, cost: float | None = None, c
         demo = sum(1 for c in cs if c["demo"])
         disputed = sum(1 for c in cs if c["outcome"] in disputable)
         stake = f"{currency}{cost * disputed:,.2f}" if cost is not None and disputed else None
-        out.append({"carrier": name, "claim": claim, "n": n, "text": text,
-                    "headline": _headline(name, claim, n, m, cs, stake), "disputed": disputed, "at_stake": stake,
+        pattern, stock = _headline(name, claim, n, m, cs), _perishable(cs, disputable)
+        out.append({"carrier": name, "claim": claim, "n": n, "text": text, "pattern": pattern,
+                    "headline": pattern + _stakes(stock, stake), "perishable": stock,
+                    "disputed": disputed, "at_stake": stake,
                     "demo": demo, "all_demo": demo == n, "checks": sorted(cs, key=lambda c: (c["day"], c["at"]))})
     return sorted(out, key=lambda r: (-r["n"], r["carrier"].lower()))
 
 
-def _headline(name: str, claim: str, n: int, month: str, cs: list[dict], stake: str | None) -> str:
-    """'Northline Parcel: 3 "business closed" scans in October, all during posted hours, about $51.60 at stake':
-    the pattern a carrier's account manager or a supplier can act on, in the shop's plain words."""
+def _headline(name: str, claim: str, n: int, month: str, cs: list[dict]) -> str:
+    """'Northline Parcel: 3 "business closed" scans in October, all during posted hours': the pattern a carrier's
+    account manager or a supplier can act on, in the shop's plain words. What it puts at stake is _stakes()."""
     what = '"business closed" scan' if claim == rc.BUSINESS_CLOSED else "delivery-attempt scan"
     line = f"{name}: {n} {what}{'' if n == 1 else 's'} in {month}"
     if claim == rc.BUSINESS_CLOSED:
@@ -137,7 +140,17 @@ def _headline(name: str, claim: str, n: int, month: str, cs: list[dict], stake: 
     else:
         seen = sum(1 for c in cs if c["outcome"] == rc.COURIER_AT_DOOR)
         line += f", a courier seen near {'none' if not seen else 'all' if seen == n else seen} of them"
-    return line + (f", about {stake} at stake" if stake else "")
+    return line
+
+
+def _stakes(stock: list[dict], stake: str | None) -> str:
+    """What the carrier's disputed scans put at stake, the stock first (round 10): '; perishable stock at risk:
+    PO-1031 ($318.75), plus about $34.40 in redelivery fees', or ', about $34.40 at stake' with no perishable order.
+    Each order's value is listed as written, never added up."""
+    if not stock:
+        return f", about {stake} at stake" if stake else ""
+    line = "; perishable stock at risk: " + ", ".join(f"{x['ref']} ({x['amount']})" for x in stock)
+    return line + (f", plus about {stake} in redelivery fees" if stake else "")
 
 
 # What the door showed, for a reader outside the shop (a carrier's account manager, a supplier): third person,
@@ -176,11 +189,27 @@ def month_report(checks: list[dict], month: date, cost: float | None, currency: 
             "perishable": perishable_at_risk(checks, month, disputable)}
 
 
-def perishable_at_risk(checks: list[dict], month: date, disputable: set[str]) -> list[str]:
-    """'PO-1042 ($318.75)' for each perishable order behind a disputed scan this month: lost trading, not only a
-    redelivery fee. The value is the order's own, as written; listed, never added up."""
-    return sorted({f"{c['order_ref'] or c['supplier']} ({c['amount']})" for c in in_month(checks, month)
-                   if c.get("perishable") and c["amount"] and c["outcome"] in disputable})
+def perishable_at_risk(checks: list[dict], month: date, disputable: set[str]) -> list[dict]:
+    """Each perishable order behind a disputed scan this month: lost trading, not only a redelivery fee."""
+    return _perishable(in_month(checks, month), disputable)
+
+
+def _perishable(checks: list[dict], disputable: set[str]) -> list[dict]:
+    """{"ref": "PO-1042", "supplier", "amount": "$318.75", "when": "14 October", "href": the kept check} for each
+    perishable order behind a disputed scan, once per order (its first disputed check), so a reader can see what
+    the order is and open the check behind it. The value is the order's own, as written; listed, never added up."""
+    out: dict[tuple, dict] = {}
+    for c in sorted(checks, key=lambda c: (c["day"], c["at"])):
+        if not (c.get("perishable") and c["amount"] and c["outcome"] in disputable):
+            continue
+        ref = c["order_ref"] or c["supplier"]
+        day = date.fromisoformat(c["day"])
+        out.setdefault((ref, c["amount"]), {
+            "ref": ref, "supplier": c.get("supplier", "") if c["order_ref"] else "", "amount": c["amount"],
+            "when": f"{day.day} {day:%B}", "href": "/?" + urlencode({"date": c["day"], "attempt": c["at"],
+                                                                      "claim": c["claim"], "carrier": c.get("carrier", ""),
+                                                                      "tracking": c.get("tracking", "")})})
+    return sorted(out.values(), key=lambda x: x["ref"])
 
 
 def month_money(checks: list[dict], month: date, confirmed_orders: int | None, cost: float | None,

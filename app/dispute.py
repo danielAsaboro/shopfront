@@ -14,7 +14,8 @@ A scan pack offers two drafts and the owner picks: one to the supplier, as a rec
 shipper is the carrier's customer, so it is who can make the carrier act), and one to the carrier about
 its own scan, by the name the owner typed. With no order there is only the carrier's; a pack about an
 order with no scan (missing, short, damaged) only has the supplier's. When any event that day is Shopfront's demo data or a replayed
-webhook, the pack, the draft and the zip README say so in their first line.
+webhook, the pack and the zip README say so in their first line and the draft's subject carries "[DEMO]", which travels
+with the copied message; the pack page says it once, in its watermark (round 8: not again inside the draft).
 
 Shopfront never sends it: the owner reads it, edits it and sends it from their own email. When the
 door agrees with the carrier there is no draft, and the pack says why.
@@ -28,7 +29,7 @@ import json
 import zipfile
 from datetime import UTC, date, datetime, tzinfo
 
-from app import provenance, wording
+from app import pages, provenance, wording
 from app import reconcile as rc
 from app.deliveries import STATUS_TEXT, Expected, FrameStore
 from app.live import frame_provenance
@@ -55,19 +56,10 @@ PLAYGROUND_LIMIT = ("Some events are Ring Developer Playground scenes (marked ri
 DEMO = "DEMO DATA, not from a camera"
 REPLAYED = "REPLAYED RING EVENTS, not live Ring notifications"
 PLAYGROUND_MARK = "RING DEVELOPER PLAYGROUND SCENES, not the shop's door"
-SUBJECT_TAG = "[DEMO] "  # one short tag on the draft's subject; the body's first line says what it means
-
-
-def draft_warning(demo: bool, replayed: bool, playground: bool = False) -> str:
-    """The one line at the top of a draft built on demo, replayed or Playground data. The pack page's watermark
-    and the zip README carry the full explanation; the draft only has to stop it being sent."""
-    if playground and not demo:
-        return f"{PLAYGROUND_MARK}{', with replayed Ring events' if replayed else ''}: don't send this as evidence."
-    if demo and replayed:
-        return f"{DEMO}, with replayed Ring events: don't send this."
-    if demo:
-        return f"{DEMO}: don't send this."
-    return f"{REPLAYED}: don't send this as evidence."
+# The one mark a draft built on demo, replayed or Playground data carries: a tag on its subject, which the page's
+# "Copy this message" copies with the body. The pack page's watermark and the zip README say what it means; round 8
+# dropped the body's own warning line, the page's second notice.
+SUBJECT_TAG = "[DEMO] "
 
 
 # Where a frame came from, by the source of the event it belongs to
@@ -122,6 +114,35 @@ def _timeline(visits: list[ClassifiedVisit], centre: datetime | None, frames: Fr
              "ring_subtype": v.event.ring_subtype, "event_id": v.event.id, "event_source": v.event.source,
              "type": v.visit_type.value, "labelled_by": v.source, "confirmed": rc.confirmed(v), "reason": v.reason,
              "bedrock_request_id": v.request_id, "frame_url": frames.url(v.event.id)} for v in rows]
+
+
+def _for_readers(row: dict | None) -> dict | None:
+    """A door event row as a reader of the pack sees it, from the same provenance wording the pack page uses
+    (app/pages.py log_how, app/provenance.py): `label` ("person", "doorbell press (guess)"), `how` and `reason`
+    ("Demo person alert, no camera"), and `provenance`, the kind the label rests on ("synthetic"). The classifier's
+    raw reason ("Ring Smart Alert: human") never reaches a reader for an event Ring didn't send; `labelled_by`
+    stays as data, the stage that labelled it, read together with `provenance`."""
+    if not row or "labelled_by" not in row:
+        return row
+    how = pages.log_how(row)
+    label = {"label": pages.visit_label(row["type"], row.get("confirmed", True), row.get("event_source"))} \
+        if row.get("type") else {}
+    return {**row, **label, "how": how, "reason": how, "provenance": provenance.of(row)}
+
+
+def _reader_rows(pack: dict) -> None:
+    """Every door event row the pack carries, put in the readers' words (_for_readers), once it is built."""
+    pack["timeline"] = [_for_readers(t) for t in pack["timeline"]]
+    f = pack.get("finding")
+    if f:
+        f["visit"] = _for_readers(f.get("visit"))
+        f["unidentified"] = [_for_readers(x) for x in f.get("unidentified") or []]
+        if isinstance(f.get("later"), dict):
+            f["later"] = _for_readers(f["later"])
+    o = pack.get("order")
+    if o:
+        o["courier_visit"] = _for_readers(o.get("courier_visit"))
+        o["possible"] = [_for_readers(x) for x in o.get("possible") or []]
 
 
 def _order(e: Expected | None, receipt: dict | None, tz: tzinfo | None = None) -> dict | None:
@@ -257,9 +278,9 @@ def build_pack(shop: str, day: date, visits: list[ClassifiedVisit], frames: Fram
     ds, pack["no_draft_reason"] = drafts(pack, visits)
     for d in ds if marks else []:
         d["subject"] = SUBJECT_TAG + d["subject"]
-        d["body"] = draft_warning(demo, replayed, playground) + "\n\n" + d["body"]
     pack["drafts"] = ds
     pack["draft"] = ds[0] if ds else None  # the one shown first: the supplier's when there is an order
+    _reader_rows(pack)
     return pack
 
 
@@ -349,12 +370,15 @@ def _facts(p: dict) -> str:
         conf = _people(a) + ((f", {a['customers']} of them confirmed from the camera frame as "
                               f"{'a customer' if a['customers'] == 1 else 'customers'}") if a.get("customers") else "")
         line = f"Our posted hours that day were {p['posted_hours']}, and {_recorder(p['timeline'])} recorded " \
-               f"{kinds} {_window(a)}{conf}."
+               f"{kinds} {_window(a)}{conf}.{_door_times(a, tol) if 'times' in a else _sides(a, tol)}"
         if f["outcome"] == rc.OPEN_COURIER_CAME:
             return line + f" It also shows a courier at our door at {v['time']} ({provenance.said_by(v)}), " \
                           f"during those hours."
         if f["outcome"] == rc.OPEN_DOOR_BUSY:  # what backs "open"; the door log names every event near the scan
-            return line + " We were open, and our door was in use around the time of the scan."
+            when = ("around the time of the scan" if a.get("before") and a.get("after") else
+                    "after the scan" if a.get("after") else "before the scan" if a.get("before") else
+                    "around the time of the scan")  # a check kept before round 9 has no sides: as it said then
+            return line + f" We were open, and our door was in use {when}."
         if not a.get("near"):
             return line + f" It recorded nothing at our door within {tol} minutes of the scan."
         return line + (f" {'The visit' if a['near'] == 1 else 'Every visit'} it recorded within {tol} minutes of "
@@ -367,16 +391,65 @@ def _facts(p: dict) -> str:
     return f["text"]
 
 
+MAX_TIMES = 12  # a door busier than this is listed by its first and last events; the attached door log has each
+
+
+def _door_times(a: dict, tol: int) -> str:
+    """" The door events were at 14:01, 14:10, 14:22, 14:38 and 14:53. Nothing identified who was at the door at
+    14:22 and 14:38, the 2 events within 10 minutes of the scan.": every event in the window, plainly, then the
+    ones near the scan that nothing identified (round 10: naming only the last event before the scan and the first
+    after it read as picking the times that suit the shop)."""
+    ts = a.get("times") or []
+    if not ts:
+        return ""
+    if len(ts) == 1:
+        line = f" The one door event was at {ts[0]}."
+    elif len(ts) <= MAX_TIMES:
+        line = f" The door events were at {_and(ts)}."
+    else:
+        line = (f" The door events were at {', '.join(ts[:6])}, then {len(ts) - 8} more, then {ts[-2]} and {ts[-1]} "
+                f"(the door log attached lists each).")
+    near, n = a.get("near_unidentified") or [], a.get("near") or 0
+    if near:
+        which = (("the one event" if n == 1 else f"the {n} events") if len(near) >= n else
+                 f"{'one' if len(near) == 1 else len(near)} of the {n} events")
+        line += f" Nothing identified who was at the door at {_and(near)}, {which} within {tol} minutes of the scan."
+    return line
+
+
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _sides(a: dict, tol: int) -> str:
+    """For a finding from before round 10 (no `times`): " Outside the 10 minutes either side of the scan, the last
+    door event before it was at 14:12 and the first after it at 14:45.": which side of the scan the door was used
+    on, from the finding's own window, so the draft never stretches use on one side to "around"."""
+    b, f = a.get("before"), a.get("after")
+    mins = int(rc.ACTIVITY.total_seconds() // 60)
+    if b and f:
+        return (f" Outside the {tol} minutes either side of the scan, the last door event before it was at {b} and "
+                f"the first after it at {f}.")
+    if f:
+        return (f" Outside the {tol} minutes either side of the scan, nothing was recorded at our door in the {mins} "
+                f"minutes before it; the first event after it was at {f}.")
+    if b:
+        return (f" Outside the {tol} minutes either side of the scan, the last door event before it was at {b}; "
+                f"nothing was recorded in the {mins} minutes after it.")
+    return ""
+
+
 def _people(a: dict) -> str:
     """", and Ring's person detection classified 4 of them as people": Ring's own signal, in the shop's voice. A
-    demo or replayed alert is never written as Ring's (the draft is watermarked too)."""
+    demo or replayed alert is never written as Ring's (the draft's subject is tagged [DEMO] too)."""
     n = a.get("people") or 0
     if not n:
         return ""
     real = set(a.get("people_source") or []) <= {"ring", "ring-webhook"}
-    if not real:  # the draft's first line already says it is demo data
-        return f", {'one of them a person alert' if n == 1 else f'{n} of them person alerts'}"
-    return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{n} of them as people'}"
+    m = "all" if n > 1 and n == a.get("events") else n  # "all 6 of them" reads as "6 of them" and wonders which
+    if not real:  # the draft's [DEMO] subject already says it is demo data
+        return f", {'one of them a person alert' if n == 1 else f'{m} of them person alerts'}"
+    return f", and Ring's person detection classified {'one of them as a person' if n == 1 else f'{m} of them as people'}"
 
 
 def _kinds_text(a: dict) -> str:
@@ -625,8 +698,9 @@ def as_text(p: dict) -> str:
     if p["timeline"]:
         lines += ["", f"Door log, {p['timeline_window_min']} minutes either side of the "
                       f"{'scan' if p['claim'] else 'delivery'}:"]
-        lines += [f"  {t['time']}  {t['ring_event']:<9} {t['type']:<12} by {t['labelled_by']:<8} "
-                  f"{t['event_source']:<20} {t['reason']}" for t in p["timeline"]]
+        # the page's own words for each row (_for_readers): never the classifier's raw "Ring Smart Alert"
+        lines += [f"  {t['time']}  {t['ring_event']:<9} {t['label']:<24} {t['how']} · source {t['event_source']}"
+                  for t in p["timeline"]]
     lines += ["", "What this does not show:"] + [f"  - {x}" for x in p["limits"]]
     ds = p.get("drafts") or ([p["draft"]] if p.get("draft") else [])
     for i, d in enumerate(ds):
@@ -643,7 +717,8 @@ def _readme(p: dict, frame_name: str | None) -> str:
     lines = ([p["watermark"], ""] if p.get("watermark") else []) + [
         f"Shopfront dispute pack for {p['shop']}, {p['day']}. Made {p['made_at']}.", "",
         "pack.txt   the pack to read: the claim, the finding, the door log, the limits and the draft",
-        "pack.json  the same facts as data, every event with its source and who labelled it",
+        "pack.json  the same facts as data, every event with its source, what labelled it and what that label "
+        "rests on (provenance: synthetic, replay, ring_alert, bedrock_ring_frame...)",
         f"{MANIFEST}  the SHA-256 of every other file; check them with: sha256sum -c {MANIFEST}",
         f"           (the SHA-256 of {MANIFEST} itself is shown under Details on the pack page)",
     ]
@@ -661,8 +736,8 @@ def _readme(p: dict, frame_name: str | None) -> str:
         lines += ["", "Why this pack says DEMO: " + " ".join(
             ([DEMO_LIMIT] if p["demo_data"] else []) + ([REPLAY_LIMIT] if p["replayed"] else [])
             + ([PLAYGROUND_LIMIT] if p.get("playground") else [])),
-            "The pack page shows this once, in its watermark; the draft's subject carries [DEMO] and its first "
-            "line says not to send it. A pack built from your own Ring doorbell has none of these marks."]
+            "The pack page shows this once, in its watermark, and the draft's subject carries [DEMO]: don't send "
+            "it. A pack built from your own Ring doorbell has none of these marks."]
     lines += ["", "Shopfront doesn't send anything. Read the draft, edit it, and send it yourself."]
     return "\n".join(lines) + "\n"
 

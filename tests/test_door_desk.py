@@ -113,11 +113,19 @@ def test_setup_saves_profile_and_expected_delivery(isolated):
 
 def test_dashboard_shows_receipt_and_money_line(isolated, monkeypatch):
     main.profile.save(Profile("Test Shop", "8-18,8-18,8-18,8-18,8-19,9-16,closed", 10, "$"))
-    main.book.add(date(2026, 10, 11), "Sunday bread")  # a closed day; the synthetic press at 11:xx is a rules guess
+    main.book.add(date(2026, 10, 12), "Monday bread")  # open 8-18; the synthetic presses in hours are rules guesses
     c = TestClient(main.app)
-    page = c.get("/?date=2026-10-11").text
-    assert "Sunday bread" in page and "Possible courier, not confirmed by a camera frame" in page
+    page = c.get("/?date=2026-10-12").text
+    assert "Monday bread" in page and "Possible courier, not confirmed by a camera frame" in page
     assert "per redelivery" not in page  # a guess is never priced
+    assert c.get("/api/deliveries?date=2026-10-12").json()["seen"] == 0
+    main.book.remove(main.book.for_day(date(2026, 10, 12))[0].id)
+    # Sunday is closed: a press then is listed as pressed while closed, never offered to an order with no window
+    # (round 8; this test used to expect the closed-day press as the possible courier)
+    main.book.add(date(2026, 10, 11), "Sunday bread")
+    page = c.get("/?date=2026-10-11").text
+    assert "Sunday bread" in page and "Possible courier, not confirmed by a camera frame" not in page
+    assert "Doorbell pressed while closed, at" in page
     assert c.get("/api/deliveries?date=2026-10-11").json()["seen"] == 0
     synthetic = main._visits
 

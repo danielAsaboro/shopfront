@@ -7,7 +7,9 @@ Shopfront imports the shop's orders and invoices (CSV), watches the door through
 Live so far: Ring Partner API calls against the Ring Developer Playground (devices, Event History, a WHEP live-view session, a 403 on a `latest_in_range` image download, a 401 on a bad token), with X-Request-IDs. Not captured live yet: a Ring frame, a webhook sent by Ring, any Bedrock call. Ring failures are shown as named states, never replaced with synthetic data. The demo (`python -m scripts.demo`) runs on synthetic door events and a signed webhook replay, labelled as such on every page.
 
 ## Docs
-- [README](README.md): the problem, the one-command demo, the labelled proof table
+- [README](README.md): the problem, the one-command demo, owners' words and a sourced scale estimate
+- [Status and proof](docs/status.md): hackathon requirements, the labelled proof table, the code map
+- [Running Shopfront](docs/run.md): what the demo shows, tests, phone pairing, a real Ring doorbell
 - [Receiving desk](docs/receiving-desk.md): orders import, stage 0, carrier-scan checks, dispute packs
 - [Receipts](docs/receipts.md): what a courier sighting proves, the matcher, how the classifier and agent are evaluated
 - [Ring integration](docs/ring.md): endpoints, failure table, docs-vs-live differences, live proof

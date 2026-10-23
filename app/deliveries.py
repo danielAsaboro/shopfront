@@ -109,6 +109,14 @@ class DeliveryBook:
     def get(self, expected_id: str) -> Expected | None:
         return next((e for e in self._all() if e.id == expected_id), None)
 
+    def for_scan(self, day: date, tracking: str = "", order_id: str = "") -> Expected | None:
+        """The order a carrier's scan was for, on the scan's day: the one its tracking number names, else the one the
+        owner picked ("Carrier says closed?" on an order with no tracking number). A kept check stores it, so the
+        record ties the scan to the order."""
+        rows = self.for_day(day)
+        return (next((e for e in rows if tracking and e.tracking == tracking), None)
+                or next((e for e in rows if order_id and e.id == order_id), None))
+
     def import_rows(self, rows: list[Expected]) -> dict:
         """Add imported orders. Re-importing the same file updates rows instead of duplicating them:
         an order is the same one when its order_ref and day match, and a staff tap is kept."""
@@ -320,7 +328,16 @@ def _due_by(e: Expected, tz) -> datetime:
     return datetime.combine(d + timedelta(days=1), time(0), tzinfo=tz)
 
 
-def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit]) -> dict[str, Expected]:
+def _fits(v: ClassifiedVisit, e: Expected, open_hours) -> bool:
+    """Whether an unidentified door event could be this order's courier: inside the order's window, or, for an
+    order with no window, during posted hours. A press before opening or after closing named no order's time,
+    so it stays a doorbell press while closed and is never offered to an order that could have come any time."""
+    if e.window():
+        return _distance(v, e) == timedelta(0)
+    return _is_open(v.event.timestamp, open_hours)
+
+
+def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit], open_hours) -> dict[str, Expected]:
     """Each unidentified door event goes to at most one unmatched order: the best fit among those it fits.
     An order with a window beats one without, a narrower window beats a wider one, then the order listed
     first. The same doorbell press is never offered as the possible courier of two orders at once."""
@@ -330,7 +347,7 @@ def _possible_owners(orders: list[Expected], guessed: list[ClassifiedVisit]) -> 
         return (width, orders.index(e))
     out = {}
     for v in guessed:
-        fits = [o for o in orders if _distance(v, o) == timedelta(0)]
+        fits = [o for o in orders if _fits(v, o, open_hours)]
         if fits:
             out[v.event.id] = min(fits, key=fit)
     return out
@@ -349,14 +366,14 @@ def receipts(expected: list[Expected], visits: list[ClassifiedVisit], open_hours
     guessed = [v for v in visits if is_possible_courier(v)]
     pick = _assign(_costs(expected, couriers)) if expected else []
     unmatched = [e for e, j in zip(expected, pick) if j >= len(couriers)]
-    owner = _possible_owners(unmatched, guessed)
+    owner = _possible_owners(unmatched, guessed, open_hours)
     used: set[str] = set()
     rows = []
     for e, j in zip(expected, pick):
         if j >= len(couriers):
             possible, elsewhere = [], []
             for v in guessed:
-                fits = [o for o in unmatched if _distance(v, o) == timedelta(0)]
+                fits = [o for o in unmatched if _fits(v, o, open_hours)]
                 if e not in fits:
                     continue
                 best = owner[v.event.id]
@@ -412,10 +429,12 @@ def _what(row: dict) -> str:
     return "a doorbell press" if row.get("ring_event") == "ding" else "a door event"
 
 
-# Who put the courier at the door, for the lead: said exactly for its source (app/provenance.py)
+# Who put the courier at the door, for the lead: said exactly for its source (app/provenance.py). A line with
+# {name} says the order itself; the others follow "Supplier (PO-1): ". A replay is Shopfront's demo feeder, never
+# Ring, so it is said in plain words with no Ring credit.
 SAW = {
     provenance.RING_ALERT: "Ring's package alert saw the courier at {t}",
-    provenance.REPLAY: "a replayed Ring package alert puts the courier at the door at {t}",
+    provenance.REPLAY: "{name}'s courier{po} was announced by a delivery alert at {t}{tail} (a demo replay)",
     provenance.BEDROCK_RING: "Bedrock saw the courier in the Ring frame at {t}",
     provenance.BEDROCK_LIVE: "Bedrock saw the courier in a frame from Ring live view at {t}",
 }
@@ -428,13 +447,20 @@ def _and(items: list[str]) -> str:
 def _seen_line(x: dict) -> str:
     v = x["visit"]
     name = x["supplier"] + (f" ({x['order_ref']})" if x.get("order_ref") else "")
-    saw = SAW.get(provenance.of(v), "the courier was at the door at {t}").format(t=v["time"])
+    saw = SAW.get(provenance.of(v), "the courier was at the door at {t}")
+    if "{name}" in saw:
+        po = f" for {x['order_ref']}" if x.get("order_ref") else ""
+        return saw.format(name=x["supplier"], po=po, t=v["time"], tail=_seen_tail(x)) + "."
+    return f"{name}: {saw.format(t=v['time'])}{_seen_tail(x)}."
+
+
+def _seen_tail(x: dict) -> str:
     tail = ""
     if x["status"].startswith("seen_while_closed"):
         tail = ", while the shop was closed"
     if x["status"].endswith("outside_window"):
         tail += f", outside its {x['window_start']}–{x['window_end']} window"
-    return f"{name}: {saw}{tail}."
+    return tail
 
 
 def _possible_line(x: dict) -> str:
@@ -502,10 +528,11 @@ def default_cost(currency: str) -> float | None:
 
 
 def money_line(closed_attempts: int, missing: int, cost: float | None, currency: str,
-               default: bool = False) -> str | None:
+               default: bool = False, sourced_above: bool = False) -> str | None:
     """A redelivery cost times what the door saw: the owner's own number, or with `default` the survey
     average above, said as such. No cost means no line. Both counts must come from couriers Ring or
-    Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows)."""
+    Bedrock saw (`receipts()["closed_couriers"]`, "not_seen" rows). With `sourced_above` the page has already
+    said what the survey average is and where it comes from, so the line only points back to it."""
     n = closed_attempts + missing
     if cost is None or n == 0:
         return None
@@ -515,6 +542,8 @@ def money_line(closed_attempts: int, missing: int, cost: float | None, currency:
     if missing:
         parts.append(f"{missing} expected deliver{'ies' if missing != 1 else 'y'} with no courier seen at the door")
     amount = f"{currency}{cost * n:,.2f}".replace(".00", "")
+    if default and sourced_above:
+        return f"Last 7 days: {' and '.join(parts)}. At {currency}{cost:.2f} each (the survey average above), that's about {amount}."
     if default:
         return (f"Last 7 days: {' and '.join(parts)}. At {currency}{cost:.2f} each, the survey average for a failed "
                 f"delivery (not your own number yet), that's about {amount}.")

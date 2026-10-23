@@ -79,9 +79,12 @@ def test_every_page_has_the_nav_banner_and_the_saved_shop_name(c):
     for path in PAGES:
         page = c.get(path).text
         assert 'nav aria-label="Shopfront"' in page and 'href="/setup"' in page and 'href="/"' in page, path
+        assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
+        if 'class="watermark"' in page:  # round 7: a pack with a watermark says it once, there (test_demo_wording)
+            assert path.startswith("/dispute") and 'class="banner' not in page, path
+            continue
         assert "Demo data: these door events were made up on this computer" in page, path
         assert '<span class="b-short">Demo data, not from Ring.' in page, path  # one line on a phone
-        assert "Rosa&#39;s Florist" in page and "Corner Bakery" not in page, path
 
 
 def test_replays_are_named_in_the_banner(c):
@@ -150,13 +153,22 @@ def test_no_orders_empty_state_survives_couriers_nobody_listed(c):
 def test_receiving_desk_leads_and_the_traffic_chart_is_folded(c):
     """Round 2: the scan check sits right under the lead, above the figures and the deliveries, so the story
     is on screen in the first 30 seconds on a phone too. Round 6: the deliveries, with their figures, are a named
-    fold under it, like the rest of the day."""
+    fold under it, like the rest of the day. Round 10: the day's lead line is the Deliveries section's own first
+    line, not a headline floating under the carrier record."""
     main.book.add(WEDNESDAY, "Bay Mills")
     page = c.get(f"/?date={WEDNESDAY}").text
-    assert page.index('class="lead"') < page.index('id="atth"') < page.index('id="dlv"') \
+    assert page.index('id="atth"') < page.index('id="dlv"') < page.index('class="lead"') \
         < page.index('class="figures"') < page.index('class="receipts"') < page.index("Customers by hour")
-    assert re.search(r'<details class="block fold" id="deliveries">\s*<summary><h2 id="dlv">Deliveries', page)
-    assert re.search(r"<details class=\"block fold\">\s*<summary><h2>The rest of the day", page)
+    # round 7: the deliveries fold is open on every visit; the rest of the day and every door event are one fold
+    assert re.search(r'<details class="block fold" id="deliveries" open>\s*<summary><h2 id="dlv">Deliveries', page)
+    assert re.search(r'<details class="block fold" id="events">\s*<summary><h2>The rest of the day', page)
+    assert page.index("Customers by hour") < page.index("Every door event") and page.count('id="events"') == 1
+    # round 10: opened from a scan check, the verdict and the carrier record are the page; every section after
+    # them starts closed (on a phone the check page was eight open-looking sections long)
+    check = c.get(f"/?date={WEDNESDAY}&attempt=14:30&claim=business_closed").text
+    assert 'class="verdict' in check
+    folds = re.findall(r'<details class="block fold[^"]*" id="[^"]+"[^>]*>', check)
+    assert len(folds) >= 3 and not [f for f in folds if " open" in f], folds
 
 
 def test_staff_tap_undo_label_and_shop_local_time(c):
@@ -167,7 +179,8 @@ def test_staff_tap_undo_label_and_shop_local_time(c):
     assert "Staff marked short at 09:12: 2 crates" in page
     assert ">Undo</button>" in page and "built-in method" not in page
     pack = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
-    assert "staff marked short at 09:12" in pack and "at 07:00" not in pack and "16:12" not in pack
+    # "short at 07:00", not "at 07:00": the pack's "Made <today> at HH:MM" line said 07:00 for a minute each day
+    assert "staff marked short at 09:12" in pack and "short at 07:00" not in pack and "16:12" not in pack
     assert "unpacked it at 09:12" in c.get(f"/api/dispute?date={SUNDAY}&order={e.id}").json()["draft"]["body"]
 
 
@@ -204,7 +217,7 @@ def test_a_rules_match_is_only_possible_but_staff_can_still_say_what_arrived(c):
     form = page.split(f'action="/deliveries/{e.id}/received"')[1].split("</form>")[0]
     assert 'value="ok" class="quiet"' in form and ">It arrived</button>" in form
     assert 'value="short"' not in form and 'value="damaged"' not in form and 'name="note"' not in form
-    assert f"order={e.id}" not in page  # no dispute pack from a guess
+    assert f"/dispute?date={SUNDAY}&amp;order={e.id}" not in page  # no dispute pack from a guess
     assert "0<small> confirmed</small>" in page and "1 possible, of 1 expected" in page  # not counted as seen
 
 
@@ -229,7 +242,7 @@ def test_inputs_are_labelled(c):
     ring_courier(main.webhook_log, datetime(2026, 10, 11, 11, 40, tzinfo=TZ))  # the note input needs a courier
     main.book.add(SUNDAY, "Sunday bread")
     page = c.get(f"/?date={SUNDAY}").text
-    assert re.search(r'<label class="field">Day<input type="date"', page)
+    assert re.search(r'<label class="field">Change day<input type="date"', page)
     note = re.search(r'<input id="(note-[^"]+)" name="note"', page).group(1)
     assert f'<label class="sr" for="{note}">' in page
 
@@ -348,7 +361,7 @@ def test_dispute_page_leads_with_a_verdict_and_hides_the_jargon(c):
     e = main.book.add(SUNDAY, "Sunday bread", order_ref="PO-7")
     main.book.mark_received(e.id, "damaged", "", datetime(2026, 10, 11, 9, 0, tzinfo=TZ))
     page = c.get(f"/dispute?date={SUNDAY}&order={e.id}").text
-    assert '<a class="primary" href="/dispute.zip?' in page and "Back to the dashboard" in page
+    assert '<a class="primary" href="/dispute.zip?' in page and "Back to the receiving desk" in page
     assert "Back to the briefing" not in page
     visible = re.sub(r"<details.*?</details>", "", page, flags=re.S)
     for jargon in ("SHA-256", "X-Request-ID", "sub_type", "WHEP", "by rules:"):
@@ -405,8 +418,8 @@ def test_visit_label_marks_rule_guesses():
 
 
 def test_demo_pack_says_demo_once_on_the_page(c):
-    """Round 2: the site banner and ONE watermark block; the subject gets "[DEMO]", the draft one line, and the
-    'what this does not show' list doesn't repeat it."""
+    """Round 2: ONE watermark block; the subject gets "[DEMO]", and the 'what this does not show' list doesn't
+    repeat it. Round 8: the draft's body no longer repeats it either."""
     e = main.book.add(date(2026, 10, 7), "Dairy Co", "05:00", "05:30", order_ref="PO-9")
     page = c.get(f"/dispute?date=2026-10-07&order={e.id}").text
     assert page.count('class="watermark"') == 1 and page.count("demo generator") == 1
@@ -415,7 +428,7 @@ def test_demo_pack_says_demo_once_on_the_page(c):
     subject = page.split('id="subject-supplier">')[1].split("</dd>")[0]
     assert subject.startswith("[DEMO] ") and subject.count("DEMO") == 1
     body = page.split('id="draft-supplier">')[1].split("</div>")[0]
-    assert body.count("DEMO") == 1 and body.startswith("DEMO DATA, not from a camera: don&#39;t send this.")
+    assert "DEMO" not in body and body.startswith("Hello")
 
 
 def test_the_desk_says_which_day_it_shows():
@@ -442,7 +455,7 @@ def test_a_scan_pack_page_lets_the_owner_pick_the_supplier_or_the_carrier(c):
     assert page.count('name="to"') == 2 and "Pick a draft" in page
     assert "To Valley Creamery, the supplier" in page and "To Northline Parcel, the carrier" in page
     assert 'id="draft-supplier">' in page and 'id="draft-carrier">' in page
-    assert page.split('id="draft-carrier">')[1].split("</div>")[0].split("\n\n")[1].startswith("Hello Northline Parcel,")
+    assert page.split('id="draft-carrier">')[1].split("</div>")[0].startswith("Hello Northline Parcel,")  # round 8: no warning line
 
 
 def test_the_story_is_on_screen_first(c):
@@ -451,11 +464,12 @@ def test_the_story_is_on_screen_first(c):
     first = c.get(f"/?date={WEDNESDAY}").text
     line = '<p class="value">Carrier says you were closed? Your doorbell can show you were open.</p>'
     assert line in first
-    main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
-                  tracking="NP 44/71")
+    e = main.book.add(WEDNESDAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
+                      tracking="NP 44/71")
     page = c.get(f"/?date={WEDNESDAY}").text
     assert line in page and page.index(line) < page.index('id="atth"')
-    href = f"/?date={WEDNESDAY}&amp;claim=business_closed&amp;carrier=Northline%20Parcel&amp;tracking=NP%2044/71#atth"
+    href = (f"/?date={WEDNESDAY}&amp;claim=business_closed&amp;carrier=Northline%20Parcel&amp;tracking=NP%2044/71"
+            f"&amp;order={e.id}#atth")  # the order rides along, so a kept check stores it even with no tracking
     assert f'<a class="claim-link" href="{href}"' in page and ">Carrier says closed?</a>" in page
     form = page.split('id="atth"')[1].split("</form>")[0]
     assert '<option value="business_closed" selected>' in form  # the story's scan is the default
@@ -485,12 +499,12 @@ def test_desk_rows_show_a_source_badge_with_the_sentence_behind_it(c):
     assert fold.count("b-demo") == 1
 
 
-def test_live_door_is_in_the_nav_only_with_ring_connected(c, tmp_path, monkeypatch):
-    """Round 2: on demo data "Live door" led to a page with nothing to watch. It shows with Ring connected;
-    without, the Ring link reads "Connect Ring", and /live itself says how, plainly."""
+def test_live_door_is_in_the_nav_on_every_page(c, tmp_path, monkeypatch):
+    """Round 2 hid "Live door" on demo data; round 8: the tab showed on /live only, so the tabs changed from page to
+    page. It is always there; without Ring the Ring link reads "Connect Ring", and /live itself says how, plainly."""
     page = c.get(f"/?date={WEDNESDAY}").text
     nav = page.split('nav aria-label="Shopfront"')[1].split("</nav>")[0]
-    assert 'href="/live"' not in nav and ">Connect Ring</a>" in nav
+    assert 'href="/live">Live door</a>' in nav and ">Connect Ring</a>" in nav
     live = c.get("/live").text
     assert "Live view plays your own Ring doorbell here" in live and "so it needs Ring connected" in live and 'aria-current="page">Live door' in live
     monkeypatch.setattr(main, "_chrome", lambda r: {**chrome(r), "ring_mode": "ring"})

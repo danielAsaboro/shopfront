@@ -1,0 +1,3 @@
+day,supplier,window_start,window_end,order_ref,carrier,tracking,items,amount
+2026-10-14,Valley Creamery,11:00,13:00,PO-1031,Northline Parcel,NP4471001736,"Butter 10kg; cream 12L",$318.75
+2026-10-17,Hillside Mill,14:00,16:00,PO-1036,Northline Parcel,NP4471002204,"Bread flour 25kg x4",$212.40

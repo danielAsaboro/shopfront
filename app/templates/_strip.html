@@ -17,6 +17,7 @@
       {% if s.window %}<rect class="s-win" x="{{ s.window.x }}%" y="62" width="{{ s.window.w }}%" height="5" rx="2"></rect>
       <text class="s-lab" x="{{ [s.window.x, 0]|max }}%" y="80">{{ s.window.label }}</text>{% endif %}
       {% for t in s.ticks %}<text class="s-tick" x="{{ t.x }}%" y="98" text-anchor="{{ 'start' if loop.first else ('end' if loop.last else 'middle') }}">{{ t.label }}</text>{% endfor %}
+      {% if s.around %}<text class="s-lab" x="100%" y="11" text-anchor="end">{{ s.around }}</text>{% endif %}
       <line class="s-scan" x1="{{ s.scan }}%" x2="{{ s.scan }}%" y1="15" y2="60"></line>
       <text class="s-scanlab" x="{{ s.scan }}%" y="11" text-anchor="middle">{{ s.scan_label }}</text>
       {% for d in s.dots %}<circle class="s-dot s-{{ d.kind }}" cx="{{ d.x }}%" cy="38" r="{{ 7 if d.kind == 'courier' else 5.5 }}"><title>{{ d.label }}</title></circle>{% endfor %}

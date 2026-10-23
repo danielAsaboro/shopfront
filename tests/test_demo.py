@@ -36,12 +36,25 @@ def test_sample_names_no_real_carrier():
         assert mark not in text
 
 
+def test_the_demo_day_has_no_doorbell_press_in_the_scanned_orders_window():
+    at = lambda h, m: datetime(2026, 10, 20, h, m, tzinfo=TZ)  # noqa: E731
+    assert not demo.bell_quiet([at(10, 9), at(14, 36)], date(2026, 10, 20), TZ)  # round 7's demo day
+    assert demo.bell_quiet([at(10, 9), at(12, 59), at(16, 1)], date(2026, 10, 20), TZ)
+    assert not demo.has_scan_slot(date(2026, 10, 20), TZ)
+    # round 9: Oct 19's door was only in use after the 14:30 scan (14:35-14:51), so the demo moves to Oct 15
+    assert not demo.has_scan_slot(date(2026, 10, 19), TZ)
+    assert demo.demo_day(date(2026, 10, 21), usable=lambda d: demo.has_scan_slot(d, TZ)) == date(2026, 10, 15)
+
+
 def test_the_scan_is_a_fixed_afternoon_minute_not_a_quiet_one():
     """Round 2: the demo used to hunt for a minute with nothing near it. It now takes 14:30 in the dairy
-    window, and only asks that the door was in use 10 to 30 minutes either side."""
+    window, and only asks that the door was in use 10 to 30 minutes before it and 10 to 30 minutes after it
+    (round 9: both sides, so "in use around the scan" is true of the demo's door)."""
     assert demo.SCAN_WINDOW[0] <= demo.SCAN_AT < demo.SCAN_WINDOW[1]
     at = lambda h, m: datetime(2026, 10, 20, h, m, tzinfo=TZ)  # noqa: E731
-    assert demo.door_in_use([at(14, 2), at(14, 31)], at(14, 30))  # 14:02 is 28 min away
+    assert demo.door_in_use([at(14, 2), at(14, 45)], at(14, 30))  # 28 min before, 15 after
+    assert not demo.door_in_use([at(14, 2), at(14, 31)], at(14, 30))  # nothing beyond the near minutes after it
+    assert not demo.door_in_use([at(14, 35), at(14, 45), at(14, 51)], at(14, 30))  # round 8's demo: all after
     assert not demo.door_in_use([at(14, 25), at(14, 36)], at(14, 30))  # only events near enough to be the courier
     assert not demo.door_in_use([at(13, 50)], at(14, 30))
 
@@ -88,8 +101,13 @@ def test_demo_story_matches_the_receiving_desk_and_yields_a_pack(day, monkeypatc
     assert pack["coverage"]["state"] == "online_by_status" and pack["coverage"]["demo"]
     assert pack["coverage"]["text"].startswith("Demo status checks, not asked of Ring")
     assert dispute.NO_STATUS_LIMIT not in pack["limits"]
-    if pack["order"]["possible"]:  # the desk's "Possible courier" for the dairy order is named in the pack
-        assert pack["order"]["unidentified"] in dispute.as_text(pack)
+    # Round 7: a doorbell press six minutes after the scan made the pack say "1 doorbell press" and "Possible
+    # courier", handing the carrier "our driver rang and nobody answered". The demo day has none in the window.
+    assert not pack["order"]["possible"] and pack["order"]["door_status"] != "possible"
+    assert not [t for t in pack["timeline"] if t["ring_event"] == "ding"]
+    for d in pack["drafts"]:
+        assert "doorbell press" not in d["body"]
+    assert "doorbell press" not in dispute.as_text(pack).split("Door log")[0]
     page = client.get("/", params={"date": day.isoformat()}).text
     assert "Hillside Mill" in page and demo.PACKAGE_AT in page
 
@@ -146,3 +164,25 @@ def test_business_closed_sweep_through_open_hours_yields_a_pack(monkeypatch):
             assert "nobody came" not in d["body"].lower()
         packs += bool(p["drafts"])
     assert packs >= 0.9 * len(rows), rows
+
+
+def test_sigterm_stops_the_demo_like_ctrl_c():
+    """Round 8: `kill <demo pid>` left the uvicorn child running on the port. SIGTERM now raises KeyboardInterrupt
+    in the demo, so main()'s `finally` terminates the server, as Ctrl-C does."""
+    import inspect
+    import os
+    import signal
+
+    import pytest
+    before = signal.getsignal(signal.SIGTERM)
+    try:
+        demo.stop_on_sigterm()
+        with pytest.raises(KeyboardInterrupt):
+            os.kill(os.getpid(), signal.SIGTERM)
+            for _ in range(100):  # the handler runs between bytecodes of this thread
+                pass
+    finally:
+        signal.signal(signal.SIGTERM, before)
+    src = inspect.getsource(demo.main)
+    assert src.index("stop_on_sigterm()") < src.index("subprocess.Popen(")
+    assert "except KeyboardInterrupt" in src and "server.terminate()" in src.split("finally:", 1)[1]

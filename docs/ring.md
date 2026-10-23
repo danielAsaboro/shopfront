@@ -46,7 +46,7 @@ Signed webhooks (`motion_detected`, `button_press`, …) are accepted at `POST /
 | `POST https://oauth.ring.com/oauth/token` (`authorization_code`) | Account linking: redeem Ring's code | client id + secret | `RingLink.exchange` |
 | `POST /v1/accounts/me/app-integrations` | Account linking: confirm with the nonce (status `awaiting`) | Bearer (the matched token) | `RingLink.claim` |
 | `PATCH /v1/accounts/me/app-integrations` | Account linking: `{"status": "completed"}` (mandatory) | Bearer (the matched token) | `RingLink.claim` |
-| `POST /ring/link/token`, `GET`/`POST /ring/link`, `GET /ring/link/home` (ours) | Token Exchange URL, Account Link URL, App Homepage URL | see section 10 | `app/main.py`, [app/ring/link.py](../app/ring/link.py) |
+| `POST /ring/link/token`, `GET`/`POST /ring/link`, `GET /ring/link/home` (ours) | Token Exchange URL, Account Link URL, App Homepage URL | see section 10 | [app/routes/ring.py](../app/routes/ring.py), [app/ring/link.py](../app/ring/link.py) |
 
 All Ring calls go to the production base URL `https://api.amazonvision.com`. Ring's docs list no separate staging API host.
 
@@ -121,7 +121,7 @@ To add rows, run `RING_ACCESS_TOKEN=<Playground token> .venv/bin/python -m scrip
 
 ## 10. Account linking (one-way)
 
-How a shop uses Shopfront every day: the owner adds Shopfront from the Ring AppStore once, and Shopfront stays signed in on a refresh token it rotates. The Playground token paste on `/connect` stays, for trying Shopfront out. `/setup` offers both. Code: [app/ring/link.py](../app/ring/link.py), routes in [app/main.py](../app/main.py), tests in [tests/test_ring_link.py](../tests/test_ring_link.py) (MockTransport shaped like the reference's examples).
+How a shop uses Shopfront every day: the owner adds Shopfront from the Ring AppStore once, and Shopfront stays signed in on a refresh token it rotates. The Playground token paste on `/connect` stays, for trying Shopfront out. `/setup` offers both. Code: [app/ring/link.py](../app/ring/link.py), routes in [app/routes/ring.py](../app/routes/ring.py), tests in [tests/test_ring_link.py](../tests/test_ring_link.py) (MockTransport shaped like the reference's examples).
 
 All section names below are from the API reference, https://developer.amazon.com/docs/ring/api-documentation.html.
 
@@ -161,4 +161,4 @@ The Developer Playground files each scene as an `on_demand` event and nothing el
 
 - **When.** `RING_PLAYGROUND=1` turns it on and `RING_PLAYGROUND=0` turns it off. Left empty, it is on when the token is a fixed access token (`RING_ACCESS_TOKEN`, or one pasted on /connect), which is what the Playground hands out. The API reference has no field that marks a Playground account or device, so nothing else is read. Synthetic mode is never Playground mode.
 - **What.** Each `on_demand` event becomes a door visit with event source `ring-playground`, labelled exactly **Playground scene (Ring simulator)**, of type `unknown` (app/briefing.py `classify_day`, app/provenance.py). The time-of-day rules never label one. It is a customer, a courier or anyone else only when Bedrock read the scene's Ring frame (Image download for that event, section 4; whole-second `at_timestamp`) and said so. That label is then shown as, for example, "delivery (Playground scene (Ring simulator))", and its provenance is still `ring-playground` to the assistant.
-- **Where it shows.** The check counts a scene as door activity and names it ("a Playground scene (Ring simulator) at 12:38"). A dispute pack with any scene that day is watermarked "RING DEVELOPER PLAYGROUND SCENES, not the shop's door": in the page banner, the README, the limits, and the first line of every draft. A draft never says "our front-door camera shows otherwise" on a scene. The footer counts scenes apart from Bedrock and the rules.
+- **Where it shows.** The check counts a scene as door activity and names it ("a Playground scene (Ring simulator) at 12:38"). A dispute pack with any scene that day is watermarked "RING DEVELOPER PLAYGROUND SCENES, not the shop's door": in the page's watermark, `pack.txt`, the README and the limits, and every draft's subject starts "[DEMO]". A draft never says "our front-door camera shows otherwise" on a scene. The footer counts scenes apart from Bedrock and the rules.

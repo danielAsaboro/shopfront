@@ -13,6 +13,7 @@ import app.main as main
 from app import checks as kc
 from app import dispute
 from app import reconcile as rc
+from app.deliveries import DeliveryBook
 from app.models import ClassifiedVisit, DoorEvent, VisitType
 from scripts import demo
 
@@ -106,10 +107,13 @@ def test_keep_recomputes_the_check_and_the_desk_shows_the_record(monkeypatch):
     assert k["demo"]  # the synthetic source: demo data, and the record says so
     desk = c.get("/", params={"date": "2026-10-14"}).text
     assert "Carrier record, October 2026" in desk
-    # round 4: the desk shows each carrier's pattern line, with what is at stake (the survey default here)
-    assert "Northline Parcel: 1 &#34;business closed&#34; scan in October, during posted hours, about $17.20 at stake." \
-        in desk
+    # the desk shows each carrier's pattern line, and what is at stake once, in the month's money line (round 7:
+    # one block, the survey default here)
+    assert "Northline Parcel: 1 &#34;business closed&#34; scan in October, during posted hours." in desk
     assert "1 disputed scan, about $17.20 of redeliveries at stake" in desk and "(all demo)" not in desk
+    assert desk.count("$17.20 of redeliveries at stake") == 1 and "$17.20 at stake" not in desk
+    # round 10: no "$0 of redeliveries not needed"; with no courier confirmed it says so in words
+    assert "courier confirmed at the door yet" in desk and "not needed" not in desk
     assert '<span class="badge b-demo">demo</span>' in desk.split("Carrier record")[1]  # one chip for the section
     assert "the survey average" in desk  # the sourced default, said as such
     page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
@@ -160,6 +164,48 @@ def test_demo_seeds_two_earlier_checks_this_month_marked_demo(tmp_path):
     [r] = kc.carrier_record(kc.CheckBook(tmp_path / "checks.json").all(), day)
     assert r["text"] == f"{demo.CARRIER} scanned you closed twice in October, every time during posted hours."
     assert r["all_demo"]
+    # round 8: each kept check carries its order (samples/past-orders.csv, by tracking number), at its own time
+    # (both used to be 14:30 with no order, so /report's Order column was all dashes)
+    assert [(k["order_ref"], k["supplier"], k["amount"], k["perishable"]) for k in kept] == [
+        ("PO-1031", "Valley Creamery", "$318.75", True), ("PO-1036", "Hillside Mill", "$212.40", False)]
+    assert len({k["at"] for k in kept}) == 2
+    book = DeliveryBook(tmp_path / "expected-deliveries.json")
+    for k in kept:  # the order is in the book on the scan's day, its window around the scan
+        [o] = book.for_day(date.fromisoformat(k["day"]))
+        assert o.order_ref == k["order_ref"] and o.window_start <= k["at"] <= o.window_end
+    [lost] = kc.perishable_at_risk(kc.CheckBook(tmp_path / "checks.json").all(), day, dispute.DISPUTE)
+    k = next(k for k in kept if k["order_ref"] == "PO-1031")
+    assert (lost["ref"], lost["supplier"], lost["amount"]) == ("PO-1031", "Valley Creamery", "$318.75")
+    # round 10: it names the order and links to the kept check behind it
+    assert lost["href"].startswith(f"/?date={k['day']}&attempt={k['at'].replace(':', '%3A')}&claim=business_closed")
+
+
+def test_demo_report_ties_each_scan_to_its_order(monkeypatch):
+    """Round 8: /report's Order column read "—" on every demo row."""
+    demo.seed_past_checks(main.DATA, date(2026, 10, 20), TZ)
+    page = TestClient(main.app).get("/report", params={"month": "2026-10"}).text
+    rows = page.split("<table", 1)[1].split("</table>", 1)[0]
+    assert "PO-1031 · Valley Creamery · $318.75" in rows and "PO-1036 · Hillside Mill · $212.40" in rows
+    assert "<td>—</td>" not in rows
+
+
+def test_keeping_a_scan_for_an_order_with_no_tracking_number_keeps_that_order(monkeypatch):
+    """"Carrier says closed?" on an order with no tracking number carries the order to the check and to Keep."""
+    monkeypatch.setattr(main, "_visits", lambda d: busy(d))
+    e = main.book.add(DAY, "Pinecrest Paper Goods", order_ref="INV-2208", amount="$96.00")
+    c = TestClient(main.app)
+    desk = c.get("/", params={"date": "2026-10-14"}).text
+    assert f"&amp;order={e.id}#atth" in desk and f'data-order="{e.id}"' in desk
+    page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
+                              "carrier": "Northline Parcel", "order": e.id}).text
+    assert f'name="order" value="{e.id}"' in page.split('action="/checks"', 1)[1].split("</form>", 1)[0]
+    assert c.post("/checks", data=form(tracking="", order=e.id), follow_redirects=False).status_code == 303
+    [k] = main.checks.all()
+    assert (k["order_ref"], k["supplier"], k["amount"]) == ("INV-2208", "Pinecrest Paper Goods", "$96.00")
+    # a tracking number that names another order wins over a stale pick
+    other = main.book.add(DAY, "Valley Creamery", order_ref="PO-1042", tracking="NP4471002958")
+    assert main.book.for_scan(DAY, "NP4471002958", e.id).id == other.id
+    assert main.book.for_scan(DAY, "", "exp-nope") is None
 
 
 def test_desk_offers_the_demo_scan_already_filled_in_only_on_a_demo_install():
@@ -190,3 +236,45 @@ def test_demo_prints_the_check_url_first():
     printed = inspect.getsource(demo.main).split('print(f"""', 1)[1]
     assert printed.lstrip().startswith("Start here, the business-closed check:\n   {check_url}")
     assert printed.index("{check_url}") < printed.index("{desk}") < printed.index("{pack_url}")
+
+
+def test_the_survey_figure_is_explained_once_on_the_check_page(monkeypatch):
+    """Round 8: the check page said "$17.20 each, the survey average (Loqate ...)" three times: in the verdict's
+    details, in the month's line and again under the week's line. Now the month's line, where the money first
+    shows, says it with its source; the week's line points back to it, and the details keep their own note."""
+    from app.deliveries import COST_SOURCE
+    monkeypatch.setattr(main, "_visits", lambda d: busy(d))
+    main.book.add(DAY, "Valley Creamery", "13:00", "16:00", order_ref="PO-1042", carrier="Northline Parcel",
+                  tracking="NP4471002958", amount="$318.75")
+    c = TestClient(main.app)
+    assert c.post("/checks", data=form(), follow_redirects=False).status_code == 303
+    page = c.get("/", params={"date": "2026-10-14", "attempt": "14:30", "claim": "business_closed",
+                              "carrier": "Northline Parcel", "tracking": "NP4471002958"}).text
+    details = page.split('<details class="tech why-verdict">', 1)[1].split("</details>", 1)[0]  # closed
+    rest = page.replace(details, "")
+    assert rest.count(COST_SOURCE["name"]) == 1 and details.count(COST_SOURCE["name"]) == 1
+    assert "At $17.20 each, the survey average (" in rest  # the month's line, with its source
+    assert "Last 7 days: 1 expected delivery with no courier seen at the door. At $17.20 each (the survey " \
+           "average above), that&#39;s about $17.20." in rest
+    assert rest.index("At $17.20 each, the survey average (") < rest.index("(the survey average above)")
+    assert "Survey average: the average cost" not in page
+    # without a month line to say it first, the week's line says it in full, with its source
+    main.checks.remove(main.checks.all()[0]["id"])
+    page = c.get("/", params={"date": "2026-10-14"}).text
+    assert "the survey average for a failed delivery (not your own number yet)" in page
+    assert "Survey average: the average cost" in page
+
+
+def test_a_demo_install_opens_on_the_demo_day(monkeypatch):
+    """Round 8: "/" on the demo opened on yesterday, an empty day with "No orders listed". On a demo install with
+    made-up door data it opens on the demo's day; a date in the link, or orders today, still win."""
+    orders = demo.dated_orders(demo.SAMPLE.read_text(), DAY)
+    c = TestClient(main.app)
+    assert main._ring().name == "synthetic"
+    assert "Wednesday 14 October 2026" not in c.get("/").text
+    main.DATA.mkdir(parents=True, exist_ok=True)
+    demo.note_demo_scan(main.DATA, DAY, orders)
+    assert "<h1>Wednesday 14 October 2026</h1>" in c.get("/").text
+    assert "<h1>Thursday 15 October 2026</h1>" in c.get("/", params={"date": "2026-10-15"}).text
+    (main.DATA / demo.MARKER).unlink()  # not a demo install
+    assert "Wednesday 14 October 2026" not in c.get("/").text

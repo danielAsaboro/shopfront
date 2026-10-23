@@ -5,19 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}{% endblock %} · Shopfront</title>
 <link rel="icon" type="image/svg+xml" href="{{ favicon_uri }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&amp;display=swap">
 {% include "_style.html" %}
 {% block head %}{% endblock %}
 </head>
 <body>
 <main>
-  {% include "_banner.html" %}
+  {% block banner %}{% include "_banner.html" %}{% endblock %}
   <header class="site">
     <a class="brand" href="/">Shopfront<span> · {{ shop }}</span></a>
     <nav aria-label="Shopfront">
-      {# Live door only with a Ring doorbell to watch; without one the Ring link says what to do #}
+      {# The same four tabs on every page (round 8). Without a Ring doorbell, /live says in one sentence what it
+         needs and leads back to the desk's check, and the Ring link reads "Connect Ring" #}
       {% set ring_on = ring_mode == "ring" %}
       {% for href, label in [("/", "Receiving desk"), ("/live", "Live door"), ("/setup", "Set up"), ("/connect", "Ring" if ring_on else "Connect Ring")] %}
-      {% if href != "/live" or ring_on or nav_here == "/live" %}<a href="{{ href }}"{% if nav_here == href %} aria-current="page"{% endif %}>{{ label }}</a>{% endif %}
+      <a href="{{ href }}"{% if nav_here == href %} aria-current="page"{% endif %}>{{ label }}</a>
       {% endfor %}
     </nav>
   </header>

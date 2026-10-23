@@ -1,0 +1,519 @@
+{% extends "_base.html" %}
+{% block title %}Welcome{% endblock %}
+{% block head %}
+<style>
+  /* The welcome page (/welcome): the app's tokens, in the look of the round-11 reference: near-black cards
+     with large radii on a blush page, pink-to-lavender pills, one amber button, soft glows and bubbles.
+     Wider than the app's 820px column; everything here is scoped to .lp. */
+  :root { --lp-wash-1: #fbe4e8; --lp-wash-2: #ece3f7; --lp-wash-3: #fff6ef; --lp-bubble: rgba(255, 255, 255, .95);
+          --lp-bubble-glow: 0 18px 40px -12px rgba(214, 150, 190, .45); --lp-hours: #e7dcf5; --lp-hours-ink: #5b4d78; }
+  @media (prefers-color-scheme: dark) {
+    :root { --lp-wash-1: rgba(214, 150, 190, .16); --lp-wash-2: rgba(160, 140, 230, .14); --lp-wash-3: rgba(247, 169, 40, .05);
+            --lp-bubble: rgba(240, 214, 230, .14); --lp-bubble-glow: 0 0 40px rgba(214, 150, 190, .25);
+            --lp-hours: #2c2740; --lp-hours-ink: #cfc3ee; }
+  }
+  body { background:
+           radial-gradient(1100px 700px at -10% -10%, var(--lp-wash-1), transparent 60%),
+           radial-gradient(900px 700px at 110% 20%, var(--lp-wash-2), transparent 62%),
+           radial-gradient(900px 600px at 50% 110%, var(--lp-wash-3), transparent 60%),
+           var(--bg);
+         background-attachment: scroll; overflow-x: clip; }
+  main { max-width: 1240px; padding: 16px 16px 56px; }
+  @media (min-width: 900px) { main { padding: 20px 32px 72px; } }
+
+  .lp { position: relative; font-family: var(--font); }
+  .lp a { text-decoration: none; }
+  .lp h1, .lp h2, .lp h3 { font-family: var(--font); color: var(--ink); text-transform: none; letter-spacing: -.02em;
+                           display: block; margin: 0; }
+  .lp p { margin: 0; }
+  .lp .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
+             stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Pills and buttons: amber for the one thing to do, the gradient pill for the second */
+  .lp-btn { display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 24px; border-radius: 18px;
+            font: 600 15px/1 var(--font); white-space: nowrap; transition: transform .15s ease, box-shadow .15s ease; }
+  .lp-btn:hover { transform: translateY(-1px); }
+  .lp-btn.amber { background: linear-gradient(180deg, var(--amber), var(--amber-2)); color: var(--amber-ink);
+                  box-shadow: var(--glow-amber); }
+  .lp-btn.pill { background: var(--pill); color: var(--pill-ink); box-shadow: var(--glow-pill); }
+  .lp-btn .ico { width: 18px; height: 18px; stroke-width: 2.2; }
+  .lp-btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px;
+         font: 500 12px/1.3 var(--font); background: var(--pill); color: var(--pill-ink); white-space: nowrap; }
+  .tag.dark { background: var(--card-2); color: var(--card-ink); border: 1px solid var(--card-line); }
+  .tag.ghost { background: transparent; color: inherit; border: 1px dashed currentColor; opacity: .85; }
+  .tag.amber { background: var(--amber); color: var(--amber-ink); }
+  .kicker { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px;
+            background: var(--surface); box-shadow: var(--glow); font: 500 13px/1.3 var(--font); color: var(--ink); }
+  .kicker i { width: 22px; height: 22px; border-radius: 999px; background: var(--pill); display: grid; place-items: center;
+              font-style: normal; font-size: 12px; color: var(--pill-ink); }
+
+  /* Hero */
+  .hero { display: grid; grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr); gap: 36px; align-items: center;
+          padding: 36px 0 24px; }
+  .hero h1 { font-size: clamp(34px, 4.2vw, 56px); line-height: 1.08; font-weight: 600; margin: 22px 0 0; }
+  .hero h1 .soft { background: linear-gradient(100deg, #d98aa6, #9d8bea); -webkit-background-clip: text;
+                   background-clip: text; color: transparent; }
+  .hero .sub { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.6; color: var(--muted); margin: 20px 0 0; max-width: 540px; }
+  .hero .ctas { display: flex; flex-wrap: wrap; gap: 14px; margin: 30px 0 0; }
+  .hero .fine { font-size: 13px; color: var(--muted); margin: 18px 0 0; max-width: 520px; }
+
+  /* The two floating screens */
+  .stage { position: relative; min-height: 740px; margin: 0; }
+  .bubble { position: absolute; border-radius: 999px; background: var(--lp-bubble); box-shadow: var(--lp-bubble-glow);
+            pointer-events: none; }
+  .stage .b1 { width: 22px; height: 22px; top: 4px; right: 18%; }
+  .stage .b2 { width: 54px; height: 54px; top: 46%; left: -10px; }
+  .stage .b3 { width: 34px; height: 34px; bottom: 60px; right: 2px; }
+  .stage .b4 { width: 14px; height: 14px; bottom: 96px; left: 52%; }
+  .stage .halo { position: absolute; inset: 12% 8% 6% 10%; border-radius: 50%; pointer-events: none;
+                 background: radial-gradient(closest-side, rgba(233, 170, 200, .45), transparent); filter: blur(30px); }
+  .phone { position: absolute; border-radius: 40px; overflow: hidden; }
+  .ph-dark { left: 0; top: 10px; width: 296px; background: var(--card); color: var(--card-ink); padding: 22px 20px 16px;
+             box-shadow: 0 40px 80px -30px rgba(23, 22, 27, .55), 0 30px 70px -30px rgba(214, 150, 190, .6);
+             border: 1px solid var(--card-line); }
+  /* The white screen stays white in dark mode too: the white-over-dark contrast is the look */
+  .ph-light { --ink: #17161b; --muted: #68646f; --surface: #ffffff; --edge: #8a8490; --line: #e9e1e3;
+              --lp-hours: #e7dcf5; --lp-hours-ink: #5b4d78;
+              right: 0; top: 96px; width: 284px; background: var(--surface); color: var(--ink);
+              box-shadow: var(--glow), 0 30px 60px -30px rgba(23, 22, 27, .25); border: 1px solid var(--line); }
+  .ph-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ph-top b { font-weight: 500; font-size: 14px; }
+  .sq { width: 40px; height: 40px; border-radius: 14px; border: 1px solid var(--card-line); display: grid;
+        place-items: center; color: inherit; flex: none; }
+  .ph-light .sq { border-color: var(--edge); }
+  .sq .ico { width: 18px; height: 18px; }
+  .avatar { position: relative; width: 40px; height: 40px; border-radius: 14px; background: var(--pill); display: grid;
+            place-items: center; color: #6f4f7a; flex: none; }
+  .avatar::after { content: ""; position: absolute; top: -3px; right: -3px; width: 10px; height: 10px; border-radius: 99px;
+                   background: var(--amber); border: 2px solid var(--card); }
+  .ph-light .avatar::after { border-color: var(--surface); }
+  .avatar .ico { width: 20px; height: 20px; stroke: #6f4f7a; }
+
+  .ph-hello { position: relative; margin: 18px 0 0; padding: 18px 16px 16px; border-radius: 26px; background: var(--pill);
+              color: var(--pill-ink); box-shadow: 0 18px 40px -16px rgba(214, 150, 190, .7); overflow: hidden; }
+  .ph-hello strong { display: block; font-size: 17px; font-weight: 600; line-height: 1.2; }
+  .ph-hello span { display: block; font-size: 12px; margin-top: 4px; opacity: .8; }
+  .ph-hello .search { display: flex; align-items: center; gap: 8px; margin-top: 14px; width: 74%; height: 36px; padding: 0 12px;
+                      border-radius: 12px; background: #fff; color: #8a8490; font-size: 11px; }
+  .ph-hello .search .ico { width: 14px; height: 14px; }
+  .ph-hello .box3d { position: absolute; right: -6px; bottom: -6px; width: 88px; height: 88px; }
+  .ph-row { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; }
+  .ph-row b { font-weight: 500; font-size: 14px; }
+  .ph-row .tag { font-size: 11px; padding: 6px 12px; box-shadow: var(--glow-pill); }
+  .ph-row .tag::after { content: ""; border: 4px solid transparent; border-top: 5px solid currentColor; margin: 4px 0 0 2px; }
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .tile { position: relative; padding: 12px; border-radius: 20px; background: var(--card-2); border: 1px solid var(--card-line); }
+  .tile .pic { height: 46px; display: grid; place-items: center; }
+  .tile .pic svg { width: 46px; height: 46px; }
+  .tile b { display: block; font-size: 12px; font-weight: 600; margin-top: 6px; }
+  .tile small { display: block; font-size: 10px; color: var(--card-muted); margin-top: 2px; }
+  .tile small em { display: block; font-style: normal; color: var(--amber); }
+  .tile .ok { position: absolute; right: 8px; bottom: 8px; width: 22px; height: 22px; border-radius: 99px; background: var(--amber);
+              color: var(--amber-ink); display: grid; place-items: center; box-shadow: var(--glow-amber); }
+  .tile .ok .ico { width: 13px; height: 13px; stroke-width: 3; }
+  .scanrow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px; border-radius: 20px;
+             border: 1px solid var(--card-line); }
+  .scanrow .ic { width: 34px; height: 34px; border-radius: 12px; background: var(--card-2); display: grid; place-items: center;
+                 color: var(--card-muted); flex: none; }
+  .scanrow .ic .ico { width: 16px; height: 16px; }
+  .scanrow div { min-width: 0; flex: 1; }
+  .scanrow b { display: block; font-size: 12px; font-weight: 600; }
+  .scanrow small { display: block; font-size: 10px; color: var(--card-muted); }
+  .scanrow .go { flex: 1 1 100%; text-align: center; padding: 12px; border-radius: 14px; font: 600 11px/1 var(--font); background: var(--amber);
+                 color: var(--amber-ink); box-shadow: var(--glow-amber); white-space: nowrap; }
+  .tabbar { display: flex; justify-content: space-between; align-items: center; padding: 16px 12px 2px; color: #55525d; }
+  .tabbar .ico { width: 20px; height: 20px; }
+  .tabbar .on { width: 46px; height: 46px; border-radius: 99px; background: var(--pill); color: var(--pill-ink);
+                display: grid; place-items: center; box-shadow: 0 0 0 6px rgba(240, 200, 220, .08), 0 8px 26px rgba(232, 170, 205, .7); }
+
+  .ph-light .ph-top { padding: 22px 20px 0; }
+  .ph-light .door { display: block; width: 100%; height: 170px; margin: 8px 0 0; }
+  .ph-light .timeline { padding: 0 20px 16px; }
+  .ph-light .timeline svg { display: block; width: 100%; height: 46px; }
+  .t-hours { fill: var(--lp-hours); } .t-lab { fill: var(--muted); font: 500 9px var(--font); }
+  .t-hlab { fill: var(--lp-hours-ink); font: 500 9px var(--font); }
+  .t-scan { stroke: var(--ink); stroke-width: 2; } .t-door { fill: var(--amber); stroke: var(--surface); stroke-width: 2; }
+  .sheet { background: var(--card); color: var(--card-ink); border-radius: 34px 34px 0 0; padding: 22px 20px 20px;
+           margin: 0 -1px -1px; }
+  .sheet .who { font-size: 12px; color: var(--card-muted); font-weight: 300; }
+  .sheet .say { display: block; font-size: 16px; line-height: 1.3; font-weight: 600; margin: 4px 0 0; }
+  .sheet .heart { float: right; width: 34px; height: 34px; border-radius: 99px; background: var(--pill); color: #c04b6b;
+                  display: grid; place-items: center; margin: 0 0 6px 8px; box-shadow: 0 8px 22px -6px rgba(232, 170, 205, .8); }
+  .sheet .heart .ico { width: 15px; height: 15px; stroke-width: 2.4; }
+  .sheet .sheet-note { border: 0; font-size: 10px; color: var(--card-muted); margin: 8px 0 0; line-height: 1.5; }
+  .sheet .facts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 12px 0 0; padding: 10px;
+                   border-radius: 18px; border: 1px solid var(--card-line); }
+  .sheet .facts2 div { display: flex; gap: 8px; align-items: center; }
+  .sheet .facts2 i { width: 24px; height: 24px; border-radius: 8px; background: var(--amber); color: var(--amber-ink);
+                     display: grid; place-items: center; flex: none; box-shadow: var(--glow-amber); }
+  .sheet .facts2 i .ico { width: 13px; height: 13px; stroke-width: 2.4; }
+  .sheet .facts2 small { display: block; font-size: 9px; color: var(--card-muted); }
+  .sheet .facts2 b { display: block; font-size: 12px; }
+  .sheet .acts { display: flex; gap: 8px; margin: 12px 0 0; }
+  .sheet .acts span { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 42px;
+                      border-radius: 14px; font: 600 12px/1 var(--font); }
+  .sheet .acts .p { background: var(--pill); color: var(--pill-ink); box-shadow: var(--glow-pill); flex: 1.5; }
+  .sheet .acts .a { background: linear-gradient(180deg, var(--amber), var(--amber-2)); color: var(--amber-ink); box-shadow: var(--glow-amber); }
+  .sheet .acts .ico { width: 14px; height: 14px; }
+  .stage figcaption { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font-size: 12px; color: var(--muted); }
+
+  /* Sections */
+  .sec { margin: 72px 0 0; }
+  .sec-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin: 0 0 26px; }
+  .sec-head h2 { font-size: clamp(26px, 3vw, 38px); line-height: 1.15; font-weight: 600; margin: 12px 0 0; max-width: 680px; }
+  .sec-head p { color: var(--muted); max-width: 440px; font-size: 15px; }
+
+  .problem { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 40px 0 0; padding: 22px 0;
+             border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .problem div { padding: 0 24px; }
+  .problem div:first-child { padding-left: 0; }
+  .problem div + div { border-left: 1px solid var(--line); }
+  .problem b { display: block; font-size: 16px; font-weight: 600; }
+  .problem span { display: block; font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+  .how { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; list-style: none; margin: 0; padding: 0; }
+  .how li { position: relative; background: var(--card); color: var(--card-ink); border-radius: var(--r-xl); padding: 26px 26px 28px;
+            border: 1px solid var(--card-line); box-shadow: 0 30px 60px -32px rgba(23, 22, 27, .55), 0 24px 60px -30px rgba(214, 150, 190, .55); }
+  .how .top { display: flex; align-items: center; justify-content: space-between; }
+  .how .n { font: 600 13px/1 var(--font); padding: 8px 12px; border-radius: 999px; background: var(--pill); color: var(--pill-ink);
+            box-shadow: var(--glow-pill); }
+  .how .sq { width: 46px; height: 46px; border-radius: 16px; color: var(--card-ink); }
+  .how h3 { color: var(--card-ink); font-size: 21px; line-height: 1.25; font-weight: 600; margin: 26px 0 0; }
+  .how p { color: var(--card-muted); font-size: 14px; line-height: 1.6; margin: 10px 0 0; }
+  .how .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 0; }
+  .how li:not(:last-child)::after { content: ""; position: absolute; top: 50%; right: -17px; width: 12px; height: 12px;
+            border-radius: 99px; background: var(--lp-bubble); box-shadow: var(--lp-bubble-glow); z-index: 1; }
+
+  .feats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+  .feat { background: var(--surface); border-radius: var(--r-lg); padding: 22px 20px; box-shadow: var(--glow);
+          border: 1px solid var(--line); display: flex; flex-direction: column; }
+  .feat .sq { width: 42px; height: 42px; border-radius: 14px; border-color: var(--edge); color: var(--ink); }
+  .feat h3 { font-size: 16px; line-height: 1.3; font-weight: 600; margin: 18px 0 0; }
+  .feat p { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 8px 0 0; flex: 1; }
+  .feat .tag { align-self: flex-start; margin: 16px 0 0; }
+  .feat.dark { background: var(--card); color: var(--card-ink); border-color: var(--card-line);
+               box-shadow: 0 24px 60px -28px rgba(214, 150, 190, .6); }
+  .feat.dark h3 { color: var(--card-ink); } .feat.dark p { color: var(--card-muted); }
+  .feat.dark .sq { border-color: var(--card-line); color: var(--card-ink); }
+
+  .honest { display: grid; grid-template-columns: minmax(0, .9fr) repeat(3, minmax(0, 1fr)); gap: 28px; align-items: start;
+            background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-xl); padding: 30px; box-shadow: var(--glow); }
+  .honest h2 { font-size: 26px; line-height: 1.2; font-weight: 600; margin: 12px 0 0; }
+  .honest h3 { font-size: 16px; font-weight: 600; display: flex; gap: 10px; align-items: center; }
+  .honest h3 i { width: 28px; height: 28px; border-radius: 10px; background: var(--pill); color: var(--pill-ink); display: grid;
+                 place-items: center; flex: none; }
+  .honest h3 i .ico { width: 15px; height: 15px; stroke-width: 2.4; }
+  .honest p { font-size: 14px; color: var(--muted); margin: 8px 0 0; }
+  .honest .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+  .honest .chips .tag.dark { background: var(--card); }
+
+  .closing { position: relative; overflow: hidden; margin: 72px 0 0; background: var(--card); color: var(--card-ink);
+             border-radius: 40px; padding: 56px 48px; border: 1px solid var(--card-line);
+             box-shadow: 0 40px 90px -40px rgba(214, 150, 190, .75), 0 30px 60px -30px rgba(23, 22, 27, .45); }
+  .closing::before { content: ""; position: absolute; width: 520px; height: 520px; right: -140px; top: -220px; border-radius: 50%;
+                     background: radial-gradient(closest-side, rgba(240, 160, 200, .42), rgba(180, 156, 240, .16) 60%, transparent);
+                     pointer-events: none; }
+  .closing .bubble { width: 18px; height: 18px; right: 22%; bottom: 34px; background: rgba(255, 255, 255, .85);
+                     box-shadow: 0 0 30px rgba(232, 170, 205, .7); }
+  .closing h2 { position: relative; color: var(--card-ink); font-size: clamp(26px, 3.4vw, 42px); line-height: 1.12; font-weight: 600;
+                max-width: 720px; }
+  .closing p { position: relative; color: var(--card-muted); margin: 14px 0 0; max-width: 560px; }
+  .closing .ctas { position: relative; display: flex; flex-wrap: wrap; gap: 14px; margin: 30px 0 0; }
+  .lp-foot { margin: 28px 0 0; font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 18px;
+             justify-content: space-between; }
+  .lp-foot a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+
+  @media (max-width: 1100px) {
+    .feats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .honest { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .honest > :first-child { grid-column: 1 / -1; }
+  }
+  @media (max-width: 980px) {
+    .hero { grid-template-columns: minmax(0, 1fr); gap: 28px; padding-top: 20px; }
+    .stage { max-width: 620px; width: 100%; margin: 0 auto; }
+  }
+  @media (max-width: 760px) {
+    .how { grid-template-columns: minmax(0, 1fr); }
+    .how li:not(:last-child)::after { top: auto; bottom: -17px; right: 50%; }
+    .feats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .problem { grid-template-columns: minmax(0, 1fr); padding: 6px 0; }
+    .problem div { padding: 14px 0; }
+    .problem div + div { border-left: 0; border-top: 1px solid var(--line); }
+    .honest { grid-template-columns: minmax(0, 1fr); padding: 24px 20px; gap: 22px; }
+    .closing { padding: 36px 22px; border-radius: 32px; }
+    .sec, .closing { margin-top: 56px; }
+  }
+  @media (max-width: 640px) {
+    .stage { min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 8px 0 34px; }
+    .phone { position: relative; left: auto; right: auto; top: auto; width: 100%; max-width: 340px; }
+    .ph-light { align-self: center; }
+    .stage .b2 { left: -6px; top: 30%; } .stage .b3 { right: -4px; bottom: 30%; }
+    .hero .ctas .lp-btn { flex: 1 1 100%; justify-content: center; }
+    .closing .ctas .lp-btn { flex: 1 1 100%; justify-content: center; }
+    .closing .bubble { right: 28px; bottom: auto; top: 26px; }
+  }
+  @media (max-width: 460px) {
+    .feats { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+{% endblock %}
+{% block main %}
+{# Icons: one sprite, drawn inline (no external images) #}
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></symbol>
+  <symbol id="i-shop" viewBox="0 0 24 24"><path d="M4 10v9h16v-9"/><path d="M3 10l2-5h14l2 5c0 1.4-1.1 2.5-2.5 2.5S16 11.4 16 10c0 1.4-1.1 2.5-2.5 2.5h-3C9.1 12.5 8 11.4 8 10c0 1.4-1.1 2.5-2.5 2.5S3 11.4 3 10z"/><path d="M10 19v-4h4v4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.2 4L19 7"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><path d="M8 9v6M11 9v6M14 9v6M17 9v6"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-door" viewBox="0 0 24 24"><path d="M6 20V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v15"/><path d="M4 20h16"/><circle cx="14.5" cy="12.5" r=".8"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 10h8M8 13h5"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol id="i-csv" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M4 14.5h16M10 4v16"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="18" rx="5"/><circle cx="12" cy="9" r="2.2"/><circle cx="12" cy="16" r="1.4"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.3"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M4 13l5 5 11-12"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-7z"/><path d="M11 13l9-9"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></symbol>
+</svg>
+
+<div class="lp">
+
+<section class="hero" aria-labelledby="lp-title">
+  <div>
+    <span class="kicker"><i>&#10003;</i>A receiving desk for one-door shops</span>
+    <h1 id="lp-title">The carrier scanned <span class="soft">&ldquo;business closed&rdquo;</span>. Your doorbell says you were open.</h1>
+    <p class="sub">Shopfront checks each expected delivery against the couriers your Ring doorbell saw, tests a carrier&rsquo;s
+      &ldquo;business closed&rdquo; or &ldquo;delivery attempted&rdquo; scan against your posted hours and the door, and builds
+      a dispute pack that you review and send yourself.</p>
+    <div class="ctas">
+      <a class="lp-btn amber" href="/">Open the receiving desk <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      <a class="lp-btn pill" href="/#atth">Try a carrier scan <svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg></a>
+    </div>
+    <p class="fine">For a bakery, caf&eacute; or boutique that orders stock from suppliers and already has a Ring doorbell.
+      Shopfront drafts; it never sends anything for you.</p>
+  </div>
+
+  <figure class="stage">
+    <span class="halo" aria-hidden="true"></span>
+    <span class="bubble b1" aria-hidden="true"></span><span class="bubble b2" aria-hidden="true"></span>
+    <span class="bubble b3" aria-hidden="true"></span><span class="bubble b4" aria-hidden="true"></span>
+
+    <div class="phone ph-dark">
+      <div class="ph-top">
+        <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-grid"/></svg></span>
+        <b>Receiving desk</b>
+        <span class="avatar"><svg class="ico" aria-hidden="true"><use href="#i-shop"/></svg></span>
+      </div>
+      <div class="ph-hello">
+        <strong>Good morning!</strong>
+        <span>3 deliveries expected today</span>
+        <div class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg>Check a carrier scan</div>
+        <svg class="box3d" viewBox="0 0 100 100" aria-hidden="true">
+          <defs>
+            <linearGradient id="lp-bx1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#eadff0"/></linearGradient>
+            <linearGradient id="lp-bx2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9d6e6"/><stop offset="1" stop-color="#c9bde9"/></linearGradient>
+          </defs>
+          <path d="M50 16l34 16v38L50 88 16 70V32z" fill="url(#lp-bx2)"/>
+          <path d="M16 32l34 16 34-16-34-16z" fill="url(#lp-bx1)"/>
+          <path d="M50 48v40L16 70V32z" fill="#f4e9f1"/>
+          <path d="M33 24l34 16v12l-6-3V43L27 27z" fill="#f7a928"/>
+          <path d="M61 43v6l6 3V40z" fill="#f59e0b"/>
+        </svg>
+      </div>
+      <div class="ph-row"><b>Today&rsquo;s orders</b><span class="tag">All</span></div>
+      <div class="tiles">
+        <div class="tile">
+          <div class="pic"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 18h24l-3 22H15z" fill="#efe9f2"/><path d="M12 18h24" stroke="#cbc5f2" stroke-width="3"/><path d="M18 18c0-5 2.5-9 6-9s6 4 6 9" fill="none" stroke="#a19daa" stroke-width="2.2"/><path d="M19 28h10" stroke="#cbc5f2" stroke-width="2.4" stroke-linecap="round"/></svg></div>
+          <b>Flour &times;4</b><small>Bay Mills<em>seen 10:12</em></small>
+          <span class="ok"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg></span>
+        </div>
+        <div class="tile">
+          <div class="pic"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M18 8h12v6l4 6v20a2 2 0 0 1-2 2H16a2 2 0 0 1-2-2V20l4-6z" fill="#f4eef6"/><path d="M14 24h20v10H14z" fill="#f5d0d3"/><path d="M18 8h12" stroke="#a19daa" stroke-width="2.4"/></svg></div>
+          <b>Milk &times;6</b><small>Hill Dairy<em>seen 14:31</em></small>
+          <span class="ok"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg></span>
+        </div>
+      </div>
+      <div class="ph-row"><b>Carrier scans</b><span class="tag">Check</span></div>
+      <div class="scanrow">
+        <span class="ic"><svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg></span>
+        <div><b>&ldquo;Business closed&rdquo; &middot; 14:30</b><small>Courier at the door 14:31</small></div>
+        <span class="go">Dispute pack</span>
+      </div>
+      <div class="tabbar" aria-hidden="true">
+        <span class="on"><svg class="ico"><use href="#i-home"/></svg></span>
+        <svg class="ico"><use href="#i-door"/></svg>
+        <svg class="ico"><use href="#i-chat"/></svg>
+        <svg class="ico"><use href="#i-box"/></svg>
+      </div>
+    </div>
+
+    <div class="phone ph-light">
+      <div class="ph-top">
+        <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-back"/></svg></span>
+        <b>Scan check</b>
+        <span class="avatar"><svg class="ico" aria-hidden="true"><use href="#i-shop"/></svg></span>
+      </div>
+      <svg class="door" viewBox="0 0 290 170" aria-hidden="true">
+        <defs>
+          <linearGradient id="lp-door" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5d0d3"/><stop offset=".5" stop-color="#ead2e3"/><stop offset="1" stop-color="#cbc5f2"/></linearGradient>
+          <linearGradient id="lp-bell" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2930"/><stop offset="1" stop-color="#121116"/></linearGradient>
+          <radialGradient id="lp-shadow"><stop offset="0" stop-color="#d696be" stop-opacity=".45"/><stop offset="1" stop-color="#d696be" stop-opacity="0"/></radialGradient>
+        </defs>
+        <ellipse cx="145" cy="158" rx="110" ry="12" fill="url(#lp-shadow)"/>
+        <rect x="92" y="18" width="92" height="140" rx="16" fill="url(#lp-door)"/>
+        <rect x="104" y="32" width="68" height="44" rx="10" fill="#fff" fill-opacity=".55"/>
+        <circle cx="166" cy="98" r="4" fill="#9d8bea"/>
+        <rect x="196" y="62" width="22" height="44" rx="11" fill="url(#lp-bell)"/>
+        <circle cx="207" cy="76" r="5.5" fill="#3a3842"/><circle cx="207" cy="76" r="2.5" fill="#b49cf0"/>
+        <circle cx="207" cy="94" r="4" fill="none" stroke="#f7a928" stroke-width="2"/>
+        <g transform="translate(46 108)">
+          <path d="M0 14l26-12 26 12v26L26 52 0 40z" fill="#e9dccf"/>
+          <path d="M0 14l26 12 26-12-26-12z" fill="#f6ede4"/>
+          <path d="M26 26v26L0 40V14z" fill="#dccbbb"/>
+          <path d="M13 8l26 12v8l-5-2v-6L8 10z" fill="#f7a928"/>
+        </g>
+        <circle cx="240" cy="40" r="7" fill="#fff" stroke="#ead2e3"/>
+        <circle cx="62" cy="48" r="4" fill="#fff" stroke="#ead2e3"/>
+      </svg>
+      <div class="timeline">
+        <svg viewBox="0 0 250 46" preserveAspectRatio="none" aria-hidden="true">
+          <rect class="t-hours" x="20" y="10" width="200" height="14" rx="7"/>
+          <text class="t-hlab" x="30" y="20.5">Open 08:00&ndash;18:00</text>
+          <line class="t-scan" x1="145" y1="4" x2="145" y2="30"/>
+          <circle class="t-door" cx="150" cy="17" r="5"/>
+          <text class="t-lab" x="20" y="42">08</text><text class="t-lab" x="208" y="42">18</text>
+          <text class="t-lab" x="126" y="42">scan 14:30</text>
+        </svg>
+      </div>
+      <div class="sheet">
+        <span class="heart"><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg></span>
+        <span class="who">Carrier scan &middot; &ldquo;business closed&rdquo;</span>
+        <strong class="say">Your doorbell saw a courier at 14:31 &mdash; you were open</strong>
+        <p class="sheet-note">The scan fell inside posted hours, with a courier at the door a minute later.</p>
+        <div class="facts2">
+          <div><i><svg class="ico" aria-hidden="true"><use href="#i-clock"/></svg></i><span><small>Posted hours</small><b>08&ndash;18</b></span></div>
+          <div><i><svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg></i><span><small>At the door</small><b>14:31</b></span></div>
+        </div>
+        <div class="acts" aria-hidden="true">
+          <span class="p">Copy draft <svg class="ico"><use href="#i-copy"/></svg></span>
+          <span class="a">Pack</span>
+        </div>
+      </div>
+    </div>
+    <figcaption>An illustration with example data, not a real shop&rsquo;s door.</figcaption>
+  </figure>
+</section>
+
+<div class="problem" role="list">
+  <div role="listitem"><b>The scan says closed</b><span>A carrier scans &ldquo;business closed&rdquo; or &ldquo;delivery attempted&rdquo; while you were open, serving.</span></div>
+  <div role="listitem"><b>You pay for it</b><span>A redelivery fee, a day without the stock, and perishables that don&rsquo;t keep.</span></div>
+  <div role="listitem"><b>Your door has the answer</b><span>The doorbell by your door already records who came and when. Shopfront puts it next to the scan.</span></div>
+</div>
+
+<section class="sec" aria-labelledby="lp-how">
+  <div class="sec-head">
+    <div><span class="tag">How it works</span><h2 id="lp-how">Three steps, from your orders to a pack you can send.</h2></div>
+    <p>Everything is checked against the shop&rsquo;s own records: the orders you import, the hours you post and what the door saw.</p>
+  </div>
+  <ol class="how">
+    <li>
+      <div class="top"><span class="n">01</span><span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-csv"/></svg></span></div>
+      <h3>Import your orders</h3>
+      <p>Upload the orders or invoices CSV you already export. Each line becomes an expected delivery, with its supplier, window and tracking number.</p>
+      <div class="tags"><span class="tag dark">Orders CSV</span><span class="tag dark">Invoices</span></div>
+    </li>
+    <li>
+      <div class="top"><span class="n">02</span><span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg></span></div>
+      <h3>Ring sees the courier</h3>
+      <p>A Ring package delivery alert marks a courier on its own. Other visits get a Bedrock vision label where a Ring frame exists; otherwise rules give a label marked as a guess.</p>
+      <div class="tags"><span class="tag">Ring alert</span><span class="tag dark">Bedrock frame</span><span class="tag ghost">Rules guess</span></div>
+    </li>
+    <li>
+      <div class="top"><span class="n">03</span><span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg></span></div>
+      <h3>Check the scan, take the pack</h3>
+      <p>Enter the carrier&rsquo;s scan and its time. Shopfront checks it against your posted hours and the door either side, and builds a dispute pack with a draft for you to send.</p>
+      <div class="tags"><span class="tag dark">Scan check</span><span class="tag amber">Dispute pack</span></div>
+    </li>
+  </ol>
+</section>
+
+<section class="sec" aria-labelledby="lp-feat">
+  <div class="sec-head">
+    <div><span class="tag">What&rsquo;s on the desk</span><h2 id="lp-feat">Built around the morning delivery, not a security feed.</h2></div>
+  </div>
+  <div class="feats">
+    <article class="feat">
+      <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-box"/></svg></span>
+      <h3>Orders vs couriers</h3>
+      <p>Today&rsquo;s orders beside the couriers the door saw, each saying how it was seen, or that it wasn&rsquo;t.</p>
+      <span class="tag">Receiving desk</span>
+    </article>
+    <article class="feat dark">
+      <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg></span>
+      <h3>Business-closed scan check</h3>
+      <p>A &ldquo;business closed&rdquo; or &ldquo;delivery attempted&rdquo; scan, checked against posted hours and the door around it.</p>
+      <span class="tag">Scan check</span>
+    </article>
+    <article class="feat">
+      <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-send"/></svg></span>
+      <h3>A dispute pack you send</h3>
+      <p>Door log, posted hours, the order, what it does not show, and a draft. Download the zip or copy the draft.</p>
+      <span class="tag">Dispute pack</span>
+    </article>
+    <article class="feat">
+      <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg></span>
+      <h3>Ask Shopfront</h3>
+      <p>Ask about a delivery in plain words. A Strands agent on Bedrock answers with tools over the same records.</p>
+      <span class="tag">Agent</span>
+    </article>
+    <article class="feat">
+      <span class="sq"><svg class="ico" aria-hidden="true"><use href="#i-sun"/></svg></span>
+      <h3>Morning briefing</h3>
+      <p>Yesterday at the door: orders not seen, doorbell presses while closed, staff at the door, traffic against last week.</p>
+      <span class="tag">Briefing</span>
+    </article>
+  </div>
+</section>
+
+<section class="sec honest" aria-labelledby="lp-honest">
+  <div><span class="tag">Honest by design</span><h2 id="lp-honest">It says what it rests on.</h2></div>
+  <div>
+    <h3><i><svg class="ico" aria-hidden="true"><use href="#i-tag"/></svg></i>Demo data is labelled</h3>
+    <p>Until a Ring doorbell is connected, every page says its door events were made up on this computer.</p>
+  </div>
+  <div>
+    <h3><i><svg class="ico" aria-hidden="true"><use href="#i-hand"/></svg></i>Nothing is sent for you</h3>
+    <p>Shopfront writes the pack and the draft. You decide whether to send it, and to whom.</p>
+  </div>
+  <div>
+    <h3><i><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg></i>Every label names its source</h3>
+    <p>Each courier and visit says what it rests on:</p>
+    <div class="chips"><span class="tag dark">Ring alert</span><span class="tag">Bedrock frame</span><span class="tag ghost">Rules guess</span></div>
+  </div>
+</section>
+
+<section class="closing" aria-labelledby="lp-close">
+  <span class="bubble" aria-hidden="true"></span>
+  <h2 id="lp-close">Next time a scan says you were closed, check it against the door.</h2>
+  <p>Open the receiving desk to see today&rsquo;s orders, or enter a carrier&rsquo;s scan and see what the door recorded around it.</p>
+  <div class="ctas">
+    <a class="lp-btn amber" href="/">Open the receiving desk <svg class="ico" aria-hidden="true"><use href="#i-arrow"/></svg></a>
+    <a class="lp-btn pill" href="/#atth">Try a carrier scan <svg class="ico" aria-hidden="true"><use href="#i-scan"/></svg></a>
+  </div>
+</section>
+
+<footer class="lp-foot">
+  <span>Shopfront &middot; a receiving desk built on the Ring doorbell a shop already has.</span>
+  <span><a href="/setup">Set up</a> &middot; <a href="/connect">{{ "Ring" if ring_mode == "ring" else "Connect Ring" }}</a></span>
+</footer>
+
+</div>
+{% endblock %}

@@ -2,20 +2,25 @@
 {% block title %}Set up{% endblock %}
 {% block head %}
 <style>
-  .setup-step { margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--line); scroll-margin-top: 8px; }
-  .setup-step h2 { display: block; }
+  /* Each step its own white card (round 11), its number a small gradient tile */
+  .setup-step { margin-top: 16px; padding: 22px 24px; background: var(--surface); border: 1px solid var(--card-border);
+                border-radius: var(--r-xl); box-shadow: var(--glow); scroll-margin-top: 8px; }
+  .setup-step h2 { display: flex; align-items: center; }
   .setup-step h3 { font-size: 15px; margin: 18px 0 4px; }
-  .setup-step .n { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 8px; }
+  .setup-step .n { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; flex: none;
+                   background: var(--pill); color: var(--pill-ink); box-shadow: var(--glow-pill); font-size: 13px;
+                   font-variant-numeric: tabular-nums; margin-right: 12px; }
   .hours { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
   .hours input, .fields input:not([type=checkbox]) { width: 100%; }
+  .hours input { padding-left: 10px; padding-right: 8px; }
   .fields .narrow { flex: 1 1 130px; } .fields .tiny { flex: 0 0 72px; }
   .check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink); padding: 8px 0; }
   .fmt { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); white-space: pre-wrap;
-         border-left: 2px solid var(--line); padding-left: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+         background: var(--bg); border-radius: var(--r-sm); padding: 10px 12px; margin: 8px 0; overflow-wrap: anywhere; }
   .msg { margin: 12px 0 0; }
   .orders td form { margin: 0; }
   .narrow-only { display: none; }
-  @media (max-width: 560px) { .hours { grid-template-columns: repeat(4, 1fr); } .orders .wide { display: none; } .narrow-only { display: inline; } .fields .narrow { flex: 1 1 40%; } }
+  @media (max-width: 560px) { .setup-step { padding: 18px 16px; border-radius: 28px; } .hours { grid-template-columns: repeat(4, 1fr); } .orders .wide { display: none; } .narrow-only { display: inline; } .fields .narrow { flex: 1 1 40%; } }
 </style>
 {% endblock %}
 {% macro message(where) %}
@@ -26,10 +31,13 @@
   <div class="eyebrow">Set up</div>
   <h1>{{ p.name }}</h1>
   <p class="why" style="margin:6px 0 0">Four steps: connect your doorbell, tell Shopfront your hours, list what you're expecting, then watch the door.</p>
+  {% if public_demo %}<p class="banner note msg" role="note">Read-only in the public demo: this is the made-up shop's set-up as its owner would see it, and the forms are switched off because nothing here is saved.</p>{% endif %}
 
   <section class="setup-step" id="ring">
     <h2><span class="n">1</span>Ring doorbell</h2>
-    {% if ring == "ring" and ring_linked %}
+    {% if public_demo %}
+    <p>The public demo's door is made up, so it isn't connected to Ring. <a href="/connect">What connecting Ring does</a> on a shop's own Shopfront.</p>
+    {% elif ring == "ring" and ring_linked %}
     <p>Linked to your Ring account (…{{ ring_linked.account_id[-6:] }}): Shopfront reads your doorbell's history and stays signed in. <a href="/ring/link">Linked account</a></p>
     {% elif ring == "ring" %}
     <p>Connected to Ring: Shopfront reads your doorbell's history. <a href="/connect">Change token</a></p>
@@ -38,7 +46,7 @@
     {% else %}
     <p>Not connected, so Shopfront is showing synthetic demo data. <a href="/connect">Connect Ring</a> with a token from the Ring Developer Playground.</p>
     {% endif %}
-    {% if not ring_linked %}<p class="why">Or <a href="/ring/link">link your Ring account</a>: add Shopfront from the Ring app once and it stays signed in, instead of a Playground token that lasts 30 minutes.</p>{% endif %}
+    {% if not ring_linked and not public_demo %}<p class="why">Or <a href="/ring/link">link your Ring account</a>: add Shopfront from the Ring app once and it stays signed in, instead of a Playground token that lasts 30 minutes.</p>{% endif %}
   </section>
 
   <form method="post" action="/setup">

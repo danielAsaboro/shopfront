@@ -163,7 +163,8 @@ def test_draft_states_rings_people_and_backs_otherwise(tmp_path):
     check = rc.check_closed_scan(at(14, 30), vs, OPEN, now=at(20, 0))
     p = dispute.build_pack("Shop", DAY, vs, FrameStore(tmp_path), "08:00–18:00", check, carrier="Northline")
     body = p["draft"]["body"]
-    assert "Ring's person detection classified 3 of them as people" in body
+    assert "recorded 3 motion events in the 30 minutes either side of the scan (14:00–15:00), and Ring's person " \
+        "detection classified all of them as people." in body
     assert "Our front-door camera shows otherwise." in body
 
 

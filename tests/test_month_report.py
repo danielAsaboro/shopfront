@@ -61,16 +61,17 @@ def test_desk_leads_with_the_record_linking_to_every_check_and_the_report(monkey
     keep_three(main.checks)
     monkeypatch.setattr(main, "_visits", lambda d: busy(d))
     page = TestClient(main.app).get("/", params={"date": "2026-10-14"}).text
-    # round 6: the record is one line near the top, with the report link; the checks open below it
-    line = html.unescape(page.split('<section class="record-line"')[1].split("</section>")[0])
-    assert 'Northline Parcel: 3 "business closed" scans in October, all during posted hours; 1 more carrier.' in line
-    assert "at stake" not in line and 'href="/report?month=2026-10"' in line
-    record = page.split('<section class="record">')[1].split("</section>")[0]
-    assert 'Northline Parcel: 3 "business closed" scans in October, all during posted hours' in html.unescape(record)
-    links = re.findall(r'<a href="(/\?[^"]+)">', record)
+    # round 7: the record is one block near the top: each carrier's line, the money once, the kept scans under a
+    # toggle and the report; it is not said a second time in a fold further down
+    block = page.split('<section class="record-line record" id="record"')[1].split("</section>")[0]
+    line = html.unescape(block)
+    assert 'Northline Parcel: 3 "business closed" scans in October, all during posted hours.' in line
+    assert 'Swift Parcel: 1 "business closed" scan in October, none during posted hours.' in line
+    assert line.count("at stake") == 1 and 'href="/report?month=2026-10">Monthly report</a>' in line
+    links = re.findall(r'<a href="(/\?[^"]+)">', block)
     assert len(links) == 4 and all("attempt=" in x and "claim=business_closed" in x for x in links)
-    assert page.index('<section class="record-line"') < page.index('<section class="lead">')  # near the top
-    assert page.index('<section class="lead">') < page.index('<details class="block fold" id="record-more">')
+    assert page.index('id="record"') < page.index('<section class="lead">')  # near the top
+    assert "record-more" not in page and page.count("Carrier record") == 1
 
 
 def test_report_is_one_printable_page_of_the_month(monkeypatch):

@@ -153,7 +153,12 @@ def test_busy_door_with_a_press_at_the_scan_is_open_and_names_the_press(tmp_path
         body = d["body"].lower()
         assert "4 motion events and 1 doorbell press in the 30 minutes either side of the scan (14:00–15:00)" in body
         assert "we were open" in body
-        assert "14:36" not in body and "might have been" not in body and "possible courier" not in body
+        # round 10: every door time in the window, plainly, and the ones near the scan nothing identified (naming only
+        # the times either side of the scan read as cherry-picking); still no guess that it was the courier
+        assert "the door events were at 14:02, 14:11, 14:25, 14:36 and 14:51." in body
+        assert "nothing identified who was at the door at 14:25 and 14:36, the 2 events within 10 minutes of the " \
+               "scan." in body
+        assert "might have been" not in body and "possible courier" not in body
         assert "nobody" not in body and "no courier" not in body and "nothing at our door" not in body
     assert any(t["time"].startswith("14:36") for t in p["timeline"])  # the attached log names the press
 
@@ -205,11 +210,11 @@ def test_synthetic_events_watermark_the_pack_draft_and_zip(tmp_path):
     vs = [visit(12, m, "customer", "bedrock", src="synthetic") for m in (13, 20, 50)]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["demo_data"] and p["watermark"].startswith("DEMO DATA, not from a camera")
-    # Round 2: one short tag on the subject, one line on top of the body, the full story in the README
+    # Round 2: one short tag on the subject, the full story in the README. Round 8: the body's own warning line
+    # went (the page's watermark already said it); the [DEMO] subject travels with the copied message
     assert p["draft"]["subject"].startswith("[DEMO] ") and p["draft"]["subject"].count("DEMO") == 1
-    first, rest = p["draft"]["body"].split("\n\n", 1)
-    assert first == "DEMO DATA, not from a camera: don't send this." and rest.startswith("Hello")
-    assert "DEMO" not in rest and "demo generator" not in rest
+    body = p["draft"]["body"]
+    assert body.startswith("Hello") and "DEMO" not in body and "demo generator" not in body
     assert any("synthetic" in x for x in p["limits"]) and p["cited_sources"] == ["synthetic"]
     text = dispute.as_text(p)
     assert text.startswith("DEMO DATA, not from a camera")
@@ -223,8 +228,9 @@ def test_replayed_events_are_disclosed_in_limits_and_draft(tmp_path):
     vs = confirmed_lunch() + [visit(12, 55, "customer", "bedrock", src="ring-webhook-replay")]
     p = pack(vs, rc.check_closed_scan(at(12, 40), vs, OPEN, now=NOW), tmp=tmp_path)
     assert p["replayed"] and dispute.REPLAY_LIMIT in p["limits"]
-    assert p["draft"]["body"].split("\n\n")[0] == "REPLAYED RING EVENTS, not live Ring notifications: don't send this as evidence."
+    assert p["draft"]["body"].startswith("Hello")  # round 8: the [DEMO] subject is the draft's one mark
     assert p["draft"]["subject"].startswith("[DEMO] ")
+    assert dispute.REPLAYED in dispute.as_text(p).split("\n")[0]
     real = pack(confirmed_lunch(), rc.check_closed_scan(at(12, 40), confirmed_lunch(), OPEN, now=NOW), tmp=tmp_path)
     assert not real["replayed"] and not real["demo_data"] and real["watermark"] is None
     assert real["draft"]["body"].startswith("Hello,")
@@ -369,8 +375,8 @@ def test_every_window_is_named_where_it_appears_and_the_hedge_is_one_line(monkey
                                                          "claim": "business_closed"}).text
     assert "Door log, 30 minutes either side of the scan</h2>" in page
     # round 4: the window is the verdict's fact and its picture, which brackets the 10 minutes that count as near
-    assert "door events 12:10–13:10" in page and "<desc id=\"pack-d\">Door from 12:10 to 13:10." in page
-    assert "10 minutes either side bracketed as near the scan" in page and ">±10 min</text>" in page
+    assert "door events 12:10–13:10" in page and "<desc id=\"pack-d\">Door around the scan, 30 minutes either side: 12:10 to 13:10." in page
+    assert "10 minutes either side bracketed as near the scan" in page and ">near ±10</text>" in page and ">around ±30 min</text>" in page
     assert page.count("door answered") == 1 and page.count("can miss people") == 1
 
 
@@ -380,3 +386,21 @@ def test_the_rules_guess_line_shows_only_when_a_rules_label_is_in_the_log(tmp_pa
     seen = [visit(12, 20, "customer", "bedrock", rid="r1"), visit(12, 50, "customer", "bedrock", rid="r2")]
     clean = pack(seen, rc.check_closed_scan(at(12, 40), seen, OPEN, now=NOW), tmp=tmp_path)
     assert dispute.RULES_LIMIT not in clean["limits"]
+
+
+def test_the_draft_lists_the_door_times_plainly():
+    """Round 10: the draft says every door time in the window and which near the scan nothing identified, exactly
+    from the finding; a very busy door is said by its first and last events with the count between."""
+    t = dispute._door_times
+    assert t({"times": ["14:22"], "near": 1, "near_unidentified": ["14:22"]}, 10) == (
+        " The one door event was at 14:22. Nothing identified who was at the door at 14:22, the one event within 10 "
+        "minutes of the scan.")
+    assert t({"times": ["14:10", "14:22", "14:28"], "near": 2, "near_unidentified": ["14:22"]}, 10).endswith(
+        "Nothing identified who was at the door at 14:22, one of the 2 events within 10 minutes of the scan.")
+    assert t({"times": ["14:10", "14:53"], "near": 0, "near_unidentified": []}, 10) == \
+        " The door events were at 14:10 and 14:53."
+    many = [f"14:{m:02d}" for m in range(0, 60, 4)]  # 15 events
+    said = t({"times": many, "near": 0, "near_unidentified": []}, 10)
+    assert said == (" The door events were at 14:00, 14:04, 14:08, 14:12, 14:16, 14:20, then 7 more, then 14:52 and "
+                    "14:56 (the door log attached lists each).")
+    assert t({"times": [], "near": 0}, 10) == ""

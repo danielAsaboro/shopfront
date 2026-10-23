@@ -139,7 +139,7 @@ def test_a_scene_flows_through_the_check_the_pack_and_the_agent(monkeypatch):
     readme = z.read("README.txt").decode()
     assert "ring-playground" in readme and LABEL in readme
     for d in pack["drafts"]:
-        assert d["body"].startswith(dispute.PLAYGROUND_MARK) and dispute.CAMERA_SHOWS not in d["body"]
+        assert d["subject"].startswith(dispute.SUBJECT_TAG) and dispute.CAMERA_SHOWS not in d["body"]
     page = c.get("/dispute", params={"date": "2026-10-14", "at": "12:40", "claim": "business_closed"}).text
     assert "Ring Developer Playground scenes: don't send this pack as evidence" in page and LABEL in page
 

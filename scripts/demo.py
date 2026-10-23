@@ -4,8 +4,10 @@
 
 What it does, in order:
 
-1. Picks the demo day: the most recent day before today when the demo shop is open and its synthetic
-   door was in use around the scan time, so nothing it shows is in the future.
+1. Picks the demo day: the most recent day before today when the demo shop is open, its synthetic
+   door was in use on both sides of the scan time, and nobody rang the bell in the scanned order's
+   delivery window (a press there would hand the carrier "our driver rang"), so nothing it shows is in
+   the future.
 2. Copies samples/orders.csv with its dates moved to that day and imports it into a fresh data
    folder (.data/demo, git-ignored), the same way the CSV upload on /setup does.
 3. Starts Shopfront on that folder with synthetic door events (no Ring account needed; every page
@@ -19,7 +21,8 @@ What it does, in order:
    day, marked demo), so the pack's camera line shows the coverage path; the demo stops if it doesn't.
 6. Keeps two earlier "business closed" checks for the same made-up carrier, on open days earlier in the
    month, checked against that day's synthetic door the way the desk checks one, and marked demo; the desk's
-   carrier record then has a history to show. It also notes the demo scan (demo-scan.json), so the desk
+   carrier record then has a history to show. Each is for an order in samples/past-orders.csv, imported on its
+   day and kept with the check (the dairy one marked perishable, so the record shows the stock at risk). It also notes the demo scan (demo-scan.json), so the desk
    offers it, already filled in, as "Try the business-closed check".
 7. Takes 14:30 (SCAN_AT), mid-afternoon in the dairy order's window, as the carrier's "business closed" scan.
    It isn't a hand-picked quiet minute: any time in open hours with the door in use around it gives the
@@ -27,7 +30,7 @@ What it does, in order:
    builds the dispute pack, and prints the links to both. The pack must have a draft; if the door
    doesn't support one, the demo stops and says why.
 
-The server keeps running until Ctrl-C. Nothing is sent to any carrier or supplier.
+The server keeps running until Ctrl-C (or SIGTERM), which stops it. Nothing is sent to any carrier or supplier.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ import csv
 import io
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -61,8 +65,11 @@ SCAN_ORDER = "PO-1042"        # the dairy order the carrier scanned "business cl
 SCAN_WINDOW = ("13:00", "16:00")  # its delivery window in samples/orders.csv
 SCAN_AT = "14:30"  # the "business closed" scan: an ordinary afternoon minute in that window, not a chosen one
 DEMO_HMAC_KEY = "demo-key"
-PAST_SCANS = ("14:30", "11:40", "15:20", "10:50")  # times tried, in order, for the two earlier kept checks
-PAST_TRACKING = ("NP4471001736", "NP4471002204")  # made up, in the sample's style
+PAST_SAMPLE = ROOT / "samples" / "past-orders.csv"  # the orders behind the two earlier kept checks
+# The two earlier "business closed" scans: each is for one order in PAST_SAMPLE (by its tracking number), at its own
+# time in that order's window, the times tried in order until the synthetic door was in use around one
+PAST_SCANS = (("NP4471001736", ("11:40", "12:20", "11:10")), ("NP4471002204", ("15:20", "14:40", "15:50")))
+PERISHABLE = ("PO-1031",)  # the dairy order behind an earlier scan, marked perishable the way the owner does on the desk
 
 
 def open_hours(spec: str, day: date) -> tuple[int, int] | None:
@@ -95,9 +102,12 @@ def dated_orders(text: str, day: date) -> str:
 
 
 def door_in_use(events: list[datetime], t: datetime) -> bool:
-    """Whether the door recorded something 10 to 30 minutes either side of `t`: use of the door beyond
-    anything near enough to the scan to have been the courier (app/reconcile.py, check_closed_scan)."""
-    return any(10 < abs((e - t).total_seconds()) / 60 <= 30 for e in events)
+    """Whether the door recorded something 10 to 30 minutes before `t` and something 10 to 30 minutes after it: use
+    of the door on both sides of the scan, beyond anything near enough to have been the courier
+    (app/reconcile.py, check_closed_scan). Round 8: a demo day whose door was only used after the scan let the
+    draft say "in use around the time of the scan" about events all after it."""
+    mins = [(e - t).total_seconds() / 60 for e in events]
+    return any(-30 <= m < -10 for m in mins) and any(10 < m <= 30 for m in mins)
 
 
 def _package_at(day: date, tz: ZoneInfo) -> datetime:
@@ -108,16 +118,34 @@ def _scan_at(day: date, tz: ZoneInfo) -> datetime:
     return datetime.combine(day, datetime.strptime(SCAN_AT, "%H:%M").time(), tzinfo=tz)
 
 
+def bell_quiet(presses: list[datetime], day: date, tz: ZoneInfo) -> bool:
+    """No doorbell press in the dairy order's delivery window (SCAN_WINDOW). A press there, say six minutes after
+    the 14:30 scan, made the pack's "At the door" row and its draft cite a doorbell press nobody identified, and
+    handed the carrier its reply: "our driver rang and nobody answered"."""
+    lo, hi = (datetime.combine(day, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in SCAN_WINDOW)
+    return not any(lo <= t <= hi for t in presses)
+
+
 def has_scan_slot(day: date, tz: ZoneInfo) -> bool:
-    """Whether the demo's synthetic door that day was in use around SCAN_AT. The same generator, hours and
-    time zone the demo server uses."""
+    """Whether `day` tells the demo's story: the synthetic door was in use on both sides of SCAN_AT (people, not
+    the courier), and nobody rang the bell in the dairy order's window. The same generator, hours and time zone the
+    demo server uses; the demo picks its day, it doesn't change what the generator makes."""
     from app.hours import parse_hours
     from app.ring.synthetic import SyntheticRingClient
 
     if not open_hours(SHOP_HOURS, day):
         return False
-    events = [e.timestamp for e in SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)]
-    return door_in_use(events, _scan_at(day, tz))
+    events = SyntheticRingClient(tz, parse_hours(SHOP_HOURS)).events_for_day(day)
+    return door_in_use([e.timestamp for e in events], _scan_at(day, tz)) and \
+        bell_quiet([e.timestamp for e in events if e.kind == "ding"], day, tz)
+
+
+def stop_on_sigterm() -> None:
+    """SIGTERM (`kill`, a process manager, a container stopping) ends the demo the way Ctrl-C does, so the
+    `finally` in main() stops the Shopfront server it started instead of leaving it running on the port."""
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)
 
 
 def _port_busy(port: int) -> bool:
@@ -176,21 +204,23 @@ def _door(day: date, tz: ZoneInfo) -> list:
     return classify_day(SyntheticRingClient(tz, hours), RulesClassifier(), day, hours)
 
 
-def past_scans(day: date, tz: ZoneInfo, n: int = 2) -> list[datetime]:
-    """Earlier open days in `day`'s month, newest first and at least three days apart, each with a time in
-    PAST_SCANS when its synthetic door was in use: the demo's earlier "business closed" scans."""
-    out: list[datetime] = []
+def past_scans(day: date, tz: ZoneInfo) -> list[tuple[datetime, str]]:
+    """The demo's earlier "business closed" scans, one per PAST_SCANS entry: (when, tracking number). Each is on an
+    earlier open day in `day`'s month, newest first and at least three days apart, at the first of its times when
+    that day's synthetic door was in use."""
+    out: list[tuple[datetime, str]] = []
     for back in range(1, day.day):
-        d = day - timedelta(days=back)
-        if not open_hours(SHOP_HOURS, d) or (out and (out[-1].date() - d).days < 3):
-            continue
-        events = [e.timestamp for e in _door_events(d, tz)]
-        t = next((datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in PAST_SCANS
-                  if door_in_use(events, datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz))), None)
-        if t:
-            out.append(t)
-        if len(out) == n:
+        if len(out) == len(PAST_SCANS):
             break
+        d = day - timedelta(days=back)
+        if not open_hours(SHOP_HOURS, d) or (out and (out[-1][0].date() - d).days < 3):
+            continue
+        tracking, times = PAST_SCANS[len(out)]
+        events = [e.timestamp for e in _door_events(d, tz)]
+        t = next((at for at in (datetime.combine(d, datetime.strptime(x, "%H:%M").time(), tzinfo=tz) for x in times)
+                  if door_in_use(events, at)), None)
+        if t:
+            out.append((t, tracking))
     return out
 
 
@@ -203,17 +233,35 @@ def _door_events(day: date, tz: ZoneInfo) -> list:
 
 def seed_past_checks(data: Path, day: date, tz: ZoneInfo) -> list[dict]:
     """Keep the demo's earlier checks in data/checks.json, each computed by app/reconcile.py against that
-    day's synthetic door, and marked demo."""
+    day's synthetic door, and marked demo. Each scan's order (samples/past-orders.csv, dated to the scan's day) is
+    imported first, and the check keeps the order its tracking number names, the way "Keep" on the desk does, so
+    the carrier record and /report tie each scan to its order, supplier and amount."""
     from app import reconcile as rc
     from app.checks import CheckBook
+    from app.deliveries import DeliveryBook
     from app.hours import parse_hours, posted_hours
 
-    kept, book = [], CheckBook(data / "checks.json")
-    for at, tracking in zip(past_scans(day, tz), PAST_TRACKING):
+    sample = list(csv.DictReader(io.StringIO(PAST_SAMPLE.read_text())))
+    book = DeliveryBook(data / "expected-deliveries.json")
+    kept, checks = [], CheckBook(data / "checks.json")
+    for at, tracking in past_scans(day, tz):
+        row = next(r for r in sample if r["tracking"] == tracking)
+        _import_orders(data, dated_orders(_csv([row]), at.date()))
+        order = book.for_scan(at.date(), tracking)
+        if order.order_ref in PERISHABLE:
+            order = book.set_perishable(order.id, True)
         visits = [v for v in _door(at.date(), tz) if abs(rc.gap(v.event.timestamp, at)) <= rc.ACTIVITY]
         check = rc.check_closed_scan(at, visits, posted_hours(parse_hours(SHOP_HOURS), at.date()))
-        kept.append(book.keep(check, CARRIER, tracking, demo=True))
+        kept.append(checks.keep(check, CARRIER, tracking, order, demo=True))
     return kept
+
+
+def _csv(rows: list[dict]) -> str:
+    out = io.StringIO()
+    w = csv.DictWriter(out, fieldnames=list(rows[0].keys()), lineterminator="\n")
+    w.writeheader()
+    w.writerows(rows)
+    return out.getvalue()
 
 
 def note_demo_scan(data: Path, day: date, orders_text: str) -> dict:
@@ -300,6 +348,7 @@ def main() -> None:
     env = {**os.environ, "SHOPFRONT_DATA_DIR": str(data), "RING_MODE": "synthetic", "RING_HMAC_KEY": key,
            "SHOP_NAME": SHOP_NAME, "SHOP_HOURS": SHOP_HOURS, "SHOP_TIMEZONE": settings.timezone,
            "RING_ACCESS_TOKEN": "", "RING_REFRESH_TOKEN": ""}
+    stop_on_sigterm()
     server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1",
                                "--port", str(a.port), "--log-level", "warning"], cwd=ROOT, env=env)
     try:
@@ -329,8 +378,9 @@ Ring webhook is a signed replay: every page says so. Nothing here is sent to any
    ({', '.join(f"{c['day']} {c['at']}" for c in past) or 'none this month'}) on the desk's carrier record.
 
 2. The receiving desk. {n} orders were imported from samples/orders.csv (dated copy: {_show(orders_csv)}).
-   The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by Ring's
-   package_delivery Smart Alert; the desk shows it as that order's courier.
+   The flour courier ({FLOUR_ORDER}, {story['flour']['supplier']}) was announced at {PACKAGE_AT} by a replayed
+   package_delivery alert (Shopfront's signed feeder, in Ring's webhook shape, not sent by Ring); the desk
+   shows it as that order's courier.
    {desk}
 
 3. The dispute pack: the finding, the door log around {scan}, the posted hours, what it can't show,

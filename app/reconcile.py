@@ -67,12 +67,12 @@ TEXT = {
                    "door later that day, at {time}, {gap} it ({by}). If that was this delivery, it arrived late. "
                    "A courier label doesn't say whose parcel it was, so Shopfront can't tell whose delivery it was.",
     OPEN_NO_COURIER: "The carrier scanned \"business closed\" at {attempt}. Your posted hours had you open ({hours}), "
-                     "the doorbell recorded {activity} {span}, and {near}.",
+                     "the doorbell recorded {activity} {span}{sides}, and {near}.",
     OPEN_COURIER_CAME: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open "
                        "({hours}) and a courier was at the door at {time}, {gap} the scan ({by}). The doorbell "
-                       "recorded {activity} {span}.",
+                       "recorded {activity} {span}{sides}.",
     OPEN_DOOR_BUSY: "The carrier scanned \"business closed\" at {attempt}, but your posted hours had you open ({hours}) "
-                    "and the doorbell recorded {activity} {span}: the shop was open and its door in use. Within "
+                    "and the doorbell recorded {activity} {span}{sides}: the shop was open and its door in use. Within "
                     "{tol} minutes of the scan, close enough to be the courier, it recorded {unidentified} (no camera frame "
                     "confirms who), so Shopfront can't say whether a courier came to the door.{later}",
     OPEN_BY_HOURS_ONLY: "Your posted hours had you open ({hours}) when the carrier scanned \"business closed\" at "
@@ -247,6 +247,20 @@ def _span(lo: datetime, hi: datetime, said: str = "") -> str:
     return f"in the {mins} minutes either side of the scan ({_hhmm(lo)}–{_hhmm(hi)}{'; ' + said if said else ''})"
 
 
+def sides(before: str | None, after: str | None, tol: int) -> str:
+    """" (beyond the 10 minutes near the scan, the last before it at 14:12 and the first after it at 14:45)": which
+    side of the scan the door was used on, said exactly, so "in use around the scan" never stands for use on one
+    side only. Events near the scan are named on their own, as possibly the courier."""
+    mins = int(ACTIVITY.total_seconds() // 60)
+    if before and after:
+        return f" (beyond the {tol} minutes near the scan, the last before it at {before} and the first after it at {after})"
+    if after:
+        return f" (none in the {mins} minutes before the scan beyond the {tol} near it; the first after it at {after})"
+    if before:
+        return f" (the last before the scan at {before}, beyond the {tol} minutes near it; none in the {mins} after it)"
+    return ""
+
+
 def _cust(around: list[ClassifiedVisit], customers: int) -> str:
     """"Ring classified 4 of these 6 door events as people; 1 of them confirmed from the camera frame as a customer":
     what something that looked at the door said about who used it around the scan. Nothing when nothing did:
@@ -312,10 +326,21 @@ def check_closed_scan(scan: datetime, visits: list[ClassifiedVisit], open_hours:
                 "seen": sum(1 for v in around if confirmed(v)),
                 "people": sum(1 for v in around if person(v)),  # Ring's person alert (sub_type human)
                 "people_source": sorted({v.event.source for v in around if person(v)}),
-                "near": len(near)}
+                "near": len(near),
+                # the door's use either side of the scan, beyond the minutes near it (where an event could be the
+                # courier): the last event before that and the first after it, within the activity window
+                "before": _hhmm(max(b)) if (b := [v.event.timestamp for v in around
+                                                  if gap(v.event.timestamp, scan) < -tolerance]) else None,
+                "after": _hhmm(min(f)) if (f := [v.event.timestamp for v in around
+                                                 if gap(v.event.timestamp, scan) > tolerance]) else None,
+                # every door event in the window, in time order, and the ones near the scan that nothing identified
+                # (round 10: the draft lists them all, so it never reads as picking the times that suit the shop)
+                "times": [_hhmm(v.event.timestamp) for v in sorted(around, key=lambda v: utc(v.event.timestamp))],
+                "near_unidentified": [_hhmm(v.event.timestamp) for v in sorted(near, key=lambda v: utc(v.event.timestamp))
+                                      if not confirmed(v)]}
     fmt = {"attempt": _hhmm(scan), "hours": base["posted_hours"], "lo": activity["from"],
            "hi": activity["to"], "tol": tol, "activity": _kinds(around),
-           "span": _span(lo, hi, _cust(around, customers)),
+           "span": _span(lo, hi, _cust(around, customers)), "sides": sides(activity["before"], activity["after"], tol),
            "near": f"no courier within {tol} minutes of the scan: "
                    + ("nothing was recorded that close" if not near else
                       f"{'the visit' if len(near) == 1 else 'all ' + str(len(near)) + ' visits'} recorded that close "
