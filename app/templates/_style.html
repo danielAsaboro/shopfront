@@ -1,15 +1,28 @@
 <style>
-  /* Tokens: see design.md. --edge is the border of anything you can type in or press (>= 3:1 on --bg). */
+  /* Tokens: see design.md. --edge is the border of anything you can type in or press (>= 3:1 on --bg).
+     The look (round 11): a geometric sans (Poppins), near-black cards on a warm blush page, pink-to-lavender
+     pills for anything you press, amber for the one thing to act on, soft glows and large radii. */
   :root { color-scheme: light dark;
-          --bg:#f7f6f3; --ink:#1d1d1f; --muted:#6b6b70; --line:#e4e2dd; --edge:#8a8780;
-          --today:#2f6fdb; --lw:#c9c7c1; --warn:#a14a14; --warn-bg:#fbefe4; }
+          --font: "Poppins", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          --bg:#f7f1f1; --ink:#17161b; --muted:#68646f; --line:#e9e1e3; --edge:#8a8490;
+          --surface:#ffffff; --card:#17161b; --card-2:#222128; --card-ink:#f5f2f6; --card-muted:#a19daa; --card-line:#2f2d36;
+          --today:#b49cf0; --lw:#cfc8cd; --warn:#a15c00; --warn-bg:#fff2d9;
+          --amber:#f7a928; --amber-2:#f59e0b; --amber-ink:#1d1405;
+          --pill: linear-gradient(120deg, #f5d0d3 0%, #ead2e3 45%, #cbc5f2 100%); --pill-ink:#17161b;
+          --glow: 0 24px 60px -24px rgba(214, 150, 190, .55), 0 2px 10px rgba(23, 22, 27, .06);
+          --glow-pill: 0 10px 28px -10px rgba(203, 160, 230, .75);
+          --glow-amber: 0 12px 30px -10px rgba(247, 169, 40, .65);
+          --r-xl: 32px; --r-lg: 24px; --r-md: 16px; --r-sm: 12px; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#151517; --ink:#ececee; --muted:#9a9aa1; --line:#2e2e33; --edge:#6a6a72;
-            --today:#6b9cf0; --lw:#4a4a50; --warn:#e48a52; --warn-bg:#3a2516; }
+    :root { --bg:#0d0c10; --ink:#f1eef3; --muted:#a29eab; --line:#2a2830; --edge:#76717f;
+            --surface:#1a191f; --card:#141318; --card-2:#201f26; --card-ink:#f5f2f6; --card-muted:#a19daa; --card-line:#2f2d36;
+            --today:#c2adff; --lw:#46434d; --warn:#ffbe55; --warn-bg:#33240b;
+            --glow: 0 24px 70px -28px rgba(214, 150, 190, .35), 0 2px 10px rgba(0, 0, 0, .4);
+            --glow-pill: 0 10px 30px -12px rgba(203, 160, 230, .6); }
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
-         font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+         font:15px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
   main { max-width: 820px; margin: 0 auto; padding: 16px 16px 48px; }
   /* Blue means today's data, never a link: links are ink, underlined */
   a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--muted);
